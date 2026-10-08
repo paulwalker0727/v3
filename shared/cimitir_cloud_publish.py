@@ -34,6 +34,7 @@ def publish_flow_b(cp, actor: str, org: str, cem: str, bootstrap_id: str, bindin
     c = cp._c()
     try:
         c.execute("BEGIN IMMEDIATE")
+        cp._lock_cemetery(c, cem)
         cp._require(c, actor, "bootstrap", org)
         run = c.execute("SELECT * FROM bootstrap_runs WHERE bootstrap_id=? AND cemetery_uid=? AND organization_uid=?", (bootstrap_id, cem, org)).fetchone()
         if not run:
@@ -102,7 +103,7 @@ def publish_flow_b(cp, actor: str, org: str, cem: str, bootstrap_id: str, bindin
                 published += 1
         hook("publish:in_txn")
         c.execute("UPDATE cemeteries SET status='ACTIVE', data_epoch=? WHERE uid=? AND status='DRAFT'", (INITIAL_EPOCH, cem))
-        c.execute("UPDATE bindings SET sync_epoch=?, status='active' WHERE binding_uid=?", (INITIAL_EPOCH, b["binding_uid"]))
+        cp.activate_binding(c, b["binding_uid"], INITIAL_EPOCH)
         c.execute("UPDATE bootstrap_runs SET state='completed', finished_at=?, error=NULL, checkpoint=? WHERE bootstrap_id=?",
                   (now, json.dumps({"phase": "published", "media_missing": mrep["missing"], "accepted_missing_media": bool(mrep["missing"] and accept_missing_media)}, sort_keys=True), bootstrap_id))
         c.execute("DELETE FROM staging_rows WHERE bootstrap_id=? AND cemetery_uid=?", (bootstrap_id, cem))

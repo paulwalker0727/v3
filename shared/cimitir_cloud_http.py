@@ -40,12 +40,7 @@ def _used_code_ok(cp, row, op: str) -> bool:
         return True
     if op not in ("can", "export_snapshot") or not row["used_bootstrap_id"]:
         return False
-    c = cp._c()
-    try:
-        r = c.execute("SELECT state FROM bootstrap_runs WHERE bootstrap_id=?", (row["used_bootstrap_id"],)).fetchone()
-    finally:
-        c.close()
-    return bool(r and r["state"] in ("planned", "running", "verifying"))
+    return cp.run_state(row["used_bootstrap_id"]) in ("planned", "running", "verifying")
 
 
 def _authenticate(cp, header: str, op: str) -> Ctx:
@@ -54,11 +49,7 @@ def _authenticate(cp, header: str, op: str) -> Ctx:
     if not secret:
         raise wire.Unauthenticated("autentificare lipsă")
     if scheme == "Pairing" and auth in ("pairing", "either"):
-        c = cp._c()
-        try:
-            row = c.execute("SELECT * FROM pairing_codes WHERE code_hash=?", (cc._h(secret),)).fetchone()
-        finally:
-            c.close()
+        row = cp.code_row(secret)
         if not row or row["expires_at"] < cp.clock() or (row["used_at"] and not _used_code_ok(cp, row, op)):
             raise wire.Unauthenticated("cod de pairing invalid sau expirat")
         ctx = Ctx("pairing", secret, row["issued_by"], row["organization_uid"], row["cemetery_uid"])
@@ -70,16 +61,12 @@ def _authenticate(cp, header: str, op: str) -> Ctx:
             b = cp.authenticate(secret, None, allow_pending=(op != "authenticate"))
         except cc.ScopeError:
             raise wire.Unauthenticated("legătură invalidă") from None
-        c = cp._c()
-        try:
-            iss = c.execute("SELECT principal_uid FROM binding_issuers WHERE binding_uid=?", (b["binding_uid"],)).fetchone()
-        finally:
-            c.close()
-        if not iss:
+        issuer = cp.binding_issuer(b["binding_uid"])
+        if not issuer:
             raise wire.Unauthenticated("legătură fără emitent")
-        if op != "authenticate" and not cp.can(iss["principal_uid"], "bootstrap", b["organization_uid"]):
+        if op != "authenticate" and not cp.can(issuer, "bootstrap", b["organization_uid"]):
             raise cc.PermissionDenied("capabilitatea BOOTSTRAP lipsește")
-        return Ctx("binding", secret, iss["principal_uid"], b["organization_uid"], b["cemetery_uid"], b["binding_uid"])
+        return Ctx("binding", secret, issuer, b["organization_uid"], b["cemetery_uid"], b["binding_uid"])
     raise wire.Unauthenticated("schemă de autentificare nepermisă pentru această operație")
 
 
@@ -154,7 +141,14 @@ def create_app(control_db: str, fault: Optional[Dict[str, Any]] = None, clock: C
     import asyncio
 
     import anyio
-    cp = cc.LocalControlPlane(control_db, clock=clock)
+    cp = cc.open_control_plane(control_db, clock=clock)
+
+    def serve(header, op, args, kw):
+        cp.begin_request()
+        try:
+            return _dispatch(cp, _authenticate(cp, header, op), op, args, kw)
+        finally:
+            cp.begin_request()
     app = FastAPI(title="Cimitir cloud simulator transport", docs_url=None, redoc_url=None, openapi_url=None)
     seen: Dict[str, int] = {}
 
@@ -169,7 +163,7 @@ def create_app(control_db: str, fault: Optional[Dict[str, Any]] = None, clock: C
                 args, kw = body.get("args", []), body.get("kwargs", {})
                 if not isinstance(args, list) or not isinstance(kw, dict):
                     raise ValueError("corp invalid")
-                result = await anyio.to_thread.run_sync(lambda: _dispatch(cp, _authenticate(cp, header, op), op, args, kw))
+                result = await anyio.to_thread.run_sync(lambda: serve(header, op, args, kw))
             except Exception as exc:  # noqa: BLE001
                 return _error(exc, secret)
             if fault and fault["op"] == op:

@@ -112,3 +112,4 @@ credentials.json
 registries/
 registry_catalog.sqlite*
 legacy_adopted_*/
+backend/pg:env
