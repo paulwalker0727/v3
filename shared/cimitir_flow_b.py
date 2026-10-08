@@ -20,6 +20,7 @@ import cimitir_cloud_staging as cs
 import cimitir_entities as ents
 import cimitir_identity as ident
 import cimitir_manifest as mf
+import cimitir_plan_guard as pg
 import cimitir_preflight as pf
 import cimitir_snapshot as snap
 import cimitir_transfer as tr
@@ -143,7 +144,7 @@ def execute_flow_b(binding, cp, store: SecretStore, actor: str, plan: Dict[str, 
         if key:
             cp.resume_run(key, bid, plan["plan_hash"])
         else:
-            cp.begin_run(code, inst, bid, "B", cem, plan["plan_hash"])
+            cp.begin_run(code, inst, bid, "B", cem, plan["plan_hash"], plan=pg.claim_for(plan))
         tick("after_begin")
         if not key:
             res = cp.redeem_code(code, inst, plan.get("device_name") or "MAIN", cem, plan.get("cemetery_name", ""), bootstrap_id=bid, pending=True)

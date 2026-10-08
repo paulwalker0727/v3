@@ -437,7 +437,8 @@ def execute_flow_a(binding, cp: cc.LocalControlPlane, store: SecretStore, plan: 
         if key:
             cp.resume_run(key, bid, plan["plan_hash"])
         else:
-            cp.begin_run(code, inst, bid, "A", binding.cemetery_uid, plan["plan_hash"])
+            import cimitir_plan_guard as pg
+            cp.begin_run(code, inst, bid, "A", binding.cemetery_uid, plan["plan_hash"], plan=pg.claim_for(plan))
         tick("after_begin")
         if not key:
             res = cp.redeem_code(code, inst, plan.get("device_name") or "MAIN", binding.cemetery_uid, plan.get("cemetery_name", ""), bootstrap_id=bid)

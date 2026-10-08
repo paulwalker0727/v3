@@ -1,2 +1,7 @@
+# F811 fals-pozitiv: fixture-ul pytest `env`/`renv` importat și primit ca parametru (doar testele Etapei 4).
 [lint.per-file-ignores]
-"backend/tests/*.py" = ["F811"]
+"backend/tests/test_etapa4_pas1_closure.py" = ["F811"]
+"backend/tests/test_etapa4_pas2_manifest.py" = ["F811"]
+"backend/tests/test_etapa4_pas3_transfer.py" = ["F811"]
+"backend/tests/test_etapa4_pas35_hardening.py" = ["F811"]
+"backend/tests/test_tester_extra_hardening.py" = ["F811"]

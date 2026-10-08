@@ -19,6 +19,7 @@ import cimitir_cloud_media as cm
 import cimitir_cloud_publish as cpub
 import cimitir_cloud_staging as cs
 import cimitir_cloud_wire as wire
+import cimitir_plan_guard as pg
 
 log = logging.getLogger("cimitir.cloud_http")
 PRE_BINDING_BOOTSTRAP = {"preflight_for_code", "begin_run", "redeem_code"}
@@ -29,8 +30,8 @@ MODULE_OPS = {"staging_open": cs.staging_open, "staging_status": cs.staging_stat
 
 
 class Ctx:
-    def __init__(self, kind: str, secret: str, actor: str, org: str, cem: Optional[str]):
-        self.kind, self.secret, self.actor, self.org, self.cem = kind, secret, actor, org, cem
+    def __init__(self, kind: str, secret: str, actor: str, org: str, cem: Optional[str], binding_uid: Optional[str] = None):
+        self.kind, self.secret, self.actor, self.org, self.cem, self.binding_uid = kind, secret, actor, org, cem, binding_uid
 
 
 def _used_code_ok(cp, row, op: str) -> bool:
@@ -78,7 +79,7 @@ def _authenticate(cp, header: str, op: str) -> Ctx:
             raise wire.Unauthenticated("legătură fără emitent")
         if op != "authenticate" and not cp.can(iss["principal_uid"], "bootstrap", b["organization_uid"]):
             raise cc.PermissionDenied("capabilitatea BOOTSTRAP lipsește")
-        return Ctx("binding", secret, iss["principal_uid"], b["organization_uid"], b["cemetery_uid"])
+        return Ctx("binding", secret, iss["principal_uid"], b["organization_uid"], b["cemetery_uid"], b["binding_uid"])
     raise wire.Unauthenticated("schemă de autentificare nepermisă pentru această operație")
 
 
@@ -98,6 +99,7 @@ def _dispatch(cp, ctx: Ctx, op: str, args: list, kw: dict) -> Any:
     if op in MODULE_OPS:
         _actor, org, cem, *rest = args
         _check_scope(ctx, org, cem)
+        pg.check_transfer(cp, ctx.binding_uid, ctx.org, ctx.cem, op, rest)  # Pasul 5.1: run B real al acestui binding, același plan/sursă, înainte de scriere
         if op == "publish_flow_b":
             rest[1] = ctx.secret
         return MODULE_OPS[op](cp, ctx.actor, ctx.org, ctx.cem, *rest, **{k: v for k, v in kw.items() if k != "hook"})
@@ -112,9 +114,13 @@ def _dispatch(cp, ctx: Ctx, op: str, args: list, kw: dict) -> Any:
         return cp.preflight_for_code(ctx.secret, args[1], args[2])
     if op == "begin_run":
         _check_scope(ctx, None, args[4])
-        return cp.begin_run(ctx.secret, args[1], args[2], args[3], args[4], args[5])
+        if not kw.get("plan"):
+            raise pg.PlanRejected("planul lipsește: serverul nu începe un bootstrap fără plan verificabil")
+        return cp.begin_run(ctx.secret, args[1], args[2], args[3], args[4], args[5], plan=kw["plan"])
     if op == "redeem_code":
         _check_scope(ctx, None, args[3])
+        if not kw.get("bootstrap_id"):
+            raise pg.PlanRejected("pairing-ul se face doar în cadrul unui bootstrap validat")
         return cp.redeem_code(ctx.secret, args[1], args[2], args[3], args[4] if len(args) > 4 else "", **kw)
     if op == "mark_failed_unauthenticated":
         _run_in_scope(cp, ctx, args[0])

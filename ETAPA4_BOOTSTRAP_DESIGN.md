@@ -481,11 +481,37 @@ Scope-ul (organizație/cimitir/actor) se derivă pe server din autorizare (`bind
 **Binding**: în Flux B se creează `pending` la `pair`, devine `active` NUMAI în tranzacția de publish; rollback/abandon pre-publish => `revoked`; `authenticate` (sync) acceptă doar `active`, operațiile de bootstrap acceptă `pending|active`. Flux A rămâne `active` din redeem (neschimbat).
 
 **HTTP**: 400 `REQUEST_INVALID/CONTRACT_INVALID/BATCH_CORRUPT/MEDIA_CORRUPT`, 401 `UNAUTHENTICATED/INVALID_CODE`, 403 `FORBIDDEN`, 404 `SCOPE_MISMATCH`, 409 `BOOTSTRAP_IN_PROGRESS/CONFLICT/BATCH_CONFLICT/SOURCE_DRIFT/SESSION_MISMATCH/ORDER_VIOLATION/PUBLISH_BLOCKED/MEDIA_MISSING/MEDIA_NOT_VERIFIED`,
-422 `ORPHAN_FK`, 500 `INTERNAL` (fără mesaj/traceback). Alegere: expirarea planului este verificată în MAIN (înainte de orice cerere) => nu se folosește 410; planul invalid/drift apare ca `PlanInvalidated`/`SOURCE_DRIFT`.
+422 `ORPHAN_FK`, 500 `INTERNAL` (fără mesaj/traceback). Alegere inițială (Pasul 5): expirarea planului era verificată doar în MAIN; **înlocuită în Pasul 5.1** de validarea pe server (410 `PLAN_EXPIRED`, vezi §13F).
 Cădere de conexiune/timeout: clientul retrimite aceeași cerere (serviciile sunt idempotente); dacă nu răspunde => `TransportError` (derivat din `Crash`): fără rollback orb, starea cloud e necunoscută, MAIN reia cu același plan.
 
 **Corecție de securitate găsită de testele adversariale**: `begin_run` nu verifica apartenența cimitirului la organizația codului (un cod al orgului B putea rezerva run-ul pe cimitirul orgului A). Acum => `ScopeError`.
 Fault injection (kill/delay după commit, înainte de răspuns) există DOAR în lansatorul de test `backend/tests/etapa4_http_server.py`. Nesupus: Supabase/PostgreSQL/Storage real/Render/Flux C-D-E/014/Sync V2; Windows DPAPI/PID/msvcrt NEVERIFICATE.
+
+## 13F. Pasul 5.1 — Validarea planului pe server (implementat; FastAPI local + simulator SQLite)
+
+**Principiu**: serverul nu crede MAIN și nici un client care îl ocolește. Modul: `shared/cimitir_plan_guard.py` (doar citire), apelat ÎNAINTEA oricărei scrieri: în tranzacția
+`begin_run`/`redeem_code`/`complete_run` (sub `BEGIN IMMEDIATE`, deci fără TOCTOU) și în stratul HTTP pentru staging/media/publish. Un refuz nu lasă nicio urmă în baza cloud
+(verificat prin amprenta completă a bazei). Contorul de încercări greșite pentru coduri (anti-bruteforce, Pasul 1) rămâne singura scriere intenționată la un refuz de cod.
+
+**`begin_run`** cere (prin HTTP obligatoriu, `kwargs.plan`) preimaginea `plan_hash` (`pg.claim_for(plan)`: `fields`, `created_at`, `expires_at`, plus manifestul local la B):
+- `bootstrap_id` = UUID canonic; `kind` ∈ {A, B} și egal cu decizia din plan;
+- `sha(fields) == plan_hash` (altfel 400 `PLAN_INVALID`);
+- tenant/scope: organizația și cimitirul din plan = cele derivate din cod (altfel 404 `SCOPE_MISMATCH`); instalarea din plan = cea a cererii;
+- expirare pe **ceasul serverului**: `now > expires_at` => 410 `PLAN_EXPIRED`; fereastră > `PLAN_TTL` sau `created_at` în viitor (> 60 s) => 400;
+- drift țintă: starea cloud recalculată pe server (A: exists/status/rows/tombstones/epocă; B: `stable_digest` al manifestului cloud) ≠ plan => 409 `TARGET_DRIFT`;
+- compatibilitate: A cere sursă goală (digesturi de liste vide) + țintă DRAFT/inexistentă goală; B cere sursă NONEMPTY + țintă DRAFT/inexistentă goală => altfel 409 `PLAN_BLOCKED`;
+- sursa (B): `stable_digest(local_manifest) == fields.local`; `content_digest`-ul sursei se înregistrează în run (`checkpoint.source_content_digest`).
+Reluare (același `bootstrap_id`): același plan/tip/cimitir/instalare; run `planned` => expirare + țintă reverificate; run închis => 409; run în curs => idempotent.
+
+**`redeem_code`** (HTTP: `bootstrap_id` obligatoriu): run existent în scope, aceeași instalare, stare `planned|running`, B ⇔ binding `pending`, A ⇔ `active`; run `planned`
+mai vechi decât `PLAN_TTL` (ceasul serverului) => 410. **`complete_run`**: doar Flux A (B se finalizează numai prin publish atomic) și doar cu ținta încă goală (altfel 409).
+**Transfer** (staging/media/publish): run B real, al ACESTUI binding, în scope, stare `running|verifying` pentru scrieri; `plan_hash` declarat = al run-ului (400) și
+`source_manifest_digest` declarat = cel înregistrat la begin (409 `SOURCE_DRIFT`); publish verifică apoi staging == sursă (Pasul 4) => lanț complet plan → sursă → staging → publish.
+Capabilitatea BOOTSTRAP se verifică la autentificare (Pasul 5), înainte de orice validare de plan.
+
+**HTTP**: 400 `PLAN_INVALID`, **410 `PLAN_EXPIRED`** (stabil), 409 `TARGET_DRIFT` / `PLAN_BLOCKED` / `SOURCE_DRIFT`; în MAIN fiecare cod redevine aceeași excepție (`pg.PlanExpired` …).
+**Limite**: conținutul MAIN nu e vizibil serverului; sursa e ancorată prin manifestul legat de `plan_hash` și verificată la publish. Apelurile in-process ale simulatorului
+(`LocalControlPlane.begin_run` fără `plan`, folosite de testele Pașilor 1–4) rămân permise; fluxurile A/B trimit mereu planul. Teste: `backend/tests/test_etapa4_pas51_server_validation.py`.
 
 ## 14. Ce NU face Etapa 4
 

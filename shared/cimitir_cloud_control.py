@@ -331,12 +331,16 @@ class LocalControlPlane:
             if row["cemetery_uid"] and row["cemetery_uid"] != cemetery_uid:
                 raise ScopeError("codul nu este valabil pentru acest cimitir")
             cem = c.execute("SELECT organization_uid FROM cemeteries WHERE uid=?", (cemetery_uid,)).fetchone()
+            if cem is not None and cem["organization_uid"] != org:
+                raise ScopeError("cimitir inexistent")
+            if bootstrap_id:
+                import cimitir_plan_guard as pg
+                run = c.execute("SELECT * FROM bootstrap_runs WHERE bootstrap_id=?", (bootstrap_id,)).fetchone()
+                pg.check_pairing(self, dict(run) if run else None, row, installation_uid, cemetery_uid, pending)
             if cem is None:
                 if row["cemetery_uid"]:
                     raise ScopeError("cimitir inexistent")
                 self._insert_cemetery(c, org, cemetery_uid, cemetery_name or "Cimitir")
-            elif cem["organization_uid"] != org:
-                raise ScopeError("cimitir inexistent")
             dev = c.execute("SELECT device_uid FROM devices WHERE organization_uid=? AND installation_uid=?", (org, installation_uid)).fetchone()
             device_uid = dev["device_uid"] if dev else str(uuid.uuid4())
             if not dev:
@@ -396,7 +400,13 @@ class LocalControlPlane:
             c.close()
 
     # ------------------------------------------------------------ bootstrap_runs (cloud)
-    def begin_run(self, code: str, installation_uid: str, bootstrap_id: str, kind: str, cemetery_uid: str, plan_hash: str) -> Dict[str, Any]:
+    def _expire_planned(self, c) -> None:
+        c.execute("UPDATE bootstrap_runs SET state='rolled_back', error='plan expirat', finished_at=? WHERE state='planned' AND created_at<?",
+                  (self.clock(), self.clock() - PLAN_TTL))
+
+    def begin_run(self, code: str, installation_uid: str, bootstrap_id: str, kind: str, cemetery_uid: str, plan_hash: str,
+                  plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """`plan` (Pasul 5.1) = preimaginea plan_hash: validată pe server ÎNAINTE de orice scriere (obligatorie prin HTTP)."""
         c = self._c()
         try:
             c.execute("BEGIN IMMEDIATE")
@@ -406,17 +416,23 @@ class LocalControlPlane:
             owner = c.execute("SELECT organization_uid FROM cemeteries WHERE uid=?", (cemetery_uid,)).fetchone()
             if owner and owner["organization_uid"] != row["organization_uid"]:
                 raise ScopeError("cimitirul aparține altei organizații")
-            c.execute("UPDATE bootstrap_runs SET state='rolled_back', error='plan expirat', finished_at=? WHERE state='planned' AND created_at<?",
-                      (self.clock(), self.clock() - PLAN_TTL))
+            if plan is None:
+                self._expire_planned(c)
             existing = c.execute("SELECT * FROM bootstrap_runs WHERE bootstrap_id=?", (bootstrap_id,)).fetchone()
+            meta = None
+            if plan is not None:
+                import cimitir_plan_guard as pg
+                meta = pg.check_begin(self, c, row, installation_uid, bootstrap_id, kind, cemetery_uid, plan_hash, plan, dict(existing) if existing else None)
             if existing:
                 if existing["plan_hash"] != plan_hash or existing["cemetery_uid"] != cemetery_uid:
                     raise ConflictError("bootstrap_id existent cu alt plan")
             else:
+                if plan is not None:
+                    self._expire_planned(c)
                 try:
-                    c.execute("INSERT INTO bootstrap_runs (bootstrap_id, organization_uid, cemetery_uid, kind, installation_uid, plan_hash, state, created_at)"
-                              " VALUES (?,?,?,?,?,?,'planned',?)",
-                              (bootstrap_id, row["organization_uid"], cemetery_uid, kind, installation_uid, plan_hash, self.clock()))
+                    c.execute("INSERT INTO bootstrap_runs (bootstrap_id, organization_uid, cemetery_uid, kind, installation_uid, plan_hash, state, checkpoint, created_at)"
+                              " VALUES (?,?,?,?,?,?,'planned',?,?)",
+                              (bootstrap_id, row["organization_uid"], cemetery_uid, kind, installation_uid, plan_hash, json.dumps(meta or {}, sort_keys=True), self.clock()))
                 except sqlite3.IntegrityError:
                     raise BootstrapLocked("un alt bootstrap este activ pentru acest cimitir") from None
             c.execute("COMMIT")
@@ -480,6 +496,15 @@ class LocalControlPlane:
             c.close()
 
     def complete_run(self, binding_key: str, bootstrap_id: str) -> Dict[str, Any]:
+        import cimitir_plan_guard as pg
+        b = self.authenticate(binding_key, allow_pending=True)
+        c = self._c()
+        try:
+            cur = c.execute("SELECT * FROM bootstrap_runs WHERE bootstrap_id=? AND cemetery_uid=?", (bootstrap_id, b["cemetery_uid"])).fetchone()
+            if cur and cur["state"] != "completed":
+                pg.check_complete(self, c, dict(cur))
+        finally:
+            c.close()
         run = self._transition(binding_key, bootstrap_id, ("verifying",), "completed")
         c = self._c()
         try:

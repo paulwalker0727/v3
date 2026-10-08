@@ -90,9 +90,9 @@ class RemoteControlPlane:
         self.pairing_code = code or self.pairing_code
         return self._call("preflight_for_code", [None, installation_uid, cemetery_uid])
 
-    def begin_run(self, code, installation_uid, bootstrap_id, kind, cemetery_uid, plan_hash):
+    def begin_run(self, code, installation_uid, bootstrap_id, kind, cemetery_uid, plan_hash, plan=None):
         self.pairing_code = code or self.pairing_code
-        return self._call("begin_run", [None, installation_uid, bootstrap_id, kind, cemetery_uid, plan_hash])
+        return self._call("begin_run", [None, installation_uid, bootstrap_id, kind, cemetery_uid, plan_hash], {"plan": plan})
 
     def redeem_code(self, code, installation_uid, device_name, cemetery_uid, cemetery_name="", bootstrap_id=None, pending=False):
         self.pairing_code = code or self.pairing_code

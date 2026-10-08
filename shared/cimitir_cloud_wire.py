@@ -10,6 +10,7 @@ from typing import Any, Dict, Tuple
 import cimitir_cloud_control as cc
 import cimitir_cloud_media as cm
 import cimitir_cloud_publish as cpub
+import cimitir_plan_guard as pg
 import cimitir_transfer_contract as tc
 
 API = "/api/v1"
@@ -38,7 +39,9 @@ ERRORS = [
     (tc.ConflictingBatch, 409, "BATCH_CONFLICT"), (tc.SourceDrift, 409, "SOURCE_DRIFT"), (tc.SessionMismatch, 409, "SESSION_MISMATCH"),
     (tc.OrderViolation, 409, "ORDER_VIOLATION"), (tc.OrphanFK, 422, "ORPHAN_FK"), (cm.MediaCorrupt, 400, "MEDIA_CORRUPT"), (tc.CorruptBatch, 400, "BATCH_CORRUPT"),
     (tc.ContractError, 400, "CONTRACT_INVALID"), (cm.MediaMissingBlocked, 409, "MEDIA_MISSING"), (cm.MediaNotVerified, 409, "MEDIA_NOT_VERIFIED"),
-    (cpub.PublishBlocked, 409, "PUBLISH_BLOCKED"), (tc.TransferBlocked, 409, "TRANSFER_BLOCKED"), (cc.ControlError, 400, "REQUEST_INVALID"),
+    (cpub.PublishBlocked, 409, "PUBLISH_BLOCKED"), (tc.TransferBlocked, 409, "TRANSFER_BLOCKED"),
+    (pg.PlanExpired, 410, "PLAN_EXPIRED"), (pg.TargetDrift, 409, "TARGET_DRIFT"), (pg.PlanBlocked, 409, "PLAN_BLOCKED"), (pg.PlanRejected, 400, "PLAN_INVALID"),
+    (cc.ControlError, 400, "REQUEST_INVALID"),
 ]
 CODE_TO_CLASS = {code: cls for cls, _s, code in ERRORS}
 

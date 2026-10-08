@@ -27,7 +27,7 @@ from test_etapa4_pas1 import World, env  # noqa: F401
 from test_etapa4_pas1_closure import renv  # noqa: F401
 from test_etapa4_pas3_transfer import q
 from test_etapa4_pas4_flux_b import assert_completed, b_world, cem_state, cloud_counts, outbox_rows
-from test_etapa4_pas5_http import db, http_kw, http_plan, run_b_http, start_server
+from test_etapa4_pas5_http import begin_b, db, http_kw, http_plan, run_b_http, start_server
 
 
 # ---------- helpers ----------
@@ -70,8 +70,8 @@ def test_every_op_rejects_missing_auth_wrong_scheme_and_secret_in_query(renv):
     _p, url, _ = start_server(env)
     # creează un cod binding valid pentru org1 (nu-l vom folosi corect)
     rcp = ccl.RemoteControlPlane(url, code)
-    rcp.begin_run(code, env.inst, str(uuid.uuid4()), "A", b.cemetery_uid, "p" * 64)
-    key = rcp.redeem_code(code, env.inst, "D", b.cemetery_uid, bootstrap_id=None, pending=False)["binding_key"]
+    _plan, bid = begin_b(env, w.owner1, b, code, rcp)
+    key = rcp.redeem_code(code, env.inst, "D", b.cemetery_uid, bootstrap_id=bid, pending=True)["binding_key"]
 
     for op, (path, auth) in wire.OPS.items():
         full = url + wire.API + path
@@ -158,8 +158,7 @@ def test_pending_binding_rejected_on_auth_endpoint_but_allowed_on_bootstrap(renv
     w, b, code = b_world(env)
     _p, url, _ = start_server(env)
     rcp = ccl.RemoteControlPlane(url, code)
-    bid = str(uuid.uuid4())
-    rcp.begin_run(code, env.inst, bid, "B", b.cemetery_uid, "p" * 64)
+    _plan, bid = begin_b(env, w.owner1, b, code, rcp)
     res = rcp.redeem_code(code, env.inst, "D1", b.cemetery_uid, bootstrap_id=bid, pending=True)
     key = res["binding_key"]
     # pending → /auth/binding = 401
@@ -176,8 +175,7 @@ def test_revoked_binding_key_returns_401_everywhere(renv):
     w, b, code = b_world(env)
     _p, url, _ = start_server(env)
     rcp = ccl.RemoteControlPlane(url, code)
-    bid = str(uuid.uuid4())
-    rcp.begin_run(code, env.inst, bid, "B", b.cemetery_uid, "p" * 64)
+    _plan, bid = begin_b(env, w.owner1, b, code, rcp)
     key = rcp.redeem_code(code, env.inst, "D1", b.cemetery_uid, bootstrap_id=bid, pending=True)["binding_key"]
     # revocăm
     _post(url, "revoke_by_key", [None], auth=f"Binding {key}")
@@ -195,8 +193,7 @@ def test_rollback_pre_publish_invalidates_old_key_everywhere(renv):
     w, b, code = b_world(env)
     _p, url, _ = start_server(env)
     rcp = ccl.RemoteControlPlane(url, code)
-    bid = str(uuid.uuid4())
-    rcp.begin_run(code, env.inst, bid, "B", b.cemetery_uid, "p" * 64)
+    _plan, bid = begin_b(env, w.owner1, b, code, rcp)
     key = rcp.redeem_code(code, env.inst, "D1", b.cemetery_uid, bootstrap_id=bid, pending=True)["binding_key"]
     r = _post(url, "rollback_run", [None, bid], auth=f"Binding {key}")
     assert r.status_code == 200, r.text
@@ -231,15 +228,14 @@ def test_concurrent_duplicate_requests_single_effect(renv):
     w, b, code = b_world(env)
     _p, url, _ = start_server(env)
     # (a) redeem concurent cu același cod → cel puțin unul primește răspuns valid, consumul rămâne 1
-    bid = str(uuid.uuid4())
     rcp = ccl.RemoteControlPlane(url, code)
-    rcp.begin_run(code, env.inst, bid, "B", b.cemetery_uid, "p" * 64)
+    _plan, bid = begin_b(env, w.owner1, b, code, rcp)
     results = []
 
     def do_redeem():
         try:
-            r = _post(url, "redeem_code", [None, env.inst, "D", b.cemetery_uid, ""],
-                      auth=f"Pairing {code}", timeout=10.0)
+            r = _post(url, "redeem_code", None, auth=f"Pairing {code}", timeout=10.0,
+                      raw_body=json.dumps({"args": [None, env.inst, "D", b.cemetery_uid, ""], "kwargs": {"bootstrap_id": bid, "pending": True}}))
             results.append(r.status_code)
         except Exception as e:
             results.append(("err", str(type(e).__name__)))
@@ -350,7 +346,7 @@ def test_forced_internal_error_does_not_leak_secret_or_traceback(renv, monkeypat
     key = env.cp.redeem_code(code, env.inst, "D", b.cemetery_uid, bootstrap_id=bid, pending=True)["binding_key"]
 
     r = client.post(wire.API + wire.OPS["staging_open"][0],
-                    json={"args": [None, b.organization_uid, b.cemetery_uid, bid, "x", "y"]},
+                    json={"args": [None, b.organization_uid, b.cemetery_uid, bid, {"plan_hash": "p" * 64}, "y"]},
                     headers={"Authorization": f"Binding {key}"})
     assert r.status_code == 500 and r.json()["code"] == "INTERNAL"
     txt = r.text

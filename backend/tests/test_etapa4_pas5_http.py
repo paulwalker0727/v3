@@ -22,21 +22,22 @@ import cimitir_cloud_http as ch
 import cimitir_cloud_wire as wire
 import cimitir_flow_b as fb
 import cimitir_manifest as mf
+import cimitir_plan_guard as pg
 import cimitir_snapshot as snap
 import cimitir_transfer_contract as tc
 from test_etapa4_pas1 import World, env  # noqa: F401
 from test_etapa4_pas1_closure import finish, kill9, renv, spawn, wait_marker  # noqa: F401
 from test_etapa4_pas3_transfer import q
-from test_etapa4_pas4_flux_b import assert_completed, b_world, cem_state, cloud_counts, outbox_rows
+from test_etapa4_pas4_flux_b import DATA, assert_completed, b_world, cem_state, cloud_counts, outbox_rows, put_local
 
 SERVER = Path(__file__).resolve().parent / "etapa4_http_server.py"
 
 
-def start_server(env, fault=None, port=None):
+def start_server(env, fault=None, port=None, clock_file=None):
     port = port or _free_port()
     (env.tmp / "logs").mkdir(exist_ok=True)
     log = open(env.tmp / "logs" / f"server-{port}.log", "a")
-    p = subprocess.Popen([sys.executable, str(SERVER), str(env.cp.path), str(port), json.dumps(fault) if fault else ""], stdout=log, stderr=log)
+    p = subprocess.Popen([sys.executable, str(SERVER), str(env.cp.path), str(port), json.dumps(fault) if fault else "", str(clock_file or "")], stdout=log, stderr=log)
     env.procs.append(p)
     url = f"http://127.0.0.1:{port}"
     end = time.time() + 30
@@ -65,6 +66,13 @@ def renv_logs(renv):
 
 def db(env, query, *args):
     return q(env.cp.path, query, *args)
+
+
+def begin_b(env, actor, b, code, rcp):
+    """Pasul 5.1: bootstrap B început cu un plan REAL (validat pe server). Întoarce (plan, bootstrap_id)."""
+    plan = fb.plan_flow_b(b, rcp, actor, env.inst)
+    rcp.begin_run(code, env.inst, plan["bootstrap_id"], "B", b.cemetery_uid, plan["plan_hash"], plan=pg.claim_for(plan))
+    return plan, plan["bootstrap_id"]
 
 
 def run_b_http(env, w, b, code, url, hook=None, rcp=None, plan=None, **kw):
@@ -150,9 +158,11 @@ def test_raw_http_contract_auth_and_no_generic_endpoints(renv_logs):
         assert httpx.post(url + wire.API + path, json={}, headers=H).status_code in (404, 405)
     for path in ("/docs", "/openapi.json", wire.API + "/openapi.json"):
         assert httpx.get(url + path).status_code == 404
-    other = httpx.post(url + wire.API + wire.OPS["begin_run"][0], headers=H, json={"args": [None, env.inst, str(uuid.uuid4()), "B", b.cemetery_uid, "h" * 64]})
+    plan = fb.plan_flow_b(b, ccl.RemoteControlPlane(url, code), w.owner1, env.inst)
+    claim = {"plan": pg.claim_for(plan)}
+    other = httpx.post(url + wire.API + wire.OPS["begin_run"][0], headers=H, json={"args": [None, env.inst, str(uuid.uuid4()), "B", b.cemetery_uid, plan["plan_hash"]], "kwargs": claim})
     assert other.status_code == 200
-    second = httpx.post(url + wire.API + wire.OPS["begin_run"][0], headers=H, json={"args": [None, env.inst, str(uuid.uuid4()), "B", b.cemetery_uid, "h" * 64]})
+    second = httpx.post(url + wire.API + wire.OPS["begin_run"][0], headers=H, json={"args": [None, env.inst, str(uuid.uuid4()), "B", b.cemetery_uid, plan["plan_hash"]], "kwargs": claim})
     assert second.status_code == 409 and second.json()["code"] in ("BOOTSTRAP_IN_PROGRESS", "CONFLICT")  # bootstrap concurent
     assert db(env, "SELECT COUNT(*) FROM bootstrap_runs")[0][0] == 1
 
@@ -285,8 +295,8 @@ def test_adversarial_scope_and_no_cross_tenant_or_secret_leakage(renv_logs):
     key1 = rcp1.key
     bid1 = plan1["bootstrap_id"]
     # org B: cod valid pentru cimitirul B, bootstrap început pe B
-    bid2 = str(uuid.uuid4())
-    rcp2.begin_run(code2, env.inst, bid2, "B", other.cemetery_uid, "p" * 64)
+    put_local(other, DATA)
+    _plan2, bid2 = begin_b(env, w.owner2, other, code2, rcp2)
     key2 = rcp2.redeem_code(code2, env.inst, "MAIN2", other.cemetery_uid, bootstrap_id=bid2, pending=True)["binding_key"]
 
     def post(op, args, auth):
@@ -310,7 +320,8 @@ def test_adversarial_scope_and_no_cross_tenant_or_secret_leakage(renv_logs):
               post("mark_failed_unauthenticated", [bid2, env.inst, "x"], f"Pairing {code}")):
         assert r.status_code in (403, 404) and r.json()["code"] in ("SCOPE_MISMATCH", "FORBIDDEN"), r.text
     assert httpx.post(url + wire.API + wire.OPS["begin_run"][0], headers={"Authorization": f"Pairing {prov2}"},
-                      json={"args": [None, env.inst, str(uuid.uuid4()), "B", b.cemetery_uid, "h" * 64]}).status_code in (403, 404)   # cod de provizionare străin pe cimitirul A
+                      json={"args": [None, env.inst, str(uuid.uuid4()), "B", b.cemetery_uid, "h" * 64],
+                            "kwargs": {"plan": {"kind": "B", "fields": {}, "created_at": 0, "expires_at": 0}}}).status_code in (403, 404)   # cod de provizionare străin pe cimitirul A
     with pytest.raises((cc.ScopeError, cc.PermissionDenied, cc.CodeError)):
         ccl.RemoteControlPlane(url, prov2).redeem_code(prov2, env.inst, "X", b.cemetery_uid, bootstrap_id=str(uuid.uuid4()))
     assert db(env, "SELECT status FROM bindings WHERE cemetery_uid=?", other.cemetery_uid) == [("pending",)]   # B neatins de A
