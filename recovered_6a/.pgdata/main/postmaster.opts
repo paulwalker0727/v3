@@ -1,0 +1,1 @@
+/usr/lib/postgresql/15/bin/postgres "-D" "/app/.pgdata/main" "-p" "55432" "-c" "listen_addresses=127.0.0.1" "-c" "unix_socket_directories=/tmp"
