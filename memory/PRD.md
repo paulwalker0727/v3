@@ -10,3 +10,9 @@
 
 ## Etapa 4 Pasul 3.5 — Hardening (în /app/v2)
 - shared/cimitir_identity.py (cloud_entity_identity + promovare atomică), batching canonic, kill real, staging STALE, permisiune `bootstrap` ≠ `rebuild`; 19 teste + 9 teste suplimentare de la testing agent. Suită: 405 passed / 3 legacy failed. Testing agent: fără probleme (iteration_1.json).
+
+## Etapa 4 Pasul 4 — Flux B MAIN existent → cloud nou (în /app/v2, doar simulator local) — 2026-08
+- Module noi: shared/cimitir_flow_b.py (plan/execute reluabil/abort), cimitir_snapshot.py (cut atomic + arhivare outbox), cimitir_cloud_media.py (bytes media pe bucăți, verificare strictă), cimitir_cloud_publish.py (publish atomic, epoca 1). Extinse: cimitir_identity.py (cloud_media_identity pending→active), cimitir_transfer.py (sursă snapshot, media după local_ref, upload_media), cimitir_manifest.py (_local_ref), cimitir_cloud_staging.py (snapshot_from), cimitir_bootstrap.py (incomplete_bootstrap include `verifying`).
+- Teste: test_etapa4_pas4_flux_b.py (30), test_etapa4_pas4_crash.py (25, SIGKILL real), test_etapa4_pas4_tester_extra.py (13, testing agent). Suită: 469+ passed, 3 legacy failed neschimbate. Raport testing agent: /app/test_reports/iteration_2.json (fără probleme).
+- NEVERIFICAT: Windows DPAPI / PID / msvcrt lock (rulate manual de utilizator). Mocked: cloud = LocalControlPlane SQLite; SecretStore de test.
+- Rămâne (neimplementat, la cererea utilizatorului): Flux C/D/E, PostgreSQL/Supabase TEST, migrarea 014, endpoint-uri HTTP, Sync V2.
