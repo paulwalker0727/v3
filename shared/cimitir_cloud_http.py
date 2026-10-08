@@ -89,7 +89,7 @@ def _check_scope(ctx: Ctx, org: Any = None, cem: Any = None) -> None:
 
 
 def _run_in_scope(cp, ctx: Ctx, bid: str) -> Dict[str, Any]:
-    run = cp.get_run(bid)
+    run = cp.get_run(pg.require_bid(bid))
     if run["organization_uid"] != ctx.org or (ctx.cem is not None and run["cemetery_uid"] != ctx.cem):
         raise cc.ScopeError("bootstrap inexistent în scope")
     return run
@@ -116,11 +116,13 @@ def _dispatch(cp, ctx: Ctx, op: str, args: list, kw: dict) -> Any:
         _check_scope(ctx, None, args[4])
         if not kw.get("plan"):
             raise pg.PlanRejected("planul lipsește: serverul nu începe un bootstrap fără plan verificabil")
+        pg.require_bid(args[2])
         return cp.begin_run(ctx.secret, args[1], args[2], args[3], args[4], args[5], plan=kw["plan"])
     if op == "redeem_code":
         _check_scope(ctx, None, args[3])
         if not kw.get("bootstrap_id"):
             raise pg.PlanRejected("pairing-ul se face doar în cadrul unui bootstrap validat")
+        pg.require_bid(kw["bootstrap_id"])
         return cp.redeem_code(ctx.secret, args[1], args[2], args[3], args[4] if len(args) > 4 else "", **kw)
     if op == "mark_failed_unauthenticated":
         _run_in_scope(cp, ctx, args[0])

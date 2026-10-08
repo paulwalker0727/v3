@@ -60,6 +60,13 @@ def _uuid(v: Any) -> bool:
         return False
 
 
+def require_bid(v: Any) -> str:
+    """bootstrap_id vine de la client: UUID canonic (text), altfel 400 — înainte de orice interogare."""
+    if not isinstance(v, str) or not _uuid(v):
+        raise PlanRejected("bootstrap_id invalid (UUID)")
+    return v
+
+
 def meta(run: Dict[str, Any]) -> Dict[str, Any]:
     try:
         return json.loads(run.get("checkpoint") or "{}")
@@ -165,7 +172,7 @@ def check_complete(cp, c, run: Dict[str, Any]) -> None:
 def check_transfer(cp, binding_uid: str, org: str, cem: str, op: str, rest: list) -> None:
     """Operațiile de transfer (staging/media/publish) cer un run B real, al acestui binding, în starea potrivită, legat de același plan și aceeași sursă."""
     contract = rest[0] if op == "staging_put_batch" else None
-    bid = contract.get("bootstrap_id") if isinstance(contract, dict) else rest[0]
+    bid = require_bid(contract.get("bootstrap_id") if isinstance(contract, dict) else rest[0])
     run = cp.get_run(bid)
     if run["organization_uid"] != org or run["cemetery_uid"] != cem or run["binding_uid"] != binding_uid:
         raise cc.ScopeError("bootstrap inexistent în scope")

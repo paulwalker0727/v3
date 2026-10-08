@@ -27,3 +27,10 @@
 - Fișierele reale din github.com/paulwalker0727/v2 @ 862d8a8 (git archive, fără .git) copiate în rădăcina v3; gitlink `v2` eliminat; memory/ și test_reports/ din v3 păstrate; rapoartele vechi v2 în test_reports/v2_history/, PRD-ul v2 în memory/PRD_v2_862d8a8.md; frontend/yarn.lock (șablon) eliminat.
 - Suită completă (`cd backend && pytest tests`): 540 passed / 3 failed legacy (test_etapa1_audit route `/api/m/{token}/info`, 2× test_etapa9b_cloud_config — lipsă backend/.env* din clonă) / 154 skipped / 1 error (lipsă PyMuPDF în mediu; după instalare 8/8 PASS) → efectiv 541 passed. Etapa 4: 321 passed, 2 skipped, 0 failed. Fără regresii noi. Fără push; producție neatinsă.
 
+
+## Etapa 4 Pasul 5.1 — validarea planului pe server (v3, FastAPI local + simulator SQLite) — 2026-10-08
+- Pre-verificări: clonă curată v3 OK (cod real, fără gitlink v2, 30× shared/cimitir_*.py, teste Etapa 4, ETAPA4_BOOTSTRAP_DESIGN.md); ruff.toml restrâns la F811 pe 5 fișiere de test Etapa 4; PyMuPDF declarat în backend/requirements.txt (pymupdf==1.28.2; era deja în requirements-render.txt și desktop/requirements.txt).
+- Nou: shared/cimitir_plan_guard.py (check_begin/check_pairing/check_complete/check_transfer, claim_for, require_bid). Server: plan_hash recalculat din preimagine, expirare pe ceasul serverului (410 PLAN_EXPIRED), bootstrap_id UUID, scope, stare run, drift țintă (409 TARGET_DRIFT), compatibilitate flux (409 PLAN_BLOCKED), sursă legată de plan (409 SOURCE_DRIFT la staging/publish), B fără complete_run. HTTP: plan obligatoriu la begin_run, bootstrap_id obligatoriu la pair. Zero scrieri la refuz (amprenta bazei).
+- Teste: test_etapa4_pas51_server_validation.py (26) + test_etapa4_pas51_tester_extra.py (39, testing agent; bug minor 500→400 la bootstrap_id non-text corectat). Testele Pasului 5 care foloseau plan fals ("p"*64) prin HTTP folosesc acum planuri reale. Suită: 606 passed / 3 legacy failed / 154 skipped; Etapa 4: 395 passed, 2 skipped. Raport: test_reports/iteration_4.json.
+- Neimplementat (la cerere): Supabase/PostgreSQL TEST, Pasul 6A, Flux C/D/E, 014, Sync V2. Producție neatinsă.
+

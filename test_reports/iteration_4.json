@@ -1,0 +1,43 @@
+{
+  "summary": "Etapa 4 / Pasul 5.1 — validare pe server (FastAPI local, simulator SQLite). Suita originală trece 26/26. Regresia pentru Etapa 4 (Pașii 1-5 + hardening + tester_extra Pas 4/5) rulează 356 passed, 2 skipped. Am scris /app/backend/tests/test_etapa4_pas51_tester_extra.py cu 39 teste adversariale noi care acoperă bypass-urile cerute (cross-tenant valid-claim, replay cu bootstrap_id nou după completare, mix fields(X)/plan_hash(Y), scrieri după rollback, publish cu cheia altui binding, claim-uri malformate ca listă/string/int/null/bool/dict gol/fields=listă/fields=string/ttl negativ/foarte mare/nested/unicode, timestamps NaN/Inf/negative/zero/far_future, injecție în fields.*_uid, lipsă kwargs, bootstrap_id de tipuri exotice la redeem, created_at > now + MAX_CLOCK_SKEW). Toate: 39/39 PASS. Combinat Pas 5.1 + extras: 65/65 PASS. UN SINGUR comportament sub-ideal găsit și raportat: la redeem_code cu bootstrap_id=[1,2] serverul întoarce 500 INTERNAL (mascat corect, fără scurgeri, fără scrieri) în loc de 400 REQUEST_INVALID.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/.../redeem_code",
+        "issue": "bootstrap_id = [1,2] (listă JSON) determină răspuns 500 INTERNAL (codul `_h(bootstrap_id)` sau cast-ul UUID lovesc TypeError înainte de a ajunge la plan_guard). Răspunsul NU scurge secretul și NU se scrie nimic în baza cloud (confirmat prin amprenta SHA-256). Ar fi preferabil 400 REQUEST_INVALID. Idem probabil pentru alte rute care primesc bootstrap_id ca string și nu validează tipul (ex: resume_run, rollback_run, mark_verifying) — nu a fost testat exhaustiv aici."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_etapa4_pas51_tester_extra.py",
+    "/app/backend/tests/test_etapa4_pas51_server_validation.py"
+  ],
+  "action_items": [
+    "OPȚIONAL (nu blochează Pasul 5.1): în cimitir_cloud_http._dispatch sau în validarea pre-handler pentru redeem_code (și operații similare), aruncă explicit cc.ControlError('REQUEST_INVALID') dacă bootstrap_id nu este `str`/UUID înainte să ajungă la `_h(...)`. Rezultatul va fi 400 în loc de 500 la liste/obiecte malformate. Securitatea nu e afectată (invarianții de zero-scriere și zero-scurgere sunt respectați chiar și acum)."
+  ],
+  "critical_code_review_comments": [
+    "cimitir_plan_guard.check_begin: validează corect sha(fields)==plan_hash, apartenența scope-ului, UUID-ul, fereastra de valabilitate (TTL + skew), kind, source clasificare + digest; `_check_source` leagă criptografic manifestul sursei de plan_hash prin f['local']=stable_digest(lm), deci atacatorul nu poate înlocui manifestul fără a sparge plan_hash. Verificat prin test (fields_tampered, source_manifest_tampered, rehashed_forged_target).",
+    "check_begin.existing: la reluare idempotentă re-verifică plan_hash/kind/scope/inst și refuză failed/rolled_back cu 409 CONFLICT. Expirarea se reverifică pe server doar în `planned`. Verificat (test_begin_retry_with_same_valid_plan_is_idempotent, test_server_clock_expiry_refuses_planned_run_and_main_rolls_back).",
+    "check_transfer: pentru staging_open/staging_put_batch/publish_flow_b verifică plan_hash declarat vs. run.plan_hash și source_manifest_digest vs. digestul înregistrat la begin (ancorat în meta[source_content_digest]). Deci chiar și o cheie de binding validă nu poate schimba sursa post-begin. Verificat prin SOURCE_DRIFT.",
+    "cross-binding/cross-scope: scope-ul (organization_uid, cemetery_uid, binding_uid) e verificat primul în check_transfer; cheia binding A pentru binding B => SCOPE_MISMATCH. Verificat în test_publish_with_other_bindings_key_refused_crossbinding.",
+    "cimitir_cloud_http._error maschează secretul prin str.replace; nu scurge trace la 500 INTERNAL (verificat în test_redeem_with_list_bootstrap_id_does_not_leak_or_write).",
+    "Toate scrierile sunt sub `cp.transaction()` după check_begin / check_pairing / check_transfer; un refuz lasă baza intactă — verificat prin amprenta SHA-256 a bazei la 60+ scenarii adversariale (toate cazurile din CASES, drift, forbidden, timestamps, malformed, rollback, cross-binding).",
+    "wire.OPS[redeem_code] și begin_run sunt singurele rute care primesc kwargs (plan / bootstrap_id); pentru begin_run lipsa plan => PLAN_INVALID. Pentru redeem_code lipsa bootstrap_id => PLAN_INVALID. Verificat.",
+    "ERRORS cuprinde: PLAN_EXPIRED→410, TARGET_DRIFT/PLAN_BLOCKED/SOURCE_DRIFT→409, PLAN_INVALID→400, SCOPE_MISMATCH→404, FORBIDDEN→403, INVALID_CODE/UNAUTHENTICATED→401. Verificat în test_plan_error_codes_are_stable_and_roundtrip + extra."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_etapa4_pas51_tester_extra.py (nou, nu modifică /app/shared/)"
+  ],
+  "success_rate": {
+    "backend": "100% (Pas 5.1 original 26/26 + adversarial nou 39/39 = 65/65; regresia Etapa 4 completă: 356 passed, 2 skipped)",
+    "frontend": "N/A (backend only)"
+  },
+  "test_credentials": "Niciuna — totul local (SQLite temp + uvicorn 127.0.0.1 pe port liber). Pairing codes și binding keys generate on-the-fly de LocalControlPlane.",
+  "seed_data_creation": "Fiecare test folosește fixture-urile existente (b_world, World, renv) din suita Etapa 4; fără seed persistent.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_etapa4_pas51_tester_extra.py acoperă bypass-urile NOI pentru Pasul 5.1 (cross-tenant valid-claim, replay post-complete, mix X/Y, writes-after-rollback, cross-binding publish, 15 claim-uri malformate, 8 timestamps bizare, scope-injection în fields, redeem cu bootstrap_id de tip exotic). Invariantul testat peste tot: amprenta SHA-256 a bazei cloud nu se schimbă la niciun refuz înainte de validare. Observă comportamentul 500 INTERNAL pentru redeem_code cu bootstrap_id=[1,2] (listă) — rămâne un bug minor de UX, nu de securitate. Rularea completă durează ~45s cu -n 2.",
+  "rca of the issue": "redeem_code 500 cu bootstrap_id listă: în cimitir_cloud_control.redeem_code (sau funcții apelate înainte de plan_guard.check_pairing) se face probabil `uuid.UUID(bid)` sau `_h(bid)` fără guard de tip, aruncând AttributeError/TypeError când bid este `list`. _error îl mapează la 500 INTERNAL. Mitigare recomandată: adaugă în check_pairing (sau în _dispatch înainte de apel) un `if not isinstance(bid, str): raise PlanRejected('bootstrap_id invalid')`. Fără implicații de securitate — scrierile nu se produc, secretele nu se scurg."
+}
