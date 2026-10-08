@@ -16,3 +16,9 @@
 - Teste: test_etapa4_pas4_flux_b.py (30), test_etapa4_pas4_crash.py (25, SIGKILL real), test_etapa4_pas4_tester_extra.py (13, testing agent). Suită: 469+ passed, 3 legacy failed neschimbate. Raport testing agent: /app/test_reports/iteration_2.json (fără probleme).
 - NEVERIFICAT: Windows DPAPI / PID / msvcrt lock (rulate manual de utilizator). Mocked: cloud = LocalControlPlane SQLite; SecretStore de test.
 - Rămâne (neimplementat, la cererea utilizatorului): Flux C/D/E, PostgreSQL/Supabase TEST, migrarea 014, endpoint-uri HTTP, Sync V2.
+
+## Etapa 4 Pasul 5 — FastAPI local transport A/B (în /app/v2, simulator SQLite, fără Supabase) — 2026-08
+- Nou: shared/cimitir_cloud_wire.py (contract /api/v1, coduri de eroare), cimitir_cloud_http.py (server, rute fixe), cimitir_cloud_client.py (RemoteControlPlane), cimitir_remote.py (@remotable). Auth: `Pairing <cod>` (pre-binding) / `Binding <cheie>`; binding B `pending` → `active` doar la publish; scope derivat server-side.
+- Bug de securitate găsit/corectat: begin_run nu verifica org-ul cimitirului față de cod (cross-tenant).
+- Teste: test_etapa4_pas5_http.py (39) + test_etapa4_pas5_tester_extra.py (20, testing agent). Suită: 521+ passed, 3 legacy failed neschimbate. Raport: /app/test_reports/iteration_3.json (fără probleme).
+- NEVERIFICAT: Windows DPAPI/PID/msvcrt. Neimplementat (la cerere): Supabase/PostgreSQL/Storage real/Render, Flux C/D/E, 014, Sync V2.

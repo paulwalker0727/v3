@@ -1,0 +1,38 @@
+{
+  "summary": "Etapa 4 / Pasul 5 – FastAPI local transport (Flux A/B peste HTTP, simulator SQLite). Rulat suita Pasului 5 (39/39) și regresia Etapa 4 Pașii 1-4 (262 passed, 2 skipped). Scris /app/v2/backend/tests/test_etapa4_pas5_tester_extra.py cu 20 teste adversariale noi, toate PASS. Fără bug-uri de implementare depistate.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/v2/backend/tests/test_etapa4_pas5_http.py",
+    "/app/v2/backend/tests/test_etapa4_pas5_tester_extra.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "cimitir_cloud_http._error maschează secretul doar prin str.replace(secret, '***'); nu are listă de secrete multiple (în request-ul curent secretul e doar cel din header, deci e corect, dar notează invariantul). Codul 500 (INTERNAL) nu include mesajul excepției, doar clasa – bine.",
+    "cimitir_cloud_http.create_app: ruta /health este publică (fără auth). Este intenționat (health-check), dar răspunsul expune `version`: 1 – informație publică, acceptabil.",
+    "wire.OPS include revoke_by_key ca binding-only; cheia revocată întoarce 401, însă nu există o rută dedicată de 'listare bindings active', ceea ce e corect pentru minimalism.",
+    "În _dispatch, publish_flow_b suprascrie rest[1] = ctx.secret – clientul nu poate injecta altă cheie. Bun.",
+    "Serverul ascultă pe 127.0.0.1 (vezi etapa4_http_server.py argv-ul uvicorn.run host='127.0.0.1'). Verificat.",
+    "Niciun import de psycopg/supabase/render în cimitir_cloud_http.py, cimitir_cloud_client.py, cimitir_cloud_wire.py, cimitir_remote.py. Verificat."
+  ],
+  "updated_files": [
+    "/app/v2/backend/tests/test_etapa4_pas5_tester_extra.py (fișier nou, nu modifică /app/v2/shared)"
+  ],
+  "success_rate": {
+    "backend": "100% (Pas 5 original 39/39 + adversarial nou 20/20 + regresia Pași 1-4: 262 passed, 2 skipped)",
+    "frontend": "N/A (backend only)"
+  },
+  "test_credentials": "Niciuna – fără autentificare externă. Toate secretele (pairing codes, binding keys) sunt generate on-the-fly de LocalControlPlane în fiecare test.",
+  "seed_data_creation": "Fiecare test își creează propriul World (Platform Admin + 2 organizații) și cimitire DRAFT via b_world(); folderele sunt tmp_path, control-plane SQLite în /tmp/pytest-of-root/.../cloud/control.sqlite.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Fișierul /app/v2/backend/tests/test_etapa4_pas5_tester_extra.py acoperă: (1) autentificare / schemă greșită / secret în query / JSON invalid / args de tip greșit pe FIECARE rută din wire.OPS; (2) scope cross-tenant pe toate rutele cu parametri de scope (export_snapshot, staging_*, media_*, publish_flow_b, get_run, resume_run, rollback_run, mark_verifying, verify_empty, complete_run, authenticate); (3) binding pending acceptat pe operațiile de bootstrap dar refuzat pe /auth/binding; cheie revocată → 401 oriunde; (4) rollback pre-publish → cheia veche = 401 pe toate; (5) răspuns pierdut (fault delay) pe staging_cleanup/media_verify/media_cleanup/verify_empty/complete_run → zero dubluri; (6) redeem concurent cu același cod → maxim un binding activ; (7) server omorât la staging_open/media_finalize/mark_verifying + resume din MAIN + digest cloud == sursă; (8) Flux A peste HTTP cu răspuns pierdut pe begin_run/redeem_code/complete_run; (9) scanare scurgeri plaintext+base64+url-encoded în control.sqlite(+wal), loguri server, registru local; forțare 500 INTERNAL via TestClient+monkeypatch pentru staging_open → răspunsul NU conține secretul, nici 'Traceback', nici textul excepției; (10) /docs, /redoc, /openapi.json, /sql, /exec, /db, /cloud/query și rute generice → 404. Nu se modifică nimic în /app/v2/shared/.",
+  "rca of the issue": "N/A – nicio problemă de implementare depistată. În timpul dezvoltării testelor am făcut o eroare locală (json.dumps pe bytes) corectată imediat prin folosirea wire.encode în helper-ul _post (bytes → {'__b64__': ...})."
+}
