@@ -1,0 +1,30 @@
+{
+  "summary": "Independently verified ETAPA 4 / PAS 3.5 HARDENING on /app/v2 (python/pytest, local-only). Ran the 5 target hardening files single-process (-n 0): 185 passed + 2 skipped (Windows-only DPAPI/msvcrt). Added 9 extra independent tester checks in test_tester_extra_hardening.py (all passing) covering: durable cloud UID identity + idempotent atomic promote, release-ordering rules, IdentityConflict rolls back all rows and leaves witness untouched, identities scoped per cemetery_uid and reused on second bootstrap, deterministic batching under 5 random shuffles of local_snapshot, SourceDrift on altered uid_map in bootstrap_state/<id>.sqlite, PERMISSIONS['bootstrap']=={OWNER} and PERMISSIONS['rebuild']=={OWNER,REBUILD}, Admin/REBUILD/stranger/other-tenant-owner denied all staging functions (PermissionDenied or ScopeError), stale session refuses put_batch and does NOT delete rows/batches, and zero live DB writes after full transfer. Full regression suite (/app/v2/backend `pytest -q`): 405 passed / 3 failed / 154 skipped in 210s. The 3 failures are the known LEGACY ones (test_etapa1_audit::test_route_inventory_uses_only_clear_prefixes and 2 in test_etapa9b_cloud_config needing backend/.env + .env.example absent from the clone). No regressions, no deviations from expected numbers.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/v2/backend/tests/test_tester_extra_hardening.py",
+    "/app/v2/backend/tests/test_etapa4_pas35_hardening.py",
+    "/app/v2/backend/tests/test_etapa4_pas3_transfer.py",
+    "/app/v2/backend/tests/test_etapa4_pas2_manifest.py",
+    "/app/v2/backend/tests/test_etapa4_pas1.py",
+    "/app/v2/backend/tests/test_etapa4_pas1_closure.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "cimitir_cloud_staging._session raises ScopeError (not PermissionDenied) for other-tenant/stranger access even if cp._require passes for same-tenant case; this is intentional (information-leak hardening) but worth documenting so callers catch both exception types.",
+    "promote_transfer idempotency verified: second call returns {promoted: True, already: True, row_count: N}; witness table cloud_identity_promotions is the single source of truth. Good design.",
+    "release_local_state correctly refuses in both pre-completion and pre-promotion states (TransferBlocked).",
+    "Transfer._batches re-canonicalizes snap on every call and verifies against meta['batch_digests'] from plan time -> drift detection is robust against both source row-order changes and uid_map tampering (SourceDrift). Confirmed over 5 random shuffle seeds.",
+    "Identity scope: cloud_entity_identity has UNIQUE partial indexes on (cemetery_uid, entity_type, local_ref) WHERE status='active' and (cemetery_uid, entity_type, cloud_uid) WHERE status='active' -> correctly enforces one active cloud_uid per entity per cemetery and prevents cross-cemetery leakage.",
+    "No code was modified under /app/v2/shared/ as instructed."
+  ],
+  "updated_files": ["/app/v2/backend/tests/test_tester_extra_hardening.py (new)"],
+  "success_rate": {"backend": "100% of target hardening tests (185/185 non-skipped) + 9/9 extra tester tests; 405/408 full suite (3 pre-existing legacy failures, unchanged)", "frontend": "n/a"},
+  "test_credentials": "none required (local SQLite only)",
+  "seed_data_creation": "none (uses in-fixture tmp dirs and LocalControlPlane)",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "If retested, run `cd /app/v2/backend && python -m pytest -q -n 0 tests/test_tester_extra_hardening.py tests/test_etapa4_pas35_hardening.py tests/test_etapa4_pas3_transfer.py tests/test_etapa4_pas2_manifest.py tests/test_etapa4_pas1.py tests/test_etapa4_pas1_closure.py` -> expect 194 passed + 2 skipped. Full suite `pytest -q` takes ~3.5min, expect 405/3/154 baseline. The 3 legacy failures live in test_etapa1_audit.py and test_etapa9b_cloud_config.py and are environmental (missing backend/.env* files in this clone).",
+  "rca of the issue": "No new issues found. All PAS 3.5 hardening properties (durable identity, atomic promote, deterministic batching, process-kill resume, stale metadata, bootstrap vs rebuild permissions, zero live writes, cross-tenant isolation) verified both via existing suite and 9 independent tester-authored checks."
+}

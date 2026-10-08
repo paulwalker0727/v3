@@ -7,3 +7,6 @@
 
 ## Etapa 4 Pasul 3 — Transfer contract + staging (în /app/v2)
 - shared/cimitir_transfer_contract.py, cimitir_cloud_staging.py, cimitir_transfer.py + backend/tests/test_etapa4_pas3_transfer.py (23 teste), design §13B. Suită: 386 passed, 3 legacy failed (neschimbate). Nu e Flux B; live neatins; producție neatinsă.
+
+## Etapa 4 Pasul 3.5 — Hardening (în /app/v2)
+- shared/cimitir_identity.py (cloud_entity_identity + promovare atomică), batching canonic, kill real, staging STALE, permisiune `bootstrap` ≠ `rebuild`; 19 teste + 9 teste suplimentare de la testing agent. Suită: 405 passed / 3 legacy failed. Testing agent: fără probleme (iteration_1.json).
