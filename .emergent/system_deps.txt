@@ -1,0 +1,2 @@
+postgresql-15=15.19-0+deb12u1
+postgresql-client-15=15.19-0+deb12u1

@@ -1,0 +1,1 @@
+/usr/lib/postgresql/15/bin/postgres "-D" "/app/recovered_6a/work/pgdata_copy" "-p" "55432" "-c" "listen_addresses=" "-k" "/tmp/pgrec"
