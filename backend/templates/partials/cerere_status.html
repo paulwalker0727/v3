@@ -1,0 +1,2 @@
+{% set _m = {'nou':'Nou','validat':'Validat','respins':'Respins'} %}
+<span class="cerere-badge cs-{{ c.status }}">{{ _m.get(c.status, c.status) }}</span>

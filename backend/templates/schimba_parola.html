@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Schimbă parola · Administrare Cimitire</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="access-body" data-testid="change-password-screen">
+  <div class="access-bg"></div>
+  <main class="access-main">
+    <div class="access-inner">
+      <h1 class="access-h1">Schimbă parola</h1>
+      <p class="access-lead" data-testid="change-password-lead">
+        {% if forced %}Contul <b>{{ user.username }}</b> folosește o parolă implicită. Alege o parolă nouă pentru a continua.
+        {% else %}Contul <b>{{ user.username }}</b>: introdu parola curentă și alege una nouă.{% endif %}
+      </p>
+      {% if error %}<div class="access-error" data-testid="change-password-error">{{ error }}</div>{% endif %}
+      <form method="post" action="/admin/schimba-parola" class="db-card db-login" style="max-width:420px;margin-top:20px">
+        <input name="old_password" type="password" placeholder="Parola curentă" autocomplete="current-password" data-testid="old-password-input" required />
+        <input name="new_password" type="password" placeholder="Parola nouă (minim {{ min_len }} caractere)" autocomplete="new-password" minlength="{{ min_len }}" data-testid="new-password-input" required />
+        <input name="confirm_password" type="password" placeholder="Confirmă parola nouă" autocomplete="new-password" minlength="{{ min_len }}" data-testid="confirm-password-input" required />
+        <button type="submit" class="btn-gold" data-testid="change-password-submit">Salvează parola</button>
+        <button type="submit" formaction="/admin/logout" formmethod="post" formnovalidate class="btn-outline-light" style="text-align:center;cursor:pointer" data-testid="change-password-logout">Deconectare</button>
+      </form>
+    </div>
+  </main>
+</body>
+</html>

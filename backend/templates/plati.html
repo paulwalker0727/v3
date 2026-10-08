@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Plăți & chitanțe{% endblock %}
+{% block content %}
+{% from 'partials/_att.html' import attbtn %}
+<div data-testid="plati-page">
+  <div class="page-head"><div><h1 class="page-title">Plăți & chitanțe</h1><p class="page-sub">Evidența încasărilor.</p></div></div>
+  <div class="total-card">
+    <div class="tc-left"><i data-lucide="wallet"></i><span>Total încasat</span></div>
+    <span class="tc-val mono" data-testid="plati-total">{{ total|lei }}</span>
+  </div>
+  <div class="card table-card" data-testid="plati-table">
+    <div class="table-head-bar">
+      <div class="search"><i data-lucide="search"></i><input placeholder="Caută..." data-search-input="plati" data-testid="plati-table-search" /></div>
+      <span class="count" data-count="plati">{{ rows|length }} înregistrări</span>
+    </div>
+    <div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Chitanță</th><th>Loc</th><th>Sumă</th><th>Data</th><th>Tip</th><th></th></tr></thead>
+      <tbody data-rows="plati">
+        {% for r in rows %}
+        <tr class="{{ 'clickable' if r.cod_loc }}" data-search="{{ r.chitanta_nr }} {{ r.cod_loc }} {{ r.tip }}"
+            {% if r.cod_loc %}onclick="openDrawer('{{ r.cod_loc }}')"{% endif %}>
+          <td class="mono">{{ r.chitanta_nr or '—' }}</td>
+          <td class="mono">{{ r.cod_loc or '—' }}</td>
+          <td class="mono strong">{{ r.suma|lei }}</td>
+          <td class="mono">{{ r.data_plata }}</td>
+          <td>{{ r.tip or '—' }}</td>
+          <td class="att-cell">{{ attbtn('plata', r.id) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}<script>initTableFilters('plati');</script>{% endblock %}

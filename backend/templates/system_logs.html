@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Loguri{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Loguri aplicație</h1><p class="muted-xs"><a href="/admin/system" data-testid="logs-back">← Sistem</a> · jurnalul aplicației (fără parole/chei; valorile secrete sunt mascate) · {{ logs.count }} linii afișate</p></div>
+<div class="card">
+  <form method="get" action="/admin/system/logs" class="sys-actions">
+    <label>Linii <select name="lines" data-testid="logs-lines">{% for n in (100, 200, 500, 1000) %}<option value="{{ n }}" {{ 'selected' if n == lines }}>{{ n }}</option>{% endfor %}</select></label>
+    <label><input type="checkbox" name="errors" value="1" {{ 'checked' if errors_only }} data-testid="logs-errors-only"> doar avertismente/erori</label>
+    <button class="btn-ghost" type="submit" data-testid="logs-refresh">Reîncarcă</button>
+  </form>
+  {% if logs.note %}<p class="muted-xs" data-testid="logs-note">{{ logs.note }}</p>{% endif %}
+  <pre data-testid="logs-text" style="white-space:pre-wrap;max-height:65vh;overflow:auto;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;font-size:12px">{{ logs.text }}</pre>
+</div>
+{% endblock %}

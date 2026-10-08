@@ -1,0 +1,39 @@
+# --- UI ---
+PySide6>=6.5.0
+
+# --- Documente / rapoarte ---
+python-docx>=1.0.0
+openpyxl>=3.1.0
+reportlab>=4.0
+qrcode[pil]>=7.4
+Pillow>=10.0.0
+
+# --- Web mode (opțional dar recomandat) ---
+fastapi>=0.110
+uvicorn>=0.29
+pyjwt>=2.8
+python-multipart>=0.0.9
+
+# --- Licențiere (Ed25519) + integrare vechea securitate ---
+cryptography>=42.0.0
+requests>=2.31.0
+
+# --- DB encryption (opțional, doar Windows — comentat implicit) ---
+# pysqlcipher3-wheels>=0.5.4; sys_platform == "win32"
+
+# --- Modul AI Scanare (Gemini 3 Flash via Emergent LLM Key) ---
+emergentintegrations @ git+https://github.com/emergentbase/emergentintegrations.git
+python-dotenv>=1.0.0
+
+# --- Motor Google Gemini cu cheie proprie (ecran ⚙️ Setări AI) ---
+google-genai>=1.0.0
+
+# --- OCR offline fallback (opțional, se activează dacă e instalat) ---
+pytesseract>=0.3.13
+
+# --- OpenCV pentru preprocesare imagini OCR (deskew, CLAHE, denoise) ---
+opencv-python-headless>=4.8
+numpy>=1.24
+
+# --- Suport PDF (extragere text + convertire pagini la imagine) ---
+PyMuPDF>=1.24

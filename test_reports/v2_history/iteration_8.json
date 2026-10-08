@@ -1,0 +1,30 @@
+{
+  "summary": "Full E2E verification of Etapa 5 (MAIN authority), startup unification, forced password change, and online-mode sync monitoring. Backend suite 74/74 passed (pytest xdist -n2); desktop suite 204 passed + 2 skipped (QT_QPA_PLATFORM=offscreen, ignore test_qr_scanning). Preview backend (local mode, port 8001): /portal 200, /portal/harta 200, /api/public/health 200, /public/loc/A-1 -> 307 Location:/portal/loc/A-1, /api/sync/ping -> 404. Isolated local server on :8123 with tmp data dir: admin/admin123 login -> 303 /admin/schimba-parola; forced change with NouaParola!99 -> 303 /admin/; all 12 admin pages (dashboard, cereri, monitorizare, setari, utilizatori, harta, locuri, inhumati, contracte, concesionari, plati, rapoarte) return 200; all 5 portal pages return 200. Submitted public cerere -> id=1, cod_urmarire returned; admin POST /admin/ui/cerere/1/status with status=validat/respins -> 403 {detail:{error:'main_only'}}; POST /admin/ui/loc/A-1/contract -> 403 same; /admin/cereri HTML contains data-testid cerere-main-only-1 and does NOT contain cerere-approve- / cerere-reject- / create_contract; GET /api/public/cerere/CR-... status still 'nou'; unauthenticated POST approve -> 401. Isolated online server on :8124 with issued sync key (cimitir.HkZgN...): /api/sync/ping with X-Sync-Key+X-Sync-Client -> 200; POST /api/sync/status with pending=3, host, last_success, last_error='timeout <script>' -> 200; pending=-1 -> 422 'pending invalid'; without key -> 401; /admin/monitorizare renders sync-clients-table with sync-client-/sync-pending-/sync-error-/sync-stale- rows and HTML-escaped '&lt;script&gt;', shows 'Actuală' for fresh report; local mode /api/sync/status -> 404. Startup unification: start_local.py --portal-only on :8125 health 200; launcher.py --portal on :8126 health 200; /app/desktop/web_public.py absent; launcher imports start_local.ensure_portal; cimitir.spec datas include templates/static/fonts/doc_templates and hiddenimports include start_local/sync_api/citizen_api; (note: /app/backend/cimitir/web_public.py still exists — this is the portal module, NOT the deleted legacy desktop one, and is intentionally imported by server.py and listed in spec hiddenimports). Dedicated tests test_main_password_gate.py (1) + test_startup_unification.py (8) = 9 passed when run in isolation. Config examples /app/config/cimitir-{local,online-main,online-server}.env.example and /app/MODURI_RULARE.md and /app/scripts/configure_main_sync.py all present. No regressions, no application code modified.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/test_reports/pytest/iter8_backend.xml",
+    "/app/test_reports/pytest/iter8_desktop.xml",
+    "/app/backend/tests/test_etapa5_main_authority.py",
+    "/app/desktop/tests/test_main_password_gate.py",
+    "/app/desktop/tests/test_startup_unification.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py cerere_status / loc_contract corect returneaza 403 JSON {error:'main_only', message:...} in loc de UI/redirect — enforced in BACKEND, nu doar hidden in template.",
+    "/admin/cereri render corect emite data-testid cerere-main-only-{id} si nu mai contine butoanele cerere-approve-/cerere-reject-/create_contract — hiding + 403 complet aliniate.",
+    "sync_api.POST /api/sync/status valideaza pending (422 pt. negativ/non-numeric), escape HTML in last_error la render in monitorizare.html (nu XSS), trunchiere OK; stale flag calculat corect vs stale_minutes=15.",
+    "start_local.ensure_portal + portal_cli unificat; launcher.py importa start_local si reutilizeaza acelasi path pentru dev si frozen (Cimitir.exe --portal). Legacy desktop/web_public.py sters, nicio referinta ramasa in desktop/.",
+    "login_window._force_password_change dialog objectName='force-password-dialog' functioneaza; cimitir_auth.password_change_required(user_id) True inainte / False dupa schimbare; main.py refuza useri cu parola default — testat in test_main_password_gate.py.",
+    "Observație minoră nu-blocantă: /admin/monitorizare pentru un deployment real cu mai mulți clienți ar beneficia de pagination (acum truncheaza last_error dar nu limiteaza numarul de randuri); nu afecteaza task-ul curent.",
+    "Observație: /app/backend/cimitir/web_public.py este portalul (modulul care expune /portal/* si /public/loc/*), nu versiunea legacy — corect pastrat si listat in spec hiddenimports."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "74/74 (100%)", "desktop": "204 passed + 2 skipped (100%)", "e2e_admin_flow": "100%", "sync_api": "100%", "startup_unification": "100%"},
+  "test_credentials": "admin/admin123 (forced change), new strong pw used in tests: NouaParola!99 — pe foldere temporare, nu se atinge /app/shared_data",
+  "seed_data_creation": "folosit /tmp/t1, /tmp/t2, /tmp/t3 doar pentru rulari izolate; nicio modificare in /app/shared_data",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Toate cerintele Etapa 5 + startup unification + MAIN password gate + sync monitoring verificate end-to-end pe Linux. NU se poate verifica in acest preview: (1) build real Windows / Inno Setup / signtool, (2) rulare licentiata MAIN pe Windows cu HTTPS catre un server extern. Pentru verificare umana pe server (fara isolated instances) foloseste comanda din request: `cd /app/backend && CIMITIR_DATA_DIR=/tmp/tX CIMITIR_PORTAL_REQUIRE_ACCOUNT=0 CIMITIR_ENV_FILE=/tmp/nonexistent.env python -m uvicorn server:app --port 81xx` + script /tmp/admin_flow.py pastrat in sesiune.",
+  "rca of the issue": "N/A — nicio problema detectata. Toate cele 8 scenarii cerute (preview backend, admin login+forced change, 403 main_only enforcement, sync API+monitorizare, MAIN password gate, startup unificat, regresie, pagini neschimbate) trec complet."
+}

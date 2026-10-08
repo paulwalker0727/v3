@@ -1,0 +1,6 @@
+<div class="card sys-result" data-testid="sys-result" role="status">
+  <h3 class="card-title" data-testid="sys-result-title">{{ result.title }}: <span class="sys-pill {{ 'ok' if result.ok else 'err' }}" data-testid="sys-result-verdict">{{ 'OK' if result.ok else 'ATENȚIE' }}</span></h3>
+  <ul class="sys-lines">
+  {% for kind, text in result.lines %}<li class="sys-line {{ kind }}" data-testid="sys-result-line-{{ loop.index }}"><b>{{ {'ok': 'OK', 'warn': 'AVERTISMENT', 'err': 'EROARE'}[kind] }}</b> — {{ text }}</li>{% endfor %}
+  </ul>
+</div>

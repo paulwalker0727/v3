@@ -1,0 +1,138 @@
+{
+ "reset_tmp_admin": {
+  "pass": null,
+  "total": null,
+  "fails": [],
+  "exit": 0,
+  "sec": 6
+ },
+ "t3_admin_flow": {
+  "pass": 26,
+  "total": 26,
+  "fails": [],
+  "exit": 0,
+  "sec": 29
+ },
+ "t4_sync": {
+  "pass": 29,
+  "total": 29,
+  "fails": [],
+  "exit": 0,
+  "sec": 70
+ },
+ "t4b_reverse": {
+  "pass": 17,
+  "total": 17,
+  "fails": [],
+  "exit": 0,
+  "sec": 36
+ },
+ "t5_idem": {
+  "pass": 21,
+  "total": 21,
+  "fails": [],
+  "exit": 0,
+  "sec": 39
+ },
+ "t6_conflict": {
+  "pass": 16,
+  "total": 17,
+  "fails": [
+   "/admin/monitorizare afiseaza conflictele"
+  ],
+  "exit": 0,
+  "sec": 45
+ },
+ "t6b_resolve": {
+  "pass": 9,
+  "total": 9,
+  "fails": [],
+  "exit": 0,
+  "sec": 60
+ },
+ "t9_tomb": {
+  "pass": 14,
+  "total": 14,
+  "fails": [],
+  "exit": 0,
+  "sec": 137
+ },
+ "t2_storage": {
+  "pass": 22,
+  "total": 22,
+  "fails": [],
+  "exit": 0,
+  "sec": 20
+ },
+ "t7_offline": {
+  "pass": 29,
+  "total": 29,
+  "fails": [],
+  "exit": 0,
+  "sec": 81
+ },
+ "t10_portal": {
+  "pass": 38,
+  "total": 38,
+  "fails": [],
+  "exit": 0,
+  "sec": 65
+ },
+ "t10b_request_to_main": {
+  "pass": 7,
+  "total": 8,
+  "fails": [
+   "MAIN A are documentul cererii local, SHA256 identic cu cel trimis de cetatean"
+  ],
+  "exit": 0,
+  "sec": 23
+ },
+ "t1_persist": {
+  "pass": null,
+  "total": null,
+  "fails": [],
+  "exit": 0,
+  "sec": 11
+ },
+ "t1_persist_after": {
+  "pass": null,
+  "total": null,
+  "fails": [],
+  "exit": 0,
+  "sec": 8
+ },
+ "t11_security": {
+  "pass": 28,
+  "total": 29,
+  "fails": [
+   "cookie sesiune admin: Secure (cerut in mod online/HTTPS)  [lipseste]"
+  ],
+  "exit": 0,
+  "sec": 63
+ },
+ "t11b_logs_audit": {
+  "pass": 22,
+  "total": 23,
+  "fails": [
+   "log-uri: 'db_host' nu apare  [['backend.err.log']]"
+  ],
+  "exit": 0,
+  "sec": 8
+ },
+ "t13_backup": {
+  "pass": 6,
+  "total": 6,
+  "fails": [],
+  "exit": 0,
+  "sec": 42
+ },
+ "t14_recovery": {
+  "pass": 21,
+  "total": 22,
+  "fails": [
+   "Storage indisponibil: nu raman documente de cerere fara obiect in Storage (date inconsistente)  [documente orfane: 1]"
+  ],
+  "exit": 0,
+  "sec": 67
+ }
+}

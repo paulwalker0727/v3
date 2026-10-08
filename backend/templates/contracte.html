@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Contracte{% endblock %}
+{% block content %}
+{% from 'partials/_att.html' import attbtn %}
+<div data-testid="contracte-page">
+  <div class="page-head"><div><h1 class="page-title">Contracte de concesiune</h1><p class="page-sub">Toate contractele. Click pentru fișa locului.</p></div></div>
+  <div class="card table-card" data-testid="contracte-table">
+    <div class="table-head-bar">
+      <div class="search"><i data-lucide="search"></i><input placeholder="Caută..." data-search-input="contracte" data-testid="contracte-table-search" /></div>
+      <span class="count" data-count="contracte">{{ rows|length }} înregistrări</span>
+    </div>
+    <div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Nr. contract</th><th>Loc</th><th>Concesionar</th><th>Data</th><th>Expiră</th><th></th></tr></thead>
+      <tbody data-rows="contracte">
+        {% for c in rows %}
+        <tr class="{{ 'clickable' if c.cod_loc }}" data-search="{{ c.numar_contract }} {{ c.cod_loc }} {{ c.concesionar_nume }}"
+            {% if c.cod_loc %}onclick="openDrawer('{{ c.cod_loc }}')"{% endif %}>
+          <td class="mono strong">{{ c.numar_contract or '—' }}</td>
+          <td class="mono">{{ c.cod_loc or '—' }}</td>
+          <td>{{ c.concesionar_nume or c.owner_fullname or '—' }}</td>
+          <td class="mono">{{ c.data_contract or '—' }}</td>
+          <td class="mono">{% if c.data_sfarsit %}<span class="expira">{{ c.data_sfarsit }}</span>{% else %}—{% endif %}</td>
+          <td class="att-cell">{{ attbtn('contract', c.id) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}<script>initTableFilters('contracte');</script>{% endblock %}

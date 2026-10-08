@@ -1,0 +1,15 @@
+<div class="att-panel hist-panel" data-testid="history-panel">
+  <div class="att-head"><span class="att-ent">Istoric · {{ ent.label }}</span> <b>{{ ent.title }}</b> <span class="att-count" data-testid="history-count">{{ events|length }}</span></div>
+  <button class="att-btn" hx-get="/admin/att/{{ ent.type }}/{{ ent.id }}" hx-target="closest .hist-panel" hx-swap="outerHTML" data-testid="history-back"><i data-lucide="arrow-left"></i><span>Înapoi la atașamente</span></button>
+  {% if not events %}<p class="empty" data-testid="history-empty">Nicio modificare înregistrată.</p>{% endif %}
+  {% for e in events %}
+  <div class="hist-item" data-testid="history-item">
+    <div class="hist-top"><b>{{ e.action }}</b><span class="muted-xs">{{ e.ts }}</span></div>
+    <div class="muted-xs">{{ e.actor }}{% if e.actor_type %} ({{ e.actor_type }}){% endif %}</div>
+    {% for c in e.changes %}<div class="hist-chg"><span class="k">{{ c.field }}</span>
+      {% if c.old is not none %}<span class="old">{{ c.old }}</span>{% endif %}{% if c.old is not none and c.new is not none %} → {% endif %}{% if c.new is not none %}<span class="new">{{ c.new }}</span>{% endif %}</div>{% endfor %}
+    {% if e.extra %}<div class="muted-xs">{{ e.extra }}</div>{% endif %}
+  </div>
+  {% endfor %}
+  <script>if(window.lucide)lucide.createIcons();</script>
+</div>

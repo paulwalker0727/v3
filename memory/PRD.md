@@ -22,3 +22,8 @@
 - Bug de securitate găsit/corectat: begin_run nu verifica org-ul cimitirului față de cod (cross-tenant).
 - Teste: test_etapa4_pas5_http.py (39) + test_etapa4_pas5_tester_extra.py (20, testing agent). Suită: 521+ passed, 3 legacy failed neschimbate. Raport: /app/test_reports/iteration_3.json (fără probleme).
 - NEVERIFICAT: Windows DPAPI/PID/msvcrt. Neimplementat (la cerere): Supabase/PostgreSQL/Storage real/Render, Flux C/D/E, 014, Sync V2.
+
+## Import v2@862d8a8 în v3 (repo final) — 2026-10-08
+- Fișierele reale din github.com/paulwalker0727/v2 @ 862d8a8 (git archive, fără .git) copiate în rădăcina v3; gitlink `v2` eliminat; memory/ și test_reports/ din v3 păstrate; rapoartele vechi v2 în test_reports/v2_history/, PRD-ul v2 în memory/PRD_v2_862d8a8.md; frontend/yarn.lock (șablon) eliminat.
+- Suită completă (`cd backend && pytest tests`): 540 passed / 3 failed legacy (test_etapa1_audit route `/api/m/{token}/info`, 2× test_etapa9b_cloud_config — lipsă backend/.env* din clonă) / 154 skipped / 1 error (lipsă PyMuPDF în mediu; după instalare 8/8 PASS) → efectiv 541 passed. Etapa 4: 321 passed, 2 skipped, 0 failed. Fără regresii noi. Fără push; producție neatinsă.
+

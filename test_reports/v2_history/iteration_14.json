@@ -1,0 +1,34 @@
+{
+  "summary": "Backend-only verification of Supabase online configuration (PostgreSQL pooler + Storage) via public ingress + read-only scripts. All required checks PASS: /api/health returns database=postgres, database_status=online, server_status=online; /portal and /admin return 200; /api/sync/ping without key returns 401; HTTP responses contain NO secret markers (pooler.supabase.com, project id txuxkjgftopznvmooexq, postgresql://, sb_secret). scripts/check_postgres.py: 31/31 tables, migrations 1-7 applied, PG 17.11, latency ~98ms avg. scripts/verify_online_startup.py: 13 PASS, 2 WARN (JWT_SECRET, AI key — non-blocking), only accepted FAIL = CIMITIR_PUBLIC_URL unconfigured. /tmp/sb_check.py: DB on pooler:5432 as user postgres.<proj> with sslmode=require, 31 public tables, SupabaseStorage driver, auth_ok=True, bucket PRIVATE (public=False, exists=True); upload/download/SHA256-match/delete of _test/verify-<uuid>.bin all OK. No real data mutated, no SQLite migration, no schema change, no secrets printed (output sanitized).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "verify_online_startup.py", "issue": "CIMITIR_PUBLIC_URL unconfigured — accepted per task; required for mobile QR / MAIN public URL in prod"},
+      {"endpoint": "sb_check.py", "issue": "pg_stat_ssl reports ssl=False via Supabase session pooler (sslmode=require is on client side); informational only — connection goes through pooler proxy so backend session is not directly SSL at pg_stat level. Not a failure."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/scripts/verify_online_startup.py",
+    "/app/scripts/check_postgres.py",
+    "/tmp/sb_check.py"
+  ],
+  "action_items": [
+    "Configure CIMITIR_PUBLIC_URL (https) in backend/.env before production rollout so mobile QR + MAIN sync have the correct public base URL.",
+    "Optionally set JWT_SECRET to persist sessions across redeploys on ephemeral-disk hosts (Render).",
+    "AI engine disabled (no GEMINI_API_KEY/EMERGENT_LLM_KEY) — expected per 'prima etapă'."
+  ],
+  "critical_code_review_comments": [
+    "scripts/check_postgres.py correctly opens read-only connection (conn.read_only = True) and sanitizes DATABASE_URL/password in exceptions via pg_compat.redact — good defense-in-depth.",
+    "verify_online_startup.py only reports CONFIGURAT/NECONFIGURAT for secrets, never echoes values — safe for sharing output.",
+    "/tmp/sb_check.py uses prefix _test/ with uuid-suffixed key; delete is verified post-op; no residual TEST file in bucket (confirmed exists=False after delete)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "not used — login flows not tested per request",
+  "seed_data_creation": "transient _test/verify-<uuid>.bin uploaded then deleted; nothing left behind",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Public ingress REACT_APP_BACKEND_URL serves /api, /portal, /admin correctly. Supabase pooler is at aws-0-eu-west-1.pooler.supabase.com:5432; bucket cimitir-private is PRIVATE. Always redact pooler host, project id (txuxkjgftopznvmooexq) and sb_secret in output. The only accepted FAIL in verify_online_startup.py is CIMITIR_PUBLIC_URL. SSL reported as False via pg_stat_ssl is a known pooler quirk, not a bug.",
+  "rca of the issue": "N/A — no bug. All acceptance criteria from the review request met."
+}

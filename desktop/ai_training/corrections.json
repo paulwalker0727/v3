@@ -1,0 +1,11 @@
+{
+  "text_replacements": {
+    "Sibi": "Sibiu"
+  },
+  "field_replacements": {
+    "localitate": {
+      "Sibi": "Sibiu"
+    }
+  },
+  "cnp_patterns": {}
+}

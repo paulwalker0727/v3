@@ -1,0 +1,15 @@
+# Dependențe pentru portalul/administrarea web (backend/server.py, rulat de start_local.py).
+# Instalează cu:  pip install -r web_requirements.txt
+# MongoDB (pymongo) NU este necesar: rămâne opțional, activat doar cu CIMITIR_ENABLE_MONGO=1.
+fastapi>=0.110
+uvicorn>=0.29
+jinja2>=3.1
+pyjwt>=2.8
+python-multipart>=0.0.9
+qrcode[pil]>=7.4
+reportlab>=4.0
+openpyxl>=3.1
+# PostgreSQL (server.py importă psycopg la pornire, chiar și în mod SQLite): varianta [binary] aduce libpq pe Windows
+psycopg[binary]>=3.2
+psycopg-pool>=3.2
+requests>=2.31

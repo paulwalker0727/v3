@@ -1,0 +1,42 @@
+{% from 'partials/_att.html' import attbtn %}
+{% if short %}<p class="empty" data-testid="search-short">Introduceți cel puțin 2 caractere.</p>
+{% elif q and total == 0 %}<p class="empty" data-testid="search-empty">Niciun rezultat pentru „{{ q }}”.</p>
+{% elif not q %}<p class="empty">Începeți să scrieți pentru a căuta.</p>{% endif %}
+
+{% if res.locuri %}<h3 class="res-title">Locuri de veci <span class="muted-xs">{{ res.locuri|length }}</span></h3>
+{% for p in res.locuri %}
+<div class="res-card" onclick="openDrawer('{{ p.cod_loc }}')" data-testid="res-loc-{{ p.cod_loc }}">
+  <div><div class="strong mono">{{ p.cod_loc }}</div><div class="muted-xs">{{ p.localizare or '—' }}</div></div>
+  {% with status=p.status %}{% include 'partials/status_badge.html' %}{% endwith %}
+  <div class="res-act">{{ attbtn('loc', p.cod_loc) }}</div>
+</div>{% endfor %}{% endif %}
+
+{% if res.inhumati %}<h3 class="res-title">Înhumați <span class="muted-xs">{{ res.inhumati|length }}</span></h3>
+{% for r in res.inhumati %}
+<div class="res-card {{ 'clickable' if r.cod_loc }}" {% if r.cod_loc %}onclick="openDrawer('{{ r.cod_loc }}')"{% endif %} data-testid="res-inhumat-{{ r.id }}">
+  <div><div class="strong">{{ r.nume_complet or '—' }}</div><div class="muted-xs">Loc {{ r.cod_loc or '—' }}{% if r.data_deces %} · decedat {{ r.data_deces }}{% endif %}</div></div>
+  <div class="res-act">{{ attbtn('inhumat', r.id) }}</div>
+</div>{% endfor %}{% endif %}
+
+{% if res.concesionari %}<h3 class="res-title">Concesionari <span class="muted-xs">{{ res.concesionari|length }}</span></h3>
+{% for r in res.concesionari %}
+<div class="res-card" data-testid="res-conces-{{ r.id }}">
+  <div><div class="strong">{{ (r.nume ~ ' ' ~ r.prenume)|trim or '—' }}</div>
+    <div class="muted-xs">{% if r.telefon %}<a href="tel:{{ r.telefon }}" onclick="event.stopPropagation()" class="tel"><i data-lucide="phone"></i> {{ r.telefon }}</a>{% endif %}{% if r.cnp %} · CNP {{ r.cnp }}{% endif %}</div></div>
+  <div class="res-act">{{ attbtn('concesionar', r.id) }}{% if can_write %}<a class="att-btn" href="/admin/concesionari?edit={{ r.id }}"><i data-lucide="pencil"></i><span>Editează</span></a>{% endif %}</div>
+</div>{% endfor %}{% endif %}
+
+{% if res.contracte %}<h3 class="res-title">Contracte <span class="muted-xs">{{ res.contracte|length }}</span></h3>
+{% for c in res.contracte %}
+<div class="res-card {{ 'clickable' if c.cod_loc }}" {% if c.cod_loc %}onclick="openDrawer('{{ c.cod_loc }}')"{% endif %} data-testid="res-contract-{{ c.id }}">
+  <div><div class="strong mono">{{ c.numar_contract or 'Contract' }}</div><div class="muted-xs">Loc {{ c.cod_loc or '—' }}{% if c.owner_fullname %} · {{ c.owner_fullname }}{% endif %}{% if c.data_sfarsit %} · expiră {{ c.data_sfarsit }}{% endif %}</div></div>
+  <div class="res-act">{{ attbtn('contract', c.id) }}</div>
+</div>{% endfor %}{% endif %}
+
+{% if res.plati %}<h3 class="res-title">Plăți <span class="muted-xs">{{ res.plati|length }}</span></h3>
+{% for r in res.plati %}
+<div class="res-card {{ 'clickable' if r.cod_loc }}" {% if r.cod_loc %}onclick="openDrawer('{{ r.cod_loc }}')"{% endif %} data-testid="res-plata-{{ r.id }}">
+  <div><div class="strong mono">{{ r.chitanta_nr or 'Plată' }}</div><div class="muted-xs">Loc {{ r.cod_loc or '—' }} · {{ r.suma|lei }} · {{ r.data_plata }}</div></div>
+  <div class="res-act">{{ attbtn('plata', r.id) }}</div>
+</div>{% endfor %}{% endif %}
+<script>if(window.lucide)lucide.createIcons();</script>

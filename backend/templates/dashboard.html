@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Panou principal{% endblock %}
+{% block content %}
+<div data-testid="dashboard-page">
+  <div class="page-head">
+    <div><h1 class="page-title">Panou principal</h1><p class="page-sub">Situația generală a cimitirului și activitatea recentă.</p></div>
+  </div>
+
+  <div class="kpi-grid">
+    <a href="/admin/locuri" class="kpi" data-testid="kpi-locuri">
+      <div class="kpi-top"><span class="kpi-label">Locuri de veci</span><span class="kpi-ic"><i data-lucide="grid-3x3"></i></span></div>
+      <div class="kpi-val">{{ s.total_locuri }}</div>
+      <div class="kpi-sub">{{ s.status_counts.liber }} libere · {{ s.status_counts.ocupat }} ocupate</div>
+    </a>
+    <div class="kpi" data-testid="kpi-ocupare">
+      <div class="kpi-top"><span class="kpi-label">Grad de ocupare</span><span class="kpi-ic"><i data-lucide="trending-up"></i></span></div>
+      <div class="kpi-val">{{ s.grad_ocupare }}%</div>
+      <div class="kpi-bar"><span style="width: {{ s.grad_ocupare }}%"></span></div>
+    </div>
+    <a href="/admin/plati" class="kpi" data-testid="kpi-incasari">
+      <div class="kpi-top"><span class="kpi-label">Total încasări</span><span class="kpi-ic gold"><i data-lucide="wallet"></i></span></div>
+      <div class="kpi-val mono">{{ s.total_incasari|lei }}</div>
+      <div class="kpi-sub">{{ s.nr_plati }} plăți înregistrate</div>
+    </a>
+    <a href="/admin/contracte" class="kpi" data-testid="kpi-expira">
+      <div class="kpi-top"><span class="kpi-label">Contracte expiră (30 zile)</span><span class="kpi-ic {{ 'danger' if s.contracte_expira>0 }}"><i data-lucide="alert-triangle"></i></span></div>
+      <div class="kpi-val {{ 'text-danger' if s.contracte_expira>0 }}">{{ s.contracte_expira }}</div>
+      <div class="kpi-sub">{{ 'Necesită atenție' if s.contracte_expira>0 else 'Totul în regulă' }}</div>
+    </a>
+  </div>
+
+  <div class="dash-grid">
+    <div class="card">
+      <h3 class="card-title">Distribuție status</h3>
+      <div class="donut-wrap">
+        <svg viewBox="0 0 42 42" class="donut">
+          {% set ns = namespace(off=0) %}
+          {% for k in STATUS_KEYS %}
+            {% set val = s.status_counts[k] or 0 %}
+            {% set pct = (val / s.total_locuri * 100) if s.total_locuri else 0 %}
+            <circle class="donut-seg" cx="21" cy="21" r="15.915" fill="none"
+              stroke="{{ STATUS_META[k].fill }}" stroke-width="6"
+              stroke-dasharray="{{ pct }} {{ 100 - pct }}" stroke-dashoffset="{{ (100 - ns.off) % 100 }}"></circle>
+            {% set ns.off = ns.off + pct %}
+          {% endfor %}
+        </svg>
+        <div class="donut-center"><div class="donut-num">{{ s.total_locuri }}</div><div class="donut-lbl">locuri</div></div>
+      </div>
+      <div class="legend">
+        {% for k in STATUS_KEYS %}
+        <div class="legend-item"><span class="dot" style="background: {{ STATUS_META[k].fill }}"></span>{{ STATUS_META[k].label }}<b>{{ s.status_counts[k] or 0 }}</b></div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="dash-mid">
+      <div class="card" data-testid="panel-expiring">
+        <div class="card-head"><h3 class="card-title">Contracte în expirare</h3><a href="/admin/contracte" class="see-all">Vezi tot <i data-lucide="arrow-right"></i></a></div>
+        {% if s.expiring %}
+          {% for c in s.expiring %}
+          <div class="rowline"><div><div class="mono strong">{{ c.numar_contract or c.cod_loc or 'Contract' }}</div><div class="muted-xs">Loc {{ c.cod_loc or '—' }}</div></div><span class="expira mono">{{ c._expira or c.data_sfarsit }}</span></div>
+          {% endfor %}
+        {% else %}<p class="empty">Niciun contract în expirare.</p>{% endif %}
+      </div>
+      <div class="card" data-testid="panel-cereri">
+        <div class="card-head"><h3 class="card-title">Cereri online recente {% if s.cereri_noi>0 %}<span class="mini-badge">{{ s.cereri_noi }}</span>{% endif %}</h3><a href="/admin/cereri" class="see-all">Vezi tot <i data-lucide="arrow-right"></i></a></div>
+        {% if s.recent_cereri %}
+          {% for c in s.recent_cereri %}
+          <div class="rowline"><div><div class="strong">{{ (c.nume ~ ' ' ~ c.prenume)|trim }}</div><div class="muted-xs">{{ c.cod_loc or 'fără loc' }} · {{ c.created_at }}</div></div>{% include 'partials/cerere_status.html' %}</div>
+          {% endfor %}
+        {% else %}<p class="empty">Nicio cerere online.</p>{% endif %}
+      </div>
+    </div>
+
+    <div class="card" data-testid="panel-inhumari">
+      <h3 class="card-title"><i data-lucide="users"></i> Înhumări recente</h3>
+      {% if s.recent_inhumati %}
+        {% for x in s.recent_inhumati %}
+        <div class="rowline"><div><div class="strong">{{ (x.nume ~ ' ' ~ x.prenume)|trim }}</div><div class="muted-xs">{{ x.data_inhumare or x.data_deces or '' }}</div></div></div>
+        {% endfor %}
+      {% else %}<p class="empty">—</p>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

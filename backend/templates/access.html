@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Acces · Administrare Cimitire</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body class="access-body" data-testid="access-screen">
+  <div class="access-bg"></div>
+  <header class="access-head">
+    <div class="crest big">✦</div>
+    <div><div class="access-title">Administrare Cimitire</div><div class="access-sub">Sistem integrat · Primărie</div></div>
+  </header>
+
+  <main class="access-main">
+    <div class="access-inner">
+      <div class="access-badge"><i data-lucide="database"></i> Pasul 1 · Selectează baza de date</div>
+      <h1 class="access-h1">Ce bază de date deschidem?</h1>
+      <p class="access-lead">Alege cimitirul (fișier SQLite, partajat cu aplicația desktop) și autentifică-te.</p>
+
+      {% if error %}<div class="access-error" data-testid="login-error">{{ error }}</div>{% endif %}
+
+      <div class="db-grid">
+        {% for s in sources %}
+        <div class="db-card {{ 'disabled' if not s.available }}" data-testid="database-card-{{ s.id }}">
+          <div class="db-card-top">
+            <div class="db-ic {{ 'mongo' if s.engine=='mongo' else 'sqlite' }}"><i data-lucide="{{ 'server' if s.engine=='mongo' else 'hard-drive' }}"></i></div>
+            <span class="db-tag">{{ 'MongoDB' if s.engine=='mongo' else 'SQLite' }}</span>
+          </div>
+          <div class="db-card-name">{{ s.name }}</div>
+          <div class="db-card-id">{{ s.id }}</div>
+          {% if s.available %}
+          <form method="post" action="/admin/access/login" class="db-login">
+            <input type="hidden" name="source_id" value="{{ s.id }}" />
+            <input name="username" placeholder="Utilizator" autocomplete="username" data-testid="login-username-{{ s.id }}" required />
+            <input name="password" type="password" placeholder="Parolă" autocomplete="current-password" data-testid="login-password-{{ s.id }}" required />
+            <button type="submit" class="btn-gold" data-testid="login-submit-{{ s.id }}"><i data-lucide="shield-check"></i> Autentificare</button>
+          </form>
+          {% else %}
+          <div class="db-unavail">{{ s.error or 'Indisponibil' }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+
+        {% if is_admin %}
+        <form method="post" action="/admin/access/create-db" class="db-card ghost">
+          <div class="ghost-ic"><i data-lucide="plus"></i></div>
+          <input name="name" placeholder="Nume cimitir nou" data-testid="new-db-name" required />
+          <button type="submit" class="btn-outline-light" data-testid="new-db-create">Adaugă cimitir</button>
+        </form>
+
+        <form method="post" action="/admin/access/upload-db" enctype="multipart/form-data" class="db-card ghost">
+          <div class="ghost-ic"><i data-lucide="upload"></i></div>
+          <div class="ghost-label">Importă fișier .db</div>
+          <input type="file" name="file" accept=".db" data-testid="import-db-input" required />
+          <button type="submit" class="btn-outline-light" data-testid="import-db-btn">Importă</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </main>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Monitorizare{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Monitorizare</h1><p class="muted-xs">Mod: <b>{{ mode }}</b> · versiune hartă: <b>{{ map_version }}</b> · ultima primire hartă: {{ last_push }}</p></div>
+<div class="card" data-testid="monitor-counts">
+  <h3 class="card-title">Cereri</h3>
+  <p>{% for s, n in by_status.items() %}<b>{{ s }}</b>: <span data-testid="count-{{ s }}">{{ n }}</span> · {% endfor %}neconfirmate de MAIN: <b data-testid="count-unacked">{{ unacked }}</b> · conturi cetățeni: <b>{{ citizens }}</b></p>
+  <form method="post" action="/admin/ui/purge"><button class="btn-ghost" type="submit" data-testid="purge-btn">Șterge datele cererilor peste termenul de păstrare</button></form>
+</div>
+{% if offline_clients %}
+<div class="info-banner warn" role="alert" data-testid="sync-offline-alert"><i data-lucide="wifi-off"></i>
+  <span><b>Atenție: MAIN nu a mai contactat serverul de peste {{ offline_minutes }} minute.</b>
+  {% for c in offline_clients %}<span data-testid="sync-offline-{{ c.client_id }}">{{ c.client_id }}{% if c.host %} ({{ c.host }}){% endif %} — ultima activitate: {{ c.last_seen or 'necunoscută' }}{% if c.idle_minutes is not none %} (acum {{ c.idle_minutes // 60 }} h {{ c.idle_minutes % 60 }} min){% endif %}{% if c.alerted_at %} · alertă pe email trimisă {{ c.alerted_at }}{% endif %}</span>{% if not loop.last %}; {% endif %}{% endfor %}.
+  Cererile noi se acumulează pe server până la următoarea sincronizare; decizia rămâne în MAIN.</span></div>
+{% elif mode == 'online' and not clients %}
+<div class="info-banner warn" role="alert" data-testid="sync-no-clients-alert"><i data-lucide="wifi-off"></i> Niciun MAIN nu a contactat încă serverul. Cererile primite vor aștepta până la prima sincronizare.</div>
+{% endif %}
+<div class="card" data-testid="sync-clients">
+  <h3 class="card-title">Clienți MAIN conectați</h3>
+  <p class="muted-xs">Datele sunt raportate de MAIN la fiecare sincronizare reușită sau parțială; <b>operațiunile locale restante</b> sunt numărul de la ultima reconectare, nu starea curentă. Informația este marcată <b>veche</b> după {{ stale_minutes }} minute fără raport.</p>
+  <table class="tbl" data-testid="sync-clients-table"><thead><tr><th>Client MAIN</th><th>Ultima activitate</th><th>Ultima sincronizare reușită</th><th>Operațiuni restante (la raport)</th><th>Ultima eroare</th><th>Stare</th></tr></thead><tbody>
+  {% for c in clients %}<tr data-testid="sync-client-{{ c.client_id }}"><td class="mono">{{ c.client_id }}{% if c.host %}<div class="muted-xs">{{ c.host }}</div>{% endif %}</td><td class="mono">{{ c.last_seen or '—' }}</td><td class="mono">{{ c.last_success or '—' }}</td><td data-testid="sync-pending-{{ c.client_id }}">{{ c.pending if c.pending is not none else '—' }}{% if c.conflicts %} · <b>{{ c.conflicts }} conflict(e)</b>{% endif %}{% if c.reported_at %}<div class="muted-xs">raportat {{ c.reported_at }}</div>{% endif %}</td><td data-testid="sync-error-{{ c.client_id }}">{% if c.last_error %}{{ c.last_error }}<div class="muted-xs">{{ c.last_error_at }}{% if not c.error_active %} · rezolvată{% endif %}</div>{% else %}—{% endif %}</td><td data-testid="sync-stale-{{ c.client_id }}">{% if c.offline %}<b>Offline</b> · {% endif %}{% if c.stale %}<b>Informație veche</b>{% else %}Actuală{% endif %}</td></tr>{% else %}<tr><td colspan="6" class="muted-xs" data-testid="sync-clients-empty">Niciun client MAIN nu a raportat încă.</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+<div class="card" data-testid="entity-conflicts">
+  <h3 class="card-title">Conflicte de sincronizare (neprocesate)</h3>
+  <p class="muted-xs">Două calculatoare au modificat același obiect pornind din versiuni diferite. Serverul <b>nu a suprascris</b> nimic: modificarea respinsă rămâne aici, iar operatorul MAIN alege din fereastra de sincronizare între versiunea serverului și a sa.</p>
+  <table class="tbl" data-testid="entity-conflicts-table"><thead><tr><th>Moment</th><th>Entitate</th><th>Motiv</th><th>Client</th><th>Versiuni (client → server)</th></tr></thead><tbody>
+  {% for c in entity_conflicts %}<tr data-testid="entity-conflict-{{ c.op_id }}"><td class="mono">{{ c.created_at }}</td><td class="mono">{{ c.entity }}<div class="muted-xs">{{ c.uid }}</div></td><td>{{ c.reason }} ({{ c.action }})</td><td class="mono">{{ c.client_id or '—' }}</td><td>{{ c.base_version }} → {{ c.server_version if c.server_version is not none else '—' }}</td></tr>{% else %}<tr><td colspan="5" class="muted-xs" data-testid="entity-conflicts-empty">Niciun conflict.</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+<div class="card" data-testid="backups">
+  <h3 class="card-title">Copii de rezervă ale serverului</h3>
+  <p class="muted-xs">Folder: <b data-testid="backup-dir">{{ backup_dir }}</b> · zilnic, automat (setări în „Setări"). Restaurarea se aplică la următoarea pornire a portalului; starea curentă este păstrată lângă folderul de date.</p>
+  {% if restore_pending %}<div class="info-banner warn" role="alert" data-testid="restore-pending"><i data-lucide="rotate-ccw"></i> O restaurare este programată: repornește portalul pentru a o aplica.</div>{% endif %}
+  <form method="post" action="/admin/ui/backup"><button class="btn-primary" type="submit" data-testid="backup-now-btn">Fă o copie acum</button></form>
+  <table class="tbl" data-testid="backup-table"><thead><tr><th>Copie</th><th>Data</th><th>Mărime</th><th></th></tr></thead><tbody>
+  {% for b in backups %}<tr data-testid="backup-row-{{ b.name }}"><td class="mono">{{ b.name }}</td><td>{{ b.created }}</td><td>{{ (b.size / 1048576) | round(1) }} MB</td><td><form method="post" action="/admin/ui/backup/restore" onsubmit="return confirm('Restaurezi baza din această copie? Starea curentă se păstrează lângă folderul de date.')"><input type="hidden" name="name" value="{{ b.name }}"><button class="btn-ghost" type="submit" data-testid="restore-btn-{{ b.name }}">Restaurează</button></form></td></tr>{% else %}<tr><td colspan="4" class="muted-xs" data-testid="backup-empty">Nicio copie încă.</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+<div class="card" data-testid="email-outbox"><h3 class="card-title">Notificări e-mail către cetățeni</h3>
+{% if email_provider == 'mock' %}<div class="info-banner" data-testid="email-mock-banner"><i data-lucide="mail-warning"></i> Furnizor de e-mail: <b>SIMULAT (MOCK)</b> — mesajele sunt doar înregistrate aici, NU se trimit e-mailuri reale până nu se configurează un furnizor.</div>{% endif %}
+<table class="tbl" data-testid="email-table"><thead><tr><th>Moment</th><th>Cerere</th><th>Șablon</th><th>Destinatar</th><th>Subiect</th><th>Stare</th></tr></thead><tbody>
+{% for m in emails %}<tr><td class="mono">{{ m.created_at }}</td><td class="mono">{{ m.cod_urmarire }}</td><td>{{ m.template }}</td><td class="mono">{{ m.to_masked }}</td><td>{{ m.subject }}</td><td data-testid="email-status-{{ m.cod_urmarire }}">{{ m.status }}{% if m.last_error %} · {{ m.last_error }}{% endif %}</td></tr>{% else %}<tr><td colspan="6" class="muted-xs">Nicio notificare.</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="card"><h3 class="card-title">Jurnal operațiuni (ultimele 100)</h3>
+<table class="tbl" data-testid="audit-table"><thead><tr><th>Moment</th><th>Actor</th><th>Acțiune</th><th>Țintă</th><th>Detalii</th></tr></thead><tbody>
+{% for a in audit %}<tr><td class="mono">{{ a.ts }}</td><td>{{ a.actor_type }}: {{ a.actor }}</td><td>{{ a.action }}</td><td class="mono">{{ a.target }}</td><td>{{ a.detail }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

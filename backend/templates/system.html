@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Sistem{% endblock %}
+{% block content %}
+<style>
+  .sys-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;margin:14px 0}
+  .sys-tile{border:1px solid #e2e8f0;border-radius:10px;padding:14px;background:#fff}
+  .sys-tile .k{font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
+  .sys-tile .v{font-size:20px;font-weight:600;margin-top:4px;word-break:break-word}
+  .sys-tile .s{font-size:12px;color:#64748b;margin-top:4px}
+  .sys-pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:13px;font-weight:600}
+  .sys-pill.ok{background:#dcfce7;color:#166534}.sys-pill.err{background:#fee2e2;color:#991b1b}.sys-pill.warn{background:#fef3c7;color:#92400e}
+  .sys-actions{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}
+  .sys-lines{list-style:none;padding:0;margin:8px 0}.sys-line{padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:14px}
+  .sys-line.ok b{color:#166534}.sys-line.warn b{color:#92400e}.sys-line.err b{color:#991b1b}
+  .htmx-request .sys-busy{opacity:.6}
+</style>
+{% macro pill(good, yes, no, testid) %}<span class="sys-pill {{ 'ok' if good else 'err' }}" data-testid="{{ testid }}">{{ yes if good else no }}</span>{% endmacro %}
+<div class="page-head"><h1>Sistem</h1><p class="muted-xs">Pagină tehnică, vizibilă doar administratorilor. Nu afișează parole sau chei și nu permite SQL din browser.</p></div>
+<div class="sys-grid" data-testid="sys-status">
+  <div class="sys-tile"><div class="k">Server</div><div class="v">{{ pill(st.server.online, 'ONLINE', 'OFFLINE', 'sys-server') }}</div><div class="s">pornit {{ st.server.started_at }} · mod {{ st.server.mode }}</div></div>
+  <div class="sys-tile"><div class="k">Motor bază de date</div><div class="v" data-testid="sys-db-engine">{{ st.db.engine }}</div><div class="s">schemă: {{ st.db.schema_version if st.db.schema_version is not none else '—' }} · <span data-testid="sys-db-kind">{{ st.prod.db.label }}</span></div></div>
+  <div class="sys-tile"><div class="k">PostgreSQL</div><div class="v">{% if st.db.engine == 'PostgreSQL' %}{{ pill(st.db.online, 'ONLINE', 'OFFLINE', 'sys-postgres') }}{% else %}<span class="sys-pill warn" data-testid="sys-postgres">NEUTILIZAT (SQLite)</span>{% endif %}</div><div class="s">{% if st.db.latency_ms is not none %}răspuns {{ st.db.latency_ms }} ms{% endif %} {{ st.db.version }}</div></div>
+  <div class="sys-tile"><div class="k">Ultima sincronizare</div><div class="v mono" data-testid="sys-last-sync" style="font-size:15px">{{ (st.sync.last or 'niciodată')[:19]|replace('T', ' ') }}</div><div class="s">{{ st.sync.clients }} client(i) MAIN · {{ st.sync.offline }} offline</div></div>
+  <div class="sys-tile"><div class="k">Operații pending în outbox</div><div class="v" data-testid="sys-outbox">{{ st.sync.outbox_here if st.sync.outbox_here is not none else '—' }}</div><div class="s">raportate de MAIN: <span data-testid="sys-outbox-clients">{{ st.sync.pending_reported if st.sync.pending_reported is not none else '—' }}</span></div></div>
+  <div class="sys-tile"><div class="k">Ultimul backup</div><div class="v mono" data-testid="sys-last-backup" style="font-size:15px">{{ (st.backup.created or 'niciunul')[:19]|replace('T', ' ') }}</div><div class="s">{% if st.backup.exists %}{{ st.backup.name }} · {{ backup_size }} · acum {{ st.backup.age_hours }} h{% if st.backup.age_hours > 48 %} · <b>VECHI</b>{% endif %}{% else %}folder: {{ st.backup_dir_name }}{% endif %}</div></div>
+  <div class="sys-tile"><div class="k">Dimensiune bază de date</div><div class="v" data-testid="sys-db-size">{{ st.db_size }}</div><div class="s">citită prin metode fixe, în siguranță</div></div>
+  <div class="sys-tile"><div class="k">Versiune aplicație</div><div class="v" data-testid="sys-version">{{ st.version }}</div></div>
+  <div class="sys-tile"><div class="k">Storage</div><div class="v">{{ pill(st.storage.online, 'ONLINE', 'OFFLINE', 'sys-storage') }}</div><div class="s">driver: <span data-testid="sys-storage-driver">{{ st.storage.driver }}</span>{% if st.storage.location %} · {{ st.storage.location }}{% endif %}{% if st.storage.error %} · {{ st.storage.error }}{% endif %}</div></div>
+  <div class="sys-tile"><div class="k">Email SMTP</div><div class="v">{{ pill(st.smtp.configured, 'CONFIGURAT', 'NECONFIGURAT', 'sys-smtp') }}</div><div class="s">{% if st.smtp.configured %}{{ st.smtp.host }} · {% endif %}furnizor activ: {{ st.smtp.provider }}</div></div>
+  <div class="sys-tile"><div class="k">Erori (ultimele 24 h)</div><div class="v" data-testid="sys-errors">{{ st.errors.last_24h }}</div><div class="s">7 zile: {{ st.errors.last_7d }}{% if st.errors.last_error %}<br>ultima: {{ st.errors.last_error_at }} — {{ st.errors.last_error }}{% endif %}</div></div>
+</div>
+<div class="card" data-testid="sys-prod-check" style="margin-bottom:14px">
+  <h3 class="card-title">Verificare producție</h3>
+  <p style="margin:6px 0"><span class="sys-pill {{ st.prod.tone }}" data-testid="sys-prod-level" data-level="{{ st.prod.level }}">{{ st.prod.label }}</span>
+    <span class="sys-pill {{ 'ok' if st.prod.ready else 'warn' }}" data-testid="sys-prod-ready">{{ 'GATA PENTRU PRODUCȚIE' if st.prod.ready else 'NU ESTE GATA PENTRU PRODUCȚIE' }}</span></p>
+  <ul class="sys-lines" data-testid="sys-prod-checks">
+    {% for kind, text in st.prod.db.checks %}<li class="sys-line {{ kind }}" data-testid="sys-prod-check-{{ loop.index }}"><b>{{ {'ok': 'OK', 'warn': 'ATENȚIE', 'err': 'EROARE'}[kind] }}</b> — {{ text }}</li>{% endfor %}
+    <li class="sys-line {{ 'ok' if st.prod.persistence.verified else 'warn' }}" data-testid="sys-prod-persistence"><b>{{ 'OK' if st.prod.persistence.verified else 'ATENȚIE' }}</b> — Persistență după restart: {{ 'confirmată pentru această bază' if st.prod.persistence.verified else 'neconfirmată' }}. {{ st.prod.persistence.summary }}{% if st.prod.persistence.probe_pending %} <b data-testid="sys-prod-probe-pending">Probă în așteptare (repornește serverul și verifică).</b>{% endif %}</li>
+  </ul>
+  <div class="sys-actions" data-testid="sys-persistence-actions">
+    <button class="btn-ghost" hx-post="/admin/system/persistence/create" hx-target="#sys-result" hx-swap="innerHTML" hx-disabled-elt="this" hx-confirm="Creezi o înregistrare tehnică de test (nu modifică date reale)?" data-testid="btn-persistence-create">1. Creează probă de persistență</button>
+    <button class="btn-ghost" hx-post="/admin/system/persistence/verify" hx-target="#sys-result" hx-swap="innerHTML" hx-disabled-elt="this" data-testid="btn-persistence-verify">2. Verifică după restart</button>
+    <button class="btn-ghost" hx-post="/admin/system/persistence/cleanup" hx-target="#sys-result" hx-swap="innerHTML" hx-disabled-elt="this" data-testid="btn-persistence-cleanup">Curăță proba</button>
+  </div>
+  <p class="muted-xs">Testul scrie doar o cheie tehnică izolată (<span class="mono">{{ '_probe:persistence:active' }}</span>), o verifică după restartul serverului și o șterge. Nu atinge locuri, contracte sau alte date. Setarea CIMITIR_DB_ENGINE=postgres singură nu este considerată dovadă de bază cloud/persistentă.</p>
+</div>
+<div class="card">
+  <h3 class="card-title">Acțiuni sigure</h3>
+  <div class="sys-actions" data-testid="sys-actions">
+    <button class="btn-ghost" hx-post="/admin/system/test-db" hx-target="#sys-result" hx-swap="innerHTML" hx-disabled-elt="this" data-testid="btn-test-db">Test conexiune DB</button>
+    <button class="btn-ghost" hx-post="/admin/system/test-storage" hx-target="#sys-result" hx-swap="innerHTML" hx-disabled-elt="this" data-testid="btn-test-storage">Test storage</button>
+    <button class="btn-primary" hx-post="/admin/system/backup" hx-target="#sys-result" hx-swap="innerHTML" hx-disabled-elt="this" hx-confirm="Creezi acum o copie de rezervă?" data-testid="btn-backup-now">Backup acum</button>
+    <a class="btn-ghost" href="/admin/system/logs" data-testid="btn-view-logs">Vezi loguri</a>
+    <button class="btn-ghost" hx-post="/admin/system/check-sync" hx-target="#sys-result" hx-swap="innerHTML" hx-disabled-elt="this" data-testid="btn-check-sync">Verifică sincronizarea</button>
+  </div>
+  <p class="muted-xs">Toate acțiunile rulează operații fixe pe server; rezultatul apare mai jos. „Backup acum" și testele sunt trecute în jurnalul de audit.</p>
+</div>
+<div id="sys-result" data-testid="sys-result-area" aria-live="polite"></div>
+{% endblock %}

@@ -1,0 +1,32 @@
+# Dependențe pentru deploy pe Render (Python 3.12). Fără emergentintegrations/litellm, fără Qt/PyInstaller/pytest/moto.
+# Fișierul pentru Emergent rămâne backend/requirements.txt (neschimbat).
+
+# web
+fastapi==0.110.1
+starlette==0.37.2
+uvicorn==0.25.0
+Jinja2==3.1.6
+python-multipart==0.0.32
+pydantic==2.13.5
+
+# autentificare
+PyJWT==2.15.1
+
+# PostgreSQL (Supabase) — psycopg v3 + pool
+psycopg==3.3.6
+psycopg-binary==3.3.6
+psycopg-pool==3.3.3
+
+# Supabase Storage / S3 + HTTP
+boto3==1.43.106
+requests==2.34.2
+
+# documente, PDF, Excel, QR
+pillow==12.3.0
+reportlab==5.0.1
+openpyxl==3.1.5
+qrcode==8.2
+PyMuPDF>=1.24
+
+# AI (motor Gemini portabil, SDK oficial)
+google-genai==2.26.0

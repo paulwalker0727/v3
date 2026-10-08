@@ -1,0 +1,148 @@
+{% from 'partials/_att.html' import attbtn %}
+{% set loc = d.loc %}
+<div class="insp">
+  <div class="insp-head">
+    <div>
+      <div class="insp-eyebrow">Loc de veci</div>
+      <div class="insp-cod mono">{{ loc.cod_loc }}</div>
+      <div class="insp-status">{% with status=loc.status %}{% include 'partials/status_badge.html' %}{% endwith %}</div>
+    </div>
+    <a href="/admin/loc/{{ cod }}/fisa.pdf" target="_blank" class="btn-light" data-testid="fisa-pdf-btn"><i data-lucide="file-down"></i> Fișă PDF</a>
+  </div>
+
+  <div class="insp-tabs">
+    <button class="itab active" onclick="inspTab(this,'t-general')" data-testid="tab-general">General</button>
+    <button class="itab" onclick="inspTab(this,'t-inhumati')" data-testid="tab-inhumati">Înhumați</button>
+    <button class="itab" onclick="inspTab(this,'t-contracte')">Contracte</button>
+    <button class="itab" onclick="inspTab(this,'t-plati')">Plăți</button>
+    <button class="itab" onclick="inspTab(this,'t-avize')">Avize</button>
+    <button class="itab" onclick="inspTab(this,'t-doc')">Docs</button>
+  </div>
+
+  <div class="insp-body">
+    <!-- GENERAL -->
+    <div class="itab-pane active" id="t-general">
+      <form class="mini-card" hx-post="/admin/ui/loc/{{ cod }}/edit" hx-target="#drawer-body" hx-swap="innerHTML">
+        <div class="mini-head"><h4>Identificare & poziție</h4><button type="submit" class="btn-sm" data-testid="save-loc-btn"><i data-lucide="save"></i> Salvează</button></div>
+        <div class="grid2">
+          {% for f in ['sector','parcela','rand','numar','tip','categorie','capacitate','suprafata','nr_vechi','numar_cf'] %}
+          <div><label>{{ f|replace('_',' ')|capitalize }}</label><input name="{{ f }}" value="{{ loc[f] if loc[f] is not none else '' }}" data-testid="field-{{ f }}" /></div>
+          {% endfor %}
+          <div><label>Stare</label><input name="stare" value="{{ loc.stare or '' }}" /></div>
+          <div><label>Disponibilitate</label><input name="disponibilitate" value="{{ loc.disponibilitate or '' }}" /></div>
+          <div class="col2"><label>Observații</label><input name="observatii" value="{{ loc.observatii or '' }}" /></div>
+        </div>
+      </form>
+      <div class="mini-card">
+        <h4>Concesionar</h4>
+        {% if d.concesionar %}
+        <div class="kv"><span>Nume</span><b>{{ (d.concesionar.nume ~ ' ' ~ d.concesionar.prenume)|trim }}</b></div>
+        <div class="kv"><span>Telefon</span><b class="mono">{{ d.concesionar.telefon or '—' }}</b></div>
+        <div class="kv"><span>Email</span><b>{{ d.concesionar.email or '—' }}</b></div>
+        <div class="kv"><span>Adresă</span><b>{{ d.concesionar.adresa or '—' }}</b></div>
+        {% else %}<p class="empty">Niciun concesionar asociat.</p>{% endif %}
+      </div>
+    </div>
+
+    <!-- INHUMATI -->
+    <div class="itab-pane" id="t-inhumati">
+      <details class="add-block"><summary data-testid="add-inhumati-btn"><i data-lucide="user-plus"></i> Adaugă înhumat</summary>
+        <form hx-post="/admin/ui/loc/{{ cod }}/inhumat" hx-target="#drawer-body" hx-swap="innerHTML" class="grid2 add-form">
+          {% for f,l in [('nume','Nume'),('prenume','Prenume'),('cnp','CNP'),('data_nasterii','Data nașterii'),('data_deces','Data deces'),('data_inhumare','Data înhumare'),('religie','Religie'),('nr_certificat_deces','Nr. certificat deces')] %}
+          <div><label>{{ l }}</label><input name="{{ f }}" data-testid="add-inhumati-{{ f }}" /></div>
+          {% endfor %}
+          <div class="col2"><button type="submit" class="btn-sm" data-testid="submit-inhumati">Salvează</button></div>
+        </form>
+      </details>
+      {% for x in d.inhumati %}
+      <div class="list-item">
+        <div><div class="strong">{{ (x.nume ~ ' ' ~ x.prenume)|trim or '—' }}</div><div class="muted-xs">Deces: {{ x.data_deces or '—' }} · Înhumare: {{ x.data_inhumare or '—' }}</div></div>
+        {{ attbtn('inhumat', x.id) }}
+        <a class="att-btn" href="/admin/pdf/adeverinta/{{ x.id }}" target="_blank" rel="noopener" data-testid="pdf-adeverinta-{{ x.id }}"><i data-lucide="file-down"></i><span>Adeverință</span></a>
+        <form hx-post="/admin/ui/inhumat/{{ x.id }}/delete" hx-target="#drawer-body" hx-swap="innerHTML"><input type="hidden" name="cod_loc" value="{{ cod }}"><button class="del" data-testid="del-inhumati-{{ x.id }}"><i data-lucide="trash-2"></i></button></form>
+      </div>
+      {% else %}<p class="empty">Nicio înregistrare.</p>{% endfor %}
+    </div>
+
+    <!-- CONTRACTE -->
+    <div class="itab-pane" id="t-contracte">
+      {% if error %}<div class="att-error" data-testid="drawer-error" role="alert"><i data-lucide="alert-triangle"></i> {{ error }}</div>{% endif %}
+      {% if can_contract %}
+      <details class="add-box" data-testid="contract-add-box" {{ 'open' if error }}>
+        <summary class="btn-sm" data-testid="contract-add-toggle"><i data-lucide="file-plus"></i> Adaugă contract</summary>
+        <form hx-post="/admin/ui/loc/{{ cod }}/contract" hx-target="#drawer-body" hx-swap="innerHTML" class="stack-form" data-testid="contract-form">
+          <label>Nr. contract * <input name="numar_contract" required maxlength="60" value="{{ form.numar_contract or '' }}" data-testid="contract-numar" /></label>
+          <label>Data contract <input name="data_contract" value="{{ form.data_contract or today }}" placeholder="zz.ll.aaaa" inputmode="numeric" data-testid="contract-data" /></label>
+          <label>Valabil până la <input name="data_sfarsit" value="{{ form.data_sfarsit or '' }}" placeholder="zz.ll.aaaa (opțional)" inputmode="numeric" data-testid="contract-sfarsit" /></label>
+          <label>Concesionar existent
+            <select name="concesionar_id" data-testid="contract-concesionar"><option value="">— alege sau completează unul nou —</option>
+              {% for o in conces_options %}<option value="{{ o.id }}" {{ 'selected' if form.concesionar_id == (o.id|string) }}>{{ o.name }}</option>{% endfor %}</select></label>
+          <div class="muted-xs">sau concesionar nou:</div>
+          <label>Nume <input name="nume" value="{{ form.nume or '' }}" data-testid="contract-nume" /></label>
+          <label>Prenume <input name="prenume" value="{{ form.prenume or '' }}" /></label>
+          <label>CNP <input name="cnp" inputmode="numeric" value="{{ form.cnp or '' }}" /></label>
+          <label>Telefon <input name="telefon" inputmode="tel" value="{{ form.telefon or '' }}" /></label>
+          <label>Adresă <input name="adresa" value="{{ form.adresa or '' }}" /></label>
+          <label>Observații <input name="observatii" maxlength="500" value="{{ form.observatii or '' }}" /></label>
+          <button type="submit" class="btn-sm" data-testid="contract-save"><i data-lucide="save"></i> Salvează contractul</button>
+        </form>
+      </details>
+      {% else %}<div class="muted-xs" data-testid="contract-no-right"><i data-lucide="lock"></i> Crearea contractelor necesită dreptul „approve”; aici pot fi consultate.</div>{% endif %}
+      {% for x in d.contracte %}
+      <div class="list-item">
+        <div><div class="strong mono">{{ x.numar_contract or 'Contract' }}</div><div class="muted-xs">{{ x.data_contract or '' }} {% if x.data_sfarsit %}→ {{ x.data_sfarsit }}{% endif %}</div></div>
+        {{ attbtn('contract', x.id) }}
+        <a class="att-btn" href="/admin/pdf/contract/{{ x.id }}" target="_blank" rel="noopener" data-testid="pdf-contract-{{ x.id }}"><i data-lucide="file-down"></i><span>PDF</span></a>
+        <form hx-post="/admin/ui/contract/{{ x.id }}/delete" hx-target="#drawer-body" hx-swap="innerHTML"><input type="hidden" name="cod_loc" value="{{ cod }}"><button class="del"><i data-lucide="trash-2"></i></button></form>
+      </div>
+      {% else %}<p class="empty">Nicio înregistrare.</p>{% endfor %}
+    </div>
+
+    <!-- PLATI -->
+    <div class="itab-pane" id="t-plati">
+      <div class="total-line"><span>Total încasat</span><b class="mono">{{ d.plati.total|lei }}</b></div>
+      <details class="add-block"><summary><i data-lucide="wallet"></i> Adaugă plată</summary>
+        <form hx-post="/admin/ui/loc/{{ cod }}/plata" hx-target="#drawer-body" hx-swap="innerHTML" class="grid2 add-form">
+          {% for f,l in [('suma','Sumă (lei)'),('data_plata','Data plată'),('tip','Tip'),('chitanta_nr','Nr. chitanță')] %}
+          <div><label>{{ l }}</label><input name="{{ f }}" /></div>
+          {% endfor %}
+          <div class="col2"><button type="submit" class="btn-sm">Salvează</button></div>
+        </form>
+      </details>
+      {% for x in d.plati['items'] %}
+      <div class="list-item">
+        <div><div class="strong mono">{{ x.suma|lei }}</div><div class="muted-xs">{{ x.data_plata }} · {{ x.tip or 'plată' }} {% if x.chitanta_nr %}· chit. {{ x.chitanta_nr }}{% endif %}</div></div>
+        {{ attbtn('plata', x.id) }}
+        <a class="att-btn" href="/admin/pdf/chitanta/{{ x.id }}" target="_blank" rel="noopener" data-testid="pdf-chitanta-{{ x.id }}"><i data-lucide="file-down"></i><span>Chitanță</span></a>
+        <form hx-post="/admin/ui/plata/{{ x.id }}/delete" hx-target="#drawer-body" hx-swap="innerHTML"><input type="hidden" name="cod_loc" value="{{ cod }}"><button class="del"><i data-lucide="trash-2"></i></button></form>
+      </div>
+      {% else %}<p class="empty">Nicio înregistrare.</p>{% endfor %}
+    </div>
+
+    <!-- AVIZE -->
+    <div class="itab-pane" id="t-avize">
+      <details class="add-block"><summary><i data-lucide="hammer"></i> Aviz lucrare</summary>
+        <form hx-post="/admin/ui/loc/{{ cod }}/aviz" hx-target="#drawer-body" hx-swap="innerHTML" class="grid2 add-form">
+          {% for f,l in [('nr','Nr. aviz'),('data','Data'),('lucrare','Lucrare')] %}
+          <div><label>{{ l }}</label><input name="{{ f }}" /></div>
+          {% endfor %}
+          <div class="col2"><button type="submit" class="btn-sm">Salvează</button></div>
+        </form>
+      </details>
+      {% for x in d.avize %}
+      <div class="list-item">
+        <div><div class="strong">{{ x.lucrare or 'Lucrare' }}</div><div class="muted-xs">Aviz {{ x.nr or '—' }} · {{ x.data or '' }}</div></div>
+        {{ attbtn('aviz', x.id) }}
+        <form hx-post="/admin/ui/aviz/{{ x.id }}/delete" hx-target="#drawer-body" hx-swap="innerHTML"><input type="hidden" name="cod_loc" value="{{ cod }}"><button class="del"><i data-lucide="trash-2"></i></button></form>
+      </div>
+      {% else %}<p class="empty">Nicio înregistrare.</p>{% endfor %}
+    </div>
+
+    <!-- DOCS -->
+    <div class="itab-pane" id="t-doc">
+      <div hx-get="/admin/att/loc/{{ cod }}" hx-trigger="load" hx-swap="outerHTML" data-testid="loc-attachments"><p class="empty">Se încarcă…</p></div>
+    </div>
+  </div>
+</div>
+<script>lucide.createIcons(); bindInspTabs();</script>
+{% if open_tab %}<script>(function(){var b=Array.from(document.querySelectorAll('.itab')).find(function(x){return (x.getAttribute('onclick')||'').indexOf('{{ open_tab }}')>-1});if(b)b.click();})();</script>{% endif %}

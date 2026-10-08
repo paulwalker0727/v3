@@ -1,0 +1,83 @@
+{# Panou generic de atașamente pentru orice entitate. Se înlocuiește singur (outerHTML) după încărcare/ștergere. #}
+<div class="att-panel" id="att-{{ ent.type }}-{{ ent.id }}" data-testid="att-panel" data-entity="{{ ent.type }}">
+  <div class="att-head"><span class="att-ent">{{ ent.label }}</span> <b>{{ ent.title }}</b> <span class="att-count" data-testid="att-count">{{ items|length }}</span>
+    {% if can_history %}<button class="att-btn" style="margin-left:auto" hx-get="/admin/istoric/{{ ent.type }}/{{ ent.id }}" hx-target="closest .att-panel" hx-swap="outerHTML" data-testid="history-open"><i data-lucide="history"></i><span>Istoric</span></button>{% endif %}</div>
+  {% if notice %}<div class="att-notice" data-testid="att-notice" role="status"><i data-lucide="check-circle"></i> {{ notice }}</div>{% endif %}
+  {% if error %}<div class="att-error" data-testid="att-error" role="alert"><i data-lucide="alert-triangle"></i> {{ error }}</div>{% endif %}
+  {% if can_write %}
+  <form class="att-form" hx-post="/admin/att/{{ ent.type }}/{{ ent.id }}" hx-target="closest .att-panel" hx-swap="outerHTML" hx-encoding="multipart/form-data" data-testid="att-form">
+    <div class="att-fields">
+      <label>Tip document
+        <select name="doc_type" data-testid="att-doc-type">
+          {% for k in suggested %}<option value="{{ k }}">{{ doc_types[k] }}</option>{% endfor %}
+          <optgroup label="Alte tipuri">{% for k, v in doc_types.items() if k not in suggested and k not in ('poza_loc', 'cerere_doc') %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</optgroup>
+        </select></label>
+      <label>Titlu <input name="title" maxlength="200" placeholder="ex: chitanta_123" data-testid="att-title" /></label>
+      <label>Descriere / motiv <textarea name="description" rows="2" maxlength="1000" placeholder="Obligatoriu pentru copia actului de identitate" data-testid="att-description"></textarea></label>
+    </div>
+    <div class="att-actions">
+      <label class="att-pick att-camera"><i data-lucide="camera"></i> Fă fotografie
+        <input type="file" name="files" accept="image/jpeg,image/png" capture="environment" onchange="if(this.files.length)this.form.requestSubmit()" hidden data-testid="att-camera-input" /></label>
+      <label class="att-pick"><i data-lucide="paperclip"></i> Alege fișier (JPEG, PNG, PDF)
+        <input type="file" name="files" accept="image/jpeg,image/png,application/pdf,.jpg,.jpeg,.png,.pdf" multiple onchange="if(this.files.length)this.form.requestSubmit()" hidden data-testid="att-file-input" /></label>
+    </div>
+    <div class="att-phone" data-testid="phone-box" data-etype="{{ ent.type }}" data-eid="{{ ent.id }}">
+      <button type="button" class="att-pick" data-testid="phone-btn" onclick="cimMobileQr(this)"><i data-lucide="smartphone"></i> Continuă pe telefon</button>
+      <div class="phone-out muted-xs" data-testid="phone-out" hidden style="margin-top:8px"></div>
+    </div>
+    <script>
+    window.cimMobileQr = window.cimMobileQr || function (btn) {
+      var box = btn.closest('.att-phone'), out = box.querySelector('.phone-out'), fd = new FormData();
+      fd.append('etype', box.dataset.etype); fd.append('eid', box.dataset.eid);
+      btn.disabled = true; out.hidden = false; out.textContent = 'Se generează codul QR…';
+      fetch('/admin/mobile/token', {method: 'POST', body: fd, credentials: 'same-origin'}).then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
+        .then(function (res) {
+          btn.disabled = false;
+          if (!res[0]) { out.textContent = (res[1] && res[1].detail) || 'Nu s-a putut genera codul QR.'; return; }
+          var j = res[1], img = document.createElement('img');
+          img.src = 'data:image/png;base64,' + j.qr_png; img.alt = 'Cod QR'; img.style.cssText = 'width:200px;height:200px;background:#fff;padding:6px;border-radius:8px;display:block';
+          out.textContent = ''; out.appendChild(img);
+          var t = document.createElement('div'); out.appendChild(t);
+          var end = Date.now() + j.expires_in * 1000;
+          (function tick() { var s = Math.max(0, Math.round((end - Date.now()) / 1000)); t.textContent = (j.lan ? 'Mod LAN (fallback). ' : '') + 'Scanează cu telefonul. Valabil încă ' + Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2) + ' (o singură utilizare).'; if (s > 0) setTimeout(tick, 1000); else img.style.opacity = .2; })();
+        }).catch(function () { btn.disabled = false; out.textContent = 'Eroare de rețea.'; });
+    };
+    </script>
+  </form>
+  {% if scan_kinds %}
+  <form class="att-form scan-form" hx-post="/admin/att/{{ ent.type }}/{{ ent.id }}/scan" hx-target="closest .att-panel" hx-swap="outerHTML" hx-encoding="multipart/form-data" hx-indicator="#scan-ind-{{ ent.type }}-{{ ent.id }}" data-testid="scan-start-form">
+    <div class="att-group-title">Scanează document (AI)</div>
+    {% if ai_ready %}
+    <label>Tip document <select name="kind" data-testid="scan-kind">{% for k, lbl in scan_kinds %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></label>
+    <div class="att-actions">
+      <label class="att-pick att-camera"><i data-lucide="scan-line"></i> Fotografiază și extrage
+        <input type="file" name="file" accept="image/jpeg,image/png" capture="environment" onchange="if(this.files.length)this.form.requestSubmit()" hidden data-testid="scan-camera-input" /></label>
+      <label class="att-pick"><i data-lucide="paperclip"></i> Alege fișier (JPEG, PNG, PDF)
+        <input type="file" name="file" accept="image/jpeg,image/png,application/pdf,.jpg,.jpeg,.png,.pdf" onchange="if(this.files.length)this.form.requestSubmit()" hidden data-testid="scan-file-input" /></label>
+    </div>
+    <div class="htmx-indicator scan-ind" id="scan-ind-{{ ent.type }}-{{ ent.id }}" data-testid="scan-loading"><i data-lucide="loader"></i> Se salvează originalul și se analizează documentul…</div>
+    <div class="muted-xs">Originalul se păstrează întotdeauna. AI-ul doar propune datele; tu le confirmi înainte de salvare.</div>
+    {% else %}<div class="muted-xs" data-testid="scan-unavailable">Extragerea automată nu este configurată pe server. Folosește încărcarea simplă de mai sus; originalul se arhivează oricum.</div>{% endif %}
+  </form>
+  {% endif %}
+  {% endif %}
+  {% if not items %}<p class="empty" data-testid="att-empty">Niciun atașament.</p>{% endif %}
+  {% for dt, group in groups %}
+  <div class="att-group"><div class="att-group-title">{{ group[0].doc_label }}</div>
+    {% for a in group %}
+    <div class="att-item" data-testid="att-item" data-id="{{ a.id }}">
+      <a class="att-thumb" href="/admin/attfile/{{ a.id }}" target="_blank" rel="noopener">
+        {% if a.is_image %}<img src="/admin/attfile/{{ a.id }}" alt="" />{% else %}<i data-lucide="file-text"></i>{% endif %}</a>
+      <div class="att-meta">
+        <a href="/admin/attfile/{{ a.id }}" target="_blank" rel="noopener" class="att-name">{{ a.filename }}</a>
+        <div class="muted-xs">{{ a.title if a.title != a.filename }}{% if a.description %} · {{ a.description }}{% endif %}</div>
+        <div class="muted-xs">{{ a.size }}{% if a.uploaded_by %} · {{ a.uploaded_by }}{% endif %}{% if a.date_added %} · {{ a.date_added }}{% endif %}</div>
+      </div>
+      <a class="att-dl" href="/admin/attfile/{{ a.id }}?download=1" title="Descarcă"><i data-lucide="download"></i></a>
+      {% if can_write %}<button class="att-del" title="Șterge" data-testid="att-delete" hx-post="/admin/attdel/{{ a.id }}" hx-target="closest .att-panel" hx-swap="outerHTML" hx-confirm="Ștergi definitiv acest atașament?"><i data-lucide="trash-2"></i></button>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <script>if(window.lucide)lucide.createIcons();</script>
+</div>

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Căutare{% endblock %}
+{% block content %}
+<div data-testid="search-page">
+  <div class="page-head"><div><h1 class="page-title">Căutare</h1><p class="page-sub">Persoane, concesionari, cod loc, contracte, chitanțe.</p></div></div>
+  <div class="search-big">
+    <i data-lucide="search"></i>
+    <input type="search" name="q" value="{{ q }}" placeholder="Nume, CNP, telefon, cod loc, nr. contract…" autocomplete="off" autofocus
+           hx-get="/admin/cauta" hx-trigger="input changed delay:250ms, search" hx-target="#search-results" hx-swap="innerHTML" hx-push-url="false" data-testid="search-input" enterkeyhint="search" />
+  </div>
+  <div id="search-results" data-testid="search-results">{% include 'partials/search_results.html' %}</div>
+</div>
+{% endblock %}

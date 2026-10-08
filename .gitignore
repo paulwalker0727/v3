@@ -83,9 +83,32 @@ android-sdk/
 
 # overlay black-box crash/user-report dumps — session data, never history
 **/.emergent/recordings/
+
+# Cimitir: secrete, baze de date și loguri (nu se versionează)
 .env
+shared_data/
+*.db
+*.db-wal
+*.db-shm
+backend/data/
+*_demo.db
+.jwt_secret
+logs/
 .env.*
 *.env
+backend/.env
+**/.env
+!.env.example
+!backend/.env.example
 credentials.json
 *.key
 .credentials
+.pgdata/
+
+# artefacte generate de Emergent
+.emergent/cron/
+
+# Etapa 3: registre locale (runtime, nu se versionează)
+registries/
+registry_catalog.sqlite*
+legacy_adopted_*/

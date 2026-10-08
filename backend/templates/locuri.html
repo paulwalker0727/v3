@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Locuri de veci{% endblock %}
+{% block content %}
+<div data-testid="locuri-page">
+  <div class="page-head">
+    <div><h1 class="page-title">Locuri de veci</h1><p class="page-sub">Registrul complet al locurilor de veci din cimitir.</p></div>
+    <a href="/admin/export/locuri.xlsx" class="btn-outline" data-testid="export-excel"><i data-lucide="file-spreadsheet"></i> Export Excel</a>
+  </div>
+
+  <div class="filter-bar" data-filterbar="locuri">
+    <button class="chip active" data-f="toate" data-testid="filter-toate">Toate ({{ plots|length }})</button>
+    {% for k in STATUS_KEYS %}
+    <button class="chip" data-f="{{ k }}" data-testid="filter-{{ k }}">{{ STATUS_META[k].label }} ({{ counts[k] or 0 }})</button>
+    {% endfor %}
+  </div>
+
+  <div class="card table-card" data-testid="locuri-table">
+    <div class="table-head-bar">
+      <div class="search"><i data-lucide="search"></i><input placeholder="Caută..." data-search-input="locuri" data-testid="locuri-table-search" /></div>
+      <span class="count" data-count="locuri">{{ plots|length }} înregistrări</span>
+    </div>
+    <div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Cod loc</th><th>Localizare</th><th>Tip</th><th>Status</th></tr></thead>
+      <tbody data-rows="locuri">
+        {% for p in plots %}
+        <tr class="clickable" data-status="{{ p.status }}" data-search="{{ p.cod_loc }} {{ p.localizare }} {{ p.tip }}"
+            onclick="openDrawer('{{ p.cod_loc }}')" data-testid="locuri-row-{{ p.cod_loc }}">
+          <td class="mono strong">{{ p.cod_loc }}</td>
+          <td class="muted">{{ p.localizare or '—' }}</td>
+          <td>{{ p.tip or '—' }}</td>
+          <td>{% with status=p.status %}{% include 'partials/status_badge.html' %}{% endwith %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}<script>initTableFilters('locuri');</script>{% endblock %}

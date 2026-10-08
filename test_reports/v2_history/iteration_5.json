@@ -1,0 +1,46 @@
+{
+  "summary": "Etapa 3 (portal cetățeni + sincronizare cu MAIN) tested backend-only. Full pytest suite for Etapa 3 & Etapa 2 passed (26/26) plus a fresh live smoke-test suite against the preview REACT_APP_BACKEND_URL (7 passed, 2 correctly skipped). All contracts in the review request are enforced by the code and verified end-to-end: citizen-only endpoints, isolation from staff/admin & sync, public map/loc/search projection with zero PII, private document storage outside /static with auth-gated download, MAIN pull/ack/idempotency, approval re-check + double-assign prevention, GDPR privacy/version/retention & audit log, and monitoring page.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/public/account/login", "issue": "Login throttling (5 fails -> 429) is per-process in-memory (module dict _FAILS in citizen_api.py). Preview environment fans requests across >=2 backend pods (verified via access log: alternating 10.79.165.10 / 10.79.165.11), so an attacker rotating pods can bypass the 5-fail cap. Same limitation applies to any horizontally scaled deployment. Unit-level throttling (single process) is still asserted in test_etapa3_requests.py::test_citizen_accounts_are_separate_from_staff_and_throttled and passes."},
+      {"endpoint": "starlette/multipart", "issue": "PendingDeprecationWarning `import multipart` -> `python_multipart` (framework-level, unchanged from iterations 3-4)."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_etapa3_requests.py",
+    "/app/backend/tests/test_etapa2_sync.py",
+    "/app/backend/tests/test_live_smoke.py",
+    "/app/test_reports/pytest/iter5_results.xml",
+    "/app/test_reports/pytest/iter5_live.xml"
+  ],
+  "action_items": [
+    "Consider persisting login-fail throttle counters in SQLite (or a shared store) so the 5-fail lockout survives multi-pod deployments. In-memory per-process throttle is bypassable behind an LB.",
+    "Optionally upgrade starlette/fastapi multipart import (framework-level; non-blocking)."
+  ],
+  "critical_code_review_comments": [
+    "Citizen account router `/api/public/account/*` is fully isolated from staff: JWT audience=\"citizen\", stored in `cim_citizen` httpOnly cookie; staff session (admin cookie) cannot access /api/public/account/me (asserted). Reverse holds: citizen cookie cannot access /api/admin/map.json (401). Sync endpoints require X-Sync-Key regardless of any user cookie.",
+    "Public projection (`/api/public/map`, `/loc/{cod_loc}`, `/search`, `/cerere/{cod}`, `/privacy`) never leaks CNP/adresa/telefon/email/nume titular - verified both in unit tests (SQLite dump inspection) and live smoke against preview.",
+    "Document upload path: files stored under `cim.DATA_DIR/private/...` (outside `/static`), tempfile round-trip validates real MIME/magic bytes, EXE/../traversal filenames rejected; download requires either owning citizen cookie or X-Sync-Key. `/static/...` and `/media/...` probes return 401/403/404 (unit-tested).",
+    "Concurrent approval safe: `cimitir_requests.approve_cerere` uses SQLite transaction + explicit availability re-check; concurrent double-approve test yields exactly one contract + one concesionar (test_concurrent_requests_same_plot_never_double_assign).",
+    "Sync ack is idempotent + revision-aware: cetățean modifies during MAIN pull -> revision bumps -> ack does not clear personal data on outdated revision (test_partial_transfer_is_not_acked_and_resumes_without_duplicates).",
+    "Status push (`/api/sync/requests/{code}/status`) enforces op_id dedup + monotonic version (409 on stale) and reflects public_message + status_label to citizen (validat / respins / completari).",
+    "GDPR: privacy version+text served at `/api/public/privacy`, stored per-request in `privacy_version`+`privacy_ack_at`; retention days honored by `/admin/ui/purge`; audit log entries recorded for register/login_failed/document_download/request_submitted/ack/status/purge (verified via /admin/monitorizare rendering assertion).",
+    "Delete account anonymizes owned cereri (`citizen_id=NULL`) rather than cascading, preserving evidence but stripping identity — matches GDPR minimization.",
+    "Minor: `citizen_api._FAILS` never garbage-collects entries; over long uptime the dict grows unbounded (millions of failed emails). Consider periodic cleanup or capped LRU. Not a correctness issue."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_live_smoke.py (new)",
+    "/app/test_reports/iteration_5.json",
+    "/app/test_reports/pytest/iter5_results.xml",
+    "/app/test_reports/pytest/iter5_live.xml"
+  ],
+  "success_rate": {"backend": "100% (26/26 pytest + 7/7 non-skipped live smoke)", "frontend": "NA (backend-only per review request)"},
+  "test_credentials": "admin/admin123, user/user123 (POST /admin/access/login source_id=cimitir). Citizen accounts created ad-hoc via /api/public/account/register. Sync key: `python /app/scripts/issue_sync_key.py` (rotates on each call — I issued fresh keys during testing; the last one is invalidated after subsequent calls).",
+  "seed_data_creation": "One throwaway citizen account was created against preview during test_citizen_register_login_me_and_isolation_from_admin and immediately deleted via DELETE /api/public/account. A few failed login attempts left transient entries in the in-memory `_FAILS` dict; nothing persisted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Preview backend is multi-pod (>=2 replicas share /app/shared_data via PV, but in-memory Python state is NOT shared). This makes any in-memory rate-limit/throttle/cache observable-flakily on the preview URL. When authoring live smoke tests, avoid asserting per-process throttle behavior against the preview; unit tests in tests/test_etapa3_requests.py cover it. `issue_sync_key.py` prints a `[config] backend: db=/app/shared_data/cimitir.db` diagnostic line before the actual key — regex needs to be strict (I used `cimitir\\.[A-Za-z0-9_\\-]{20,}`). Running the script rotates the sync key; coordinate with main agent when handing off. All 26 tests in test_etapa3_requests.py + test_etapa2_sync.py pass in 49s. Existing desktop packaging tests (test_build_packaging.py) remain out of scope per review request.",
+  "rca of the issue": "No functional defect. One observability caveat: multi-pod preview deployment splits per-process state (throttle dict, in-flight lookups) across pods; this is a preview-environment artifact for stateful in-memory features. Recommendation is to migrate throttle counters to SQLite (already the source of truth for everything else) if horizontal scaling is a long-term goal."
+}

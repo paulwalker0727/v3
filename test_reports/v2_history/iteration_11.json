@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 11 verification of pure refactors. Started isolated uvicorn (port 8151, --no-proxy-headers) against /tmp/z1 seeded from backend/data/cimitir_demo.db. Ran 18 fresh pytest cases exercising public_search, public_cerere, admin rapoarte + fisa pdf refactors; ran a scripted QR public_data smoke on /app/desktop against a temp DB; checked diffs between desktop/backend copies; verified use-toast reducer still exports ADD/UPDATE/DISMISS/REMOVE and frontend compiles. All refactors preserve behavior.",
+  "verifications": [
+    {"name": "GET /api/public/search empty/limit/by-sector/by-cod/by-surname", "result": "PASS (5/5; surname skipped — demo DB has no inhumati); results unique per cod_loc, count == len(results), required fields present"},
+    {"name": "POST /api/public/cerere — happy + error paths", "result": "PASS: unknown tip=>422, empty nume=>400 (via _validate_cerere_input ordering), observatii >limit=>413, >max files=>413, actualizare_inhumat missing fields=>422. Skipped: happy concesionare + concesionare on ocupat 409 (demo DB uses legacy statuses 'liber/indisponibil/rezervat'; no 'disponibil' / 'ocupat' row to target). Admin login (POST /admin/access/login + /admin/schimba-parola) works."},
+    {"name": "GET /admin/rapoarte default/sector/dates/clamp/drawer", "result": "PASS all 5 variations (page_size & page clamped, HTML 200)"},
+    {"name": "Fisa PDF: GET /admin/loc/{cod}/fisa.pdf", "result": "PASS: application/pdf, body starts with %PDF"},
+    {"name": "qr_public_data.get_public_data()", "result": "PASS: unknown cod -> found False; a loc with future contract -> 'Valabil' + Titular/Contract/Inhumati sections; same loc after setting data_sfarsit in past -> 'Expirat'. CNP/adresa/telefon never leaked into payload."},
+    {"name": "File copies parity", "result": "`diff /app/desktop/qr_public_data.py /app/backend/cimitir/qr_public_data.py` -> empty. `diff` of fisa_pdf.py copies -> only line 24 differs (import database as db vs import store as db) as expected."},
+    {"name": "Frontend sanity after use-toast.js reducer split", "result": "curl http://localhost:3000 -> 200; supervisor frontend.out.log shows 'Compiled successfully! / webpack compiled successfully'. use-toast.js still exports { reducer, useToast, toast } and reducer handles ADD_TOAST/UPDATE_TOAST/DISMISS_TOAST/REMOVE_TOAST."}
+  ],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/test_reports/pytest/iteration11.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "web_public._validate_cerere_input is ordered: unknown tip (422) -> missing nume/prenume (400) -> field too long (413) -> portal disabled (503) -> too many files (413). Verified empirically; the previous monolithic version had the same ordering. Note: the task description mentioned error paths like 'unknown tip=>422, empty nume=>400' which is consistent with validator order; good.",
+    "server.rapoarte helpers (_sector_breakdown/_payment_totals/_expiring_contracts/_page_window) all exercised via GET /admin/rapoarte with sector filter, date window, page/page_size out-of-range — no 500s, no Jinja errors.",
+    "qr_public_data._load_titular + _field_sections + _inhumati_sections are identical in the desktop & backend copies (zero-diff). Suggest adding a small CI assertion `diff` so this invariant is preserved automatically.",
+    "fisa_pdf.py copies differ only by `import database as db` vs `import store as db` — the two refactored copies are otherwise identical."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (15 passed, 3 skipped due to missing seed statuses — not refactor regressions)", "frontend": "sanity-only: 200 + webpack compiled OK"},
+  "test_credentials": "admin/admin123 (forced password change -> AdminNou12345) per /app/memory/test_credentials.md",
+  "seed_data_creation": "Copied /app/backend/data/cimitir_demo.db to /tmp/z1/cimitir.db to boot the uvicorn instance. Created an in-memory style sqlite temp DB under /tmp/qr_test_* for the QR check. All temp dirs, server (PID on port 8151), and the temp test scripts under /app/backend/tests and /app/desktop/tests were deleted at the end.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Refactor iteration verified. If a future iteration wants the two skipped positive tests (happy concesionare + concesionare on 'ocupat' -> 409) to execute, seed via the API (POST a loc with status disponibil + another with status ocupat) or run with CIMITIR_SEED_DEMO=1 against a FRESH empty data dir so seed_demo generates the full status mix; the shipped demo DB only contains legacy statuses (liber/indisponibil/rezervat). Server ports 8001 and 3000 were not touched; test server on 8151 cleaned up."
+}

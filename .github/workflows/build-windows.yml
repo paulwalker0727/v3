@@ -1,0 +1,113 @@
+name: Construiește Cimitir pentru Windows
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: desktop/requirements.txt
+
+      - name: Instalează dependențele
+        run: |
+          python -m pip install --upgrade pip
+          Get-Content requirements.txt | Where-Object { $_ -notmatch '^emergentintegrations' } | Set-Content requirements-ci.txt
+          pip install -r requirements-ci.txt
+          pip install -r requirements-build.txt
+          pip install -r web_requirements.txt pytest
+
+      - name: Citește versiunea aplicației
+        id: ver
+        run: |
+          $line = Select-String -Path security/config.py -Pattern '^APP_VERSION' | Select-Object -First 1
+          $ver = ($line.Line -split '=')[1].Trim().Trim('"')
+          if (-not $ver) { $ver = "1.0.0" }
+          "version=$ver" >> $env:GITHUB_OUTPUT
+
+      - name: Teste desktop (packaging, autentificare MAIN, pornire)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/test_build_packaging.py tests/test_main_password_gate.py tests/test_startup_unification.py tests/test_backup_window.py -q
+
+      - name: PyInstaller — varianta folder
+        env:
+          CIMITIR_ONEFILE: "0"
+        run: python -m PyInstaller --noconfirm --clean cimitir.spec
+
+      - name: Smoke test — portalul pornește din executabilul înghețat
+        run: |
+          $env:CIMITIR_DATA_DIR = Join-Path $env:RUNNER_TEMP "cimitir-smoke"
+          $p = Start-Process -FilePath "dist\Cimitir\Cimitir.exe" -ArgumentList "--portal","--host","127.0.0.1","--port","8765" -PassThru
+          $ok = $false
+          foreach ($i in 1..60) {
+            Start-Sleep -Seconds 1
+            try { if ((Invoke-RestMethod "http://127.0.0.1:8765/api/public/health").ok) { $ok = $true; break } } catch {}
+          }
+          if ($ok) {
+            foreach ($path in "/portal", "/admin/access", "/portal/harta") {
+              $code = (Invoke-WebRequest "http://127.0.0.1:8765$path" -UseBasicParsing).StatusCode
+              if ($code -ne 200) { $ok = $false; Write-Error "$path -> $code" }
+            }
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $ok) { throw "Portalul din Cimitir.exe nu a pornit" }
+
+      - name: PyInstaller — varianta portabilă (un singur .exe)
+        env:
+          CIMITIR_ONEFILE: "1"
+        run: |
+          python -m PyInstaller --noconfirm --distpath dist_onefile cimitir.spec
+          Move-Item dist_onefile/Cimitir.exe dist/Cimitir-portabil.exe
+
+      - name: Semnare digitală (opțională)
+        if: ${{ env.WINDOWS_CERT_BASE64 != '' }}
+        env:
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+          $tool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
+          & $tool.FullName sign /fd SHA256 /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD /tr http://timestamp.digicert.com /td SHA256 dist\Cimitir\Cimitir.exe dist\Cimitir-portabil.exe
+
+      - name: Instalator Inno Setup
+        run: |
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=${{ steps.ver.outputs.version }}" installer\cimitir_setup.iss
+
+      - name: Încarcă instalatorul
+        uses: actions/upload-artifact@v4
+        with:
+          name: CimitirSetup-${{ steps.ver.outputs.version }}
+          path: desktop/dist_installer/CimitirSetup-*.exe
+
+      - name: Încarcă varianta portabilă
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cimitir-portabil-${{ steps.ver.outputs.version }}
+          path: desktop/dist/Cimitir-portabil.exe
+
+      - name: Publică Release (doar pentru tag-uri)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/dist_installer/CimitirSetup-*.exe
+            desktop/dist/Cimitir-portabil.exe

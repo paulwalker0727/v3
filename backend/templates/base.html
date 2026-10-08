@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1b382b" />
+  <title>{% block title %}Administrare Cimitire{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="crest">✦</div>
+      <div class="brand-txt">
+        <div class="brand-title">Admin Cimitire</div>
+        <div class="brand-sub">Primărie</div>
+      </div>
+      <button class="sidebar-close" onclick="document.getElementById('sidebar').classList.remove('open')"><i data-lucide="x"></i></button>
+    </div>
+    <nav class="sidebar-nav">
+      {% set path = request.url.path %}
+      {% macro navitem(href, label, icon, active, badge=0) %}
+        <a href="{{ href }}" class="nav-item {{ 'active' if active }}" data-testid="nav-{{ href.replace('/admin','').strip('/') or 'dashboard' }}">
+          <i data-lucide="{{ icon }}"></i><span>{{ label }}</span>
+          {% if badge and badge > 0 %}<span class="nav-badge">{{ badge }}</span>{% endif %}
+        </a>
+      {% endmacro %}
+      {{ navitem('/admin/', 'Panou principal', 'layout-dashboard', path == '/admin/') }}
+      {{ navitem('/admin/cauta', 'Căutare', 'search', path == '/admin/cauta') }}
+      {{ navitem('/admin/harta', 'Hartă cimitir', 'map', path == '/admin/harta') }}
+      {{ navitem('/admin/locuri', 'Locuri de veci', 'grid-3x3', path == '/admin/locuri') }}
+      {{ navitem('/admin/inhumati', 'Înhumați', 'users', path == '/admin/inhumati') }}
+      {{ navitem('/admin/contracte', 'Contracte', 'file-signature', path == '/admin/contracte') }}
+      {{ navitem('/admin/concesionari', 'Concesionari', 'user-circle', path == '/admin/concesionari') }}
+      {{ navitem('/admin/plati', 'Plăți & chitanțe', 'wallet', path == '/admin/plati') }}
+      {{ navitem('/admin/cereri', 'Cereri online', 'inbox', path == '/admin/cereri', badges.cereri) }}
+      {{ navitem('/admin/rapoarte', 'Rapoarte', 'bar-chart-3', path == '/admin/rapoarte') }}
+      {% if user and 'manage_users' in user.rights %}{{ navitem('/admin/utilizatori', 'Utilizatori', 'users', path == '/admin/utilizatori') }}{% endif %}
+      {% if user and 'manage_users' in user.rights %}{{ navitem('/admin/system', 'Sistem', 'server', path.startswith('/admin/system')) }}{% endif %}
+      {% if user and 'manage_users' in user.rights %}{{ navitem('/admin/cloud', 'Configurare Cloud', 'cloud', path.startswith('/admin/cloud')) }}{% endif %}
+      {{ navitem('/admin/setari', 'Setări', 'settings', path == '/admin/setari') }}
+    </nav>
+    <div class="sidebar-foot">
+      <div class="db-chip">
+        <i data-lucide="hard-drive"></i>
+        <div><div class="db-name">{{ user.source.name if user else '—' }}</div><div class="db-eng">SQLite</div></div>
+      </div>
+      <a href="/admin/access" class="switch-db" data-testid="switch-db"><i data-lucide="database"></i> Schimbă baza de date</a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')"><i data-lucide="menu"></i></button>
+      <span class="db-pill"><i data-lucide="hard-drive"></i> {{ user.source.name if user else 'Bază de date' }}</span>
+      {% if badges.expira > 0 %}
+      <span class="alert-pill" data-testid="expiring-alert"><i data-lucide="bell"></i> {{ badges.expira }} contracte expiră</span>
+      {% endif %}
+      <div class="topbar-right">
+        <a href="{{ portal_url }}" target="_blank" class="portal-link" data-testid="portal-link"><i data-lucide="external-link"></i> Portal public</a>
+        <div class="user-chip">
+          <div class="avatar">{{ (user.username[:2] if user else '?')|upper }}</div>
+          <div class="user-meta"><div class="uname">{{ user.username if user }}</div><div class="urole">{{ user.role if user }}</div></div>
+          <form method="post" action="/admin/logout" style="display:inline;margin:0">
+            <button type="submit" class="logout" data-testid="logout-button" title="Ieșire" style="background:none;border:0;cursor:pointer"><i data-lucide="log-out"></i></button>
+          </form>
+        </div>
+      </div>
+    </header>
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+<!-- Atașamente (sheet generic) -->
+<div class="sheet-overlay" id="att-overlay" onclick="closeAtt()"></div>
+<div class="sheet" id="att-sheet" data-testid="att-sheet" role="dialog" aria-modal="true" aria-label="Atașamente">
+  <div class="sheet-bar"><strong id="att-sheet-title">Atașamente</strong><button onclick="closeAtt()" aria-label="Închide" data-testid="att-close"><i data-lucide="x"></i></button></div>
+  <div id="att-body" class="sheet-body"></div>
+</div>
+
+<!-- Navigare mobilă -->
+<nav class="bottom-nav" data-testid="bottom-nav" aria-label="Navigare principală">
+  <a href="/admin/cauta" class="{{ 'active' if request.url.path == '/admin/cauta' }}" data-testid="bn-cauta"><i data-lucide="search"></i><span>Caută</span></a>
+  <a href="/admin/harta" class="{{ 'active' if request.url.path == '/admin/harta' }}" data-testid="bn-harta"><i data-lucide="map"></i><span>Hartă</span></a>
+  <a href="/admin/locuri" class="{{ 'active' if request.url.path == '/admin/locuri' }}" data-testid="bn-locuri"><i data-lucide="grid-3x3"></i><span>Locuri</span></a>
+  <a href="/admin/cereri" class="{{ 'active' if request.url.path == '/admin/cereri' }}" data-testid="bn-cereri"><i data-lucide="inbox"></i><span>Cereri</span>{% if badges.cereri > 0 %}<b class="bn-badge">{{ badges.cereri }}</b>{% endif %}</a>
+  <button type="button" onclick="document.getElementById('sidebar').classList.add('open')" data-testid="bn-meniu"><i data-lucide="menu"></i><span>Meniu</span></button>
+</nav>
+
+<!-- Drawer inspector -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <button class="drawer-x" onclick="closeDrawer()"><i data-lucide="x"></i></button>
+  <div id="drawer-body"></div>
+</div>
+
+<script src="/static/app.js"></script>
+{% block extra_js %}{% endblock %}
+<script>lucide.createIcons();</script>
+</body>
+</html>

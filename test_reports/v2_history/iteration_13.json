@@ -1,0 +1,36 @@
+{
+  "summary": "Verified Etapa 11 'Verificare Producție' card + safe persistence test flow. Ran unit tests (test_etapa11_prod_check.py + test_etapa8_system.py = 30 passed) and new live e2e tests (test_etapa11_e2e_live.py = 6 passed) against http://127.0.0.1:8001. Executed real supervisor backend restart via sudo supervisorctl: probe survived restart, Verify returned 'PERSISTAT' + 'ștearsă', production level correctly stayed 'pg_local' with 'NU ESTE GATA PENTRU PRODUCȚIE' (persistence alone does not promote a local DB to cloud). Playwright confirmed all data-testid elements render and htmx buttons work. Real tables (locuri_de_veci, contracte, inhumati) counts unchanged across create+cleanup cycle; settings table has no '_probe:persistence:active' residue. Classification logic reviewed – /app/backend/system_admin.py classify_database correctly maps 127.0.0.1/localhost/::1/private/.svc/.internal/socket -> postgres_local and supabase.co/neon.tech/rds.amazonaws.com/unknown FQDN/public IP -> postgres_cloud; pg_cloud_persistent only when verified for same fingerprint. No code modified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_etapa11_prod_check.py",
+    "/app/backend/tests/test_etapa8_system.py",
+    "/app/backend/tests/test_etapa11_e2e_live.py",
+    "/app/test_reports/pytest/etapa11.xml",
+    "/app/test_reports/pytest/etapa11_live.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "classify_database() correctly treats CIMITIR_DB_ENGINE=postgres alone as not sufficient; it analyzes DATABASE_URL host class and known cloud suffixes. Fingerprint uses host:port/dbname (no password) – good.",
+    "production_check() correctly ties pg_cloud_persistent to BOTH postgres_cloud classification AND verified persistence on the SAME fingerprint; stale_result flag handles DATABASE_URL changes.",
+    "Persistence probe uses an isolated settings key with marker CIMITIR-PERSISTENCE-PROBE and UUID; _delete_probe_keys() targets only that one key; real tables untouched (confirmed via psycopg).",
+    "redact() in system_admin.py masks DATABASE_URL/MONGO_URL values, bearer, cimitir.* sync keys, JWTs; the literal variable NAME 'DATABASE_URL' is mentioned in user-facing explanation text (not a secret) – no actual credentials/host:port leak into HTML (verified)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_etapa11_e2e_live.py (new live e2e test file; does not modify application code)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "e11view / Parola-E11-view! (source_id=cimitir) at http://127.0.0.1:8001/admin/access/login",
+  "seed_data_creation": "none; probe keys cleaned after tests",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Live tests must hit http://127.0.0.1:8001 directly, NOT the ingress REACT_APP_BACKEND_URL (ingress only routes /api/*). Login endpoint is POST /admin/access/login (not /admin/access). Use e11view/Parola-E11-view! (not admin/admin123 which forces password change). Supervisor restart cycle: `sudo supervisorctl restart backend` then sleep 8s. The live DB is local dev Postgres so pg_cloud_persistent cannot be observed live – it is covered by test_production_level_requires_cloud_and_verified_persistence in test_etapa11_prod_check.py.",
+  "rca of the issue": "N/A – no bugs found. Feature works as specified: differentiates sqlite / pg_local / pg_cloud_unverified / pg_cloud_persistent / pg_unconfigured; CIMITIR_DB_ENGINE=postgres alone is explicitly noted as insufficient; persistence probe is isolated in a single settings key and never touches real data; verify-before-restart returns 'ÎN AȘTEPTARE'; verify-after-restart returns 'PERSISTAT' + deletes probe; subsequent verify says 'Nu există nicio probă activă'; level remains pg_local on local DB even after persistence confirmed."
+}

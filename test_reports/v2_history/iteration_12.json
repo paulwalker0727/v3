@@ -1,0 +1,33 @@
+{
+  "summary": "Independent verification of GHID_WINDOWS.md + helper scripts on Linux (PowerShell-specific parts not executable). The provided pytest suite (/app/desktop/tests/test_windows_guide_flow.py) ran clean: 3 passed in 5.99s via `QT_QPA_PLATFORM=offscreen python -m pytest -q -p no:cacheprovider` from /app/desktop. In addition, re-ran the LOCAL-mode flow end-to-end by hand against port 8181 and validated the ONLINE-mode CLI pieces + sync endpoint behavior on ports 8182/8183.",
+  "verifications": [
+    {"name": "pytest test_windows_guide_flow.py", "result": "PASS 3/3 (local flow, online flow, reset_admin_password); junit at /app/test_reports/pytest/iteration12_guide.xml"},
+    {"name": "Section 2 URLs on 127.0.0.1:8181 (LOCAL)", "result": "PASS: /portal, /portal/harta, /portal/cerere, /portal/cont, /portal/prelucrare-date, /admin/access, /api/public/health, /docs all return 200"},
+    {"name": "Section 7 citizen flow (LOCAL, --portal-only --port 8181)", "result": "PASS: POST /api/public/account/register => 200; anonymous POST /api/public/cerere => 401 (CIMITIR_PORTAL_REQUIRE_ACCOUNT=1 default confirmed in backend/citizen_api.py:43); logged-in POST with PDF => 200 documente==1; file persisted at /tmp/w1/media/cerere/*.pdf; after cimitir_requests.approve_cerere(actor='MAIN') -> account cereri status='validat' and public /api/public/cerere/<cod>.status='validat'"},
+    {"name": "Admin main_only guard", "result": "PASS: POST /admin/ui/cerere/<id>/status without session => 401; with admin session => 303 to login/schimba-parola (admin cannot alter cerere status from web)"},
+    {"name": "Section 5 file paths", "result": "PASS: /tmp/w1/cimitir.db, /tmp/w1/.jwt_secret (0600), /tmp/w1/logs/portal.log, /tmp/w1/media/cerere/ all exist as the guide claims"},
+    {"name": "Section 3 reset_admin_password script (covered by pytest #3)", "result": "PASS: --list prints username/role/active without password hashes or secrets; weak password rejected (exit 2); unknown user without --create-admin (exit 3); --create-admin succeeds; after reset, POST /admin/access/login with admin123 does NOT return 303, new password returns 303 (no /schimba-parola in Location). New password never echoed in stdout/stderr."},
+    {"name": "Section 6 ONLINE CLI pieces", "result": "PASS: issue_sync_key.py prints key as last stdout line starting with 'cimitir.'; configure_main_sync.py --test exits 0 (per pytest); non-localhost http:// URL refused with exit code 2 and clear Romanian error; GET /api/sync/ping on CIMITIR_MODE=online server without X-Sync-Key => 401; same path on local-mode server => 404 (sync_api not mounted)"},
+    {"name": "Section 4 env-file order & defaults", "result": "PASS: shared/cimitir_config.env_files() order is [CIMITIR_ENV_FILE, <repo>/.env, <repo>/backend/.env]; load_env() does `if key not in os.environ` so pre-set process env wins (matches guide). backend/citizen_api.py:43 default CIMITIR_PORTAL_REQUIRE_ACCOUNT fallback is '1'. backend/server.py:66 CIMITIR_SEED_DEMO gate uses '1' as claimed."},
+    {"name": "No secret leakage", "result": "PASS: `grep -nE '(admin123|user123|JWT_SECRET=[A-Za-z0-9]{10,}|cimitir\\.[A-Za-z0-9_-]{10,})' GHID_WINDOWS.md config/cimitir-online-server.env.example` => zero matches. The example file instructs the user to run `python -c \"import secrets; print(secrets.token_hex(32))\"` without providing a placeholder value."},
+    {"name": "Desktop menu labels referenced by guide", "result": "PASS: '📥 Cereri online' and '☁ Sincronizare cloud' present in /app/desktop/ui_mainwindow.py; 'Adresă server:' and 'Cheie sincronizare:' present in /app/desktop/cloud_sync_window.py:57-58; '✅ Validează → adaugă în concesionar' present in /app/desktop/cereri_online_window.py:283"}
+  ],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/desktop/tests/test_windows_guide_flow.py", "/app/test_reports/pytest/iteration12_guide.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "configure_main_sync.py never prints the --key value (verified: `key not in done.stdout + done.stderr` assertion in pytest); good hygiene for secret handling.",
+    "reset_admin_password.py uses getpass for interactive mode and allows automation via --password-env; the password is validated with auth.validate_new_password before being applied and is never echoed. Confirmed empirically.",
+    "shared/cimitir_config.load_env() correctly honours existing process env (`if item[0] not in os.environ`), which matches the guide's claim about PowerShell-set variables taking precedence over .env files.",
+    "backend/citizen_api.py require_account() default is '1' only if the DB setting is absent/empty — matches guide statement that account is required by default and can be toggled from /admin/setari."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (all claims from the guide verified against the code and against a live portal on 127.0.0.1:8181/8182/8183)", "frontend": "N/A (backend-only task; no UI tested)"},
+  "test_credentials": "admin / admin123 default from shared/cimitir_auth.py DEFAULT_USERS (per /app/memory/test_credentials.md); forced password change at first login. Guide intentionally does not print defaults.",
+  "seed_data_creation": "All temp DBs under /tmp/w1, /tmp/w2s2, /tmp/wlocal; cleaned up at end. No modifications to /app/shared_data, /app/backend/data, or any committed file.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Guide iteration 12 fully green. Everything that can be checked on Linux matches the code. Items explicitly NOT executed (as required): (1) actual PowerShell syntax (Activate.ps1, Set-Clipboard, Select-String, Get-Content|Where-Object|Set-Content), (2) py -3.11 launcher on Windows + venv, (3) pip install on Windows (PySide6, PyMuPDF, opencv), (4) MAIN license dialog (HWID in %APPDATA%\\CimitirDesktop\\license.key) and all PySide6 windows (login/password-change dialog, '📥 Cereri online', '☁ Sincronizare cloud'), (5) build .exe/installer, (6) firewall + CA bundle in production. Guide marks those with 🪟; backend/CLI parts marked ✅ were all re-verified. No code or guide was modified.",
+  "rca of the issue": "No bug to RCA — iteration passed."
+}

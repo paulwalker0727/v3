@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Harta cimitirului{% endblock %}
+{% block content %}
+<div data-testid="map-page">
+  <div class="page-head">
+    <div><h1 class="page-title">Harta cimitirului</h1><p class="page-sub">Click pe un loc pentru detalii. Scroll = zoom, drag = mutare.</p></div>
+    <div class="map-search"><i data-lucide="search"></i><input id="map-q" placeholder="Cod loc..." data-testid="map-search" oninput="mapSearch(this.value)" /></div>
+  </div>
+
+  <div class="filter-bar" id="map-filters">
+    <button class="chip active" data-f="toate" onclick="mapFilter('toate',this)" data-testid="status-filter-toate">Toate</button>
+    {% for k in STATUS_KEYS %}
+    <button class="chip" data-f="{{ k }}" onclick="mapFilter('{{ k }}',this)" data-testid="status-filter-{{ k }}">{{ STATUS_META[k].label }} <span id="cnt-{{ k }}">0</span></button>
+    {% endfor %}
+  </div>
+
+  <div class="map-box">
+    <div class="map-tools">
+      <button onclick="mapZoom(0.8)" data-testid="zoom-in"><i data-lucide="zoom-in"></i></button>
+      <button onclick="mapZoom(1.25)" data-testid="zoom-out"><i data-lucide="zoom-out"></i></button>
+      <button onclick="mapReset()" data-testid="zoom-reset"><i data-lucide="maximize"></i></button>
+    </div>
+    <svg id="map-svg" class="map-svg" data-testid="map-svg" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="map-legend" id="map-legend"></div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>initMap();</script>
+{% endblock %}

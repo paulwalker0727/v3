@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Cereri online{% endblock %}
+{% block content %}
+{% from 'partials/_att.html' import attbtn %}
+<div data-testid="cereri-page">
+  <div class="page-head"><div><h1 class="page-title">Cereri online</h1><p class="page-sub">Cererile de concesionare primite din portalul public.</p></div></div>
+  <div class="filter-bar">
+    <a href="/admin/cereri" class="chip {{ 'active' if tab=='' }}" data-testid="cereri-tab-toate">Toate</a>
+    <a href="/admin/cereri?status=nou" class="chip {{ 'active' if tab=='nou' }}" data-testid="cereri-tab-nou">Noi</a>
+    <a href="/admin/cereri?status=validat" class="chip {{ 'active' if tab=='validat' }}" data-testid="cereri-tab-validat">Validate</a>
+    <a href="/admin/cereri?status=respins" class="chip {{ 'active' if tab=='respins' }}" data-testid="cereri-tab-respins">Respinse</a>
+  </div>
+
+  {% if not rows %}
+  <div class="empty-box"><i data-lucide="inbox"></i> Nicio cerere.</div>
+  {% else %}
+  <div class="cerere-list">
+    {% for c in rows %}
+    <div class="cerere-card" onclick="toggleCerere({{ c.id }})" data-testid="cerere-card-{{ c.id }}">
+      <div class="cerere-main">
+        <div class="cerere-name">{{ (c.nume ~ ' ' ~ c.prenume)|trim }} {% include 'partials/cerere_status.html' %}</div>
+        <div class="muted-xs">#{{ c.id }} · {{ c.created_at }}{% if c.cod_loc %} · Loc {{ c.cod_loc }}{% endif %}{% if c.grad_rudenie %} · {{ c.grad_rudenie }}{% endif %}</div>
+      </div>
+      {% if c.documents %}<span class="doc-count"><i data-lucide="file-text"></i>{{ c.documents|length }}</span>{% endif %}
+    </div>
+    <div class="cerere-detail" id="cerere-{{ c.id }}" onclick="event.stopPropagation()">
+      <div class="kv"><span>Loc solicitat</span><b>{{ c.cod_loc or '—' }}</b></div>
+      <div class="kv"><span>CNP</span><b>{{ c.cnp or '—' }}</b></div>
+      <div class="kv"><span>Serie/nr. CI</span><b>{{ c.bi_ci or '—' }}</b></div>
+      <div class="kv"><span>Adresă</span><b>{{ c.adresa or '—' }}</b></div>
+      <div class="kv"><span>Telefon</span><b>{{ c.telefon or '—' }}</b></div>
+      <div class="kv"><span>Email</span><b>{{ c.email or '—' }}</b></div>
+      <div class="kv"><span>Observații</span><b>{{ c.observatii or '—' }}</b></div>
+      {% if c.documents %}
+      <div class="doc-strip">{% for d in c.documents %}<a href="/admin/file/document/{{ d.id }}" target="_blank" class="doc-pill"><i data-lucide="file-text"></i>{{ d.caption or 'Doc' }}</a>{% endfor %}</div>
+      {% endif %}
+      {{ attbtn('cerere', c.id, 'Documente cerere') }}
+      {% if c.status in ('nou','completari') %}
+        {% if 'approve' in user.rights %}
+        <form method="post" action="/admin/ui/cerere/{{ c.id }}/status" class="cerere-decide" data-testid="cerere-decide-{{ c.id }}">
+          <input name="note" maxlength="500" placeholder="Notă / motiv (opțional la aprobare)" data-testid="cerere-note-{{ c.id }}" />
+          <button name="status" value="validat" class="btn-ok" onclick="return confirm('Aprobi cererea? Se creează concesionarul și un contract draft, iar locul devine rezervat.')" data-testid="cerere-approve-{{ c.id }}"><i data-lucide="check"></i> Aprobă</button>
+          <button name="status" value="respins" class="btn-no" onclick="return confirm('Respingi cererea?')" data-testid="cerere-reject-{{ c.id }}"><i data-lucide="x"></i> Respinge</button>
+        </form>
+        {% else %}<div class="info-banner" data-testid="cerere-no-right-{{ c.id }}"><i data-lucide="lock"></i> Aprobarea cererilor necesită dreptul „approve”.</div>{% endif %}
+      {% endif %}
+      {% if c.review_note %}<div class="kv"><span>Notă evaluare (MAIN)</span><b>{{ c.review_note }}</b></div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

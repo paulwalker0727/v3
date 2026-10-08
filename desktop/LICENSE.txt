@@ -1,0 +1,43 @@
+ACORD DE LICENTA UTILIZARE SOFTWARE
+=====================================
+
+Aplicatia: Cimitir v1.0.0
+Producator: Firma Ta SRL
+
+CONDITII DE UTILIZARE
+
+Prin instalarea acestui software, sunteti de acord cu urmatoarele:
+
+1. LICENTA
+Software-ul este licentiat, NU vandut. Producatorul va acorda o
+licenta neexclusiva, netransferabila, pentru utilizarea aplicatiei
+in scopurile de gestiune cimitir mentionate in documentatie.
+
+2. RESTRICTII
+Nu aveti dreptul sa:
+- copiati, distribuiti sau redistribuiti software-ul
+- efectuati reverse-engineering asupra codului
+- inchiriati, imprumutati sau sublicentiati software-ul catre terti
+- eliminati notificarile de copyright
+
+3. DATE PERSONALE (GDPR)
+Aplicatia proceseaza date cu caracter personal (nume, CNP,
+date decedati). Utilizatorul (institutia) este operator conform
+Regulamentului UE 2016/679 si raspunde pentru colectarea si
+prelucrarea corespunzatoare a acestora.
+
+4. RASPUNDERE
+Software-ul este furnizat "as-is". Producatorul nu raspunde pentru
+pierderi de date cauzate de utilizare necorespunzatoare, defectiuni
+hardware sau evenimente externe. Se recomanda backup regulat.
+
+5. SUPORT
+Suport tehnic disponibil in perioada de licenta activa la:
+contact@firma-ta.ro
+
+6. LEGEA APLICABILA
+Aceasta licenta este guvernata de legile Romaniei. Orice litigiu
+va fi solutionat de instantele competente din Romania.
+
+------------------------------------
+Copyright (c) 2026 Firma Ta SRL. Toate drepturile rezervate.

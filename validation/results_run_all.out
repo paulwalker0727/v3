@@ -1,0 +1,21 @@
+reset_tmp_admin None / None FAIL: [] (6s)
+t3_admin_flow 26 / 26 FAIL: [] (29s)
+setup A True
+setup B True
+t4_sync 29 / 29 FAIL: [] (70s)
+t4b_reverse 17 / 17 FAIL: [] (36s)
+t5_idem 21 / 21 FAIL: [] (39s)
+t6_conflict 16 / 17 FAIL: ['/admin/monitorizare afiseaza conflictele'] (45s)
+t6b_resolve 9 / 9 FAIL: [] (60s)
+t9_tomb 14 / 14 FAIL: [] (137s)
+t2_storage 22 / 22 FAIL: [] (20s)
+t7_offline 29 / 29 FAIL: [] (81s)
+t10_portal 38 / 38 FAIL: [] (65s)
+t10b_request_to_main 7 / 8 FAIL: ['MAIN A are documentul cererii local, SHA256 identic cu cel trimis de cetatean'] (23s)
+t1_persist None / None FAIL: [] (11s)
+t1_persist_after None / None FAIL: [] (8s)
+t11_security 28 / 29 FAIL: ['cookie sesiune admin: Secure (cerut in mod online/HTTPS)  [lipseste]'] (63s)
+t11b_logs_audit 22 / 23 FAIL: ["log-uri: 'db_host' nu apare  [['backend.err.log']]"] (8s)
+t13_backup 6 / 6 FAIL: [] (42s)
+t14_recovery 21 / 22 FAIL: ['Storage indisponibil: nu raman documente de cerere fara obiect in Storage (date inconsistente)  [documente orfane: 1]'] (67s)
+GATA

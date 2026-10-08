@@ -1,0 +1,7 @@
+# Dependențe DOAR pentru teste (nu intră în deploy). Instalare: pip install -r backend/requirements-render.txt -r backend/requirements-test.txt
+# Teste de backup (test_etapa8_system): pg_dump trebuie să fie cel puțin la versiunea serverului PostgreSQL (ex. postgresql-client-17 pentru Supabase/PG 17);
+# altfel testul se sare cu motiv explicit.
+pytest==9.1.1
+pytest-xdist==3.8.0
+moto[s3]==5.2.3
+cryptography==50.0.2

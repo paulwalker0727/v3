@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Utilizatori{% endblock %}
+{% block content %}
+<style>.inline-form{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.inline-form select{width:auto;min-width:110px}.inline-form input[type=checkbox]{width:auto;margin:0;display:inline-block}.inline-form label{display:inline-flex;align-items:center;gap:4px;margin:0}</style>
+<div data-testid="utilizatori-page">
+  <div class="page-head">
+    <div><h1 class="page-title">Utilizatori</h1><p class="page-sub">Administrarea conturilor și rolurilor.</p></div>
+    <button class="btn-primary" onclick="openModal('user-modal')" data-testid="add-user-btn"><i data-lucide="plus"></i> Utilizator nou</button>
+  </div>
+
+  <div class="info-banner"><i data-lucide="shield-alert"></i> Roluri: <b>admin</b> (toate drepturile), <b>operator</b> (consultare + editare + aprobare, ajustabile), <b>user</b> (doar consultare). Conturile dezactivate sau revocate pierd accesul online imediat, iar în MAIN după următoarea sincronizare (sau la expirarea accesului offline).</div>
+
+  <div class="card table-card" data-testid="users-table">
+    <div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Utilizator</th><th>Rol · drepturi · stare</th><th>Acces MAIN offline</th><th>Ultima autentificare</th><th></th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="strong">{{ r.username }}</td>
+          <td>
+            <form method="post" action="/admin/ui/user/{{ r.id }}/update" class="inline-form" data-testid="update-user-{{ r.id }}">
+              <select name="role" data-testid="role-user-{{ r.id }}">{% for ro in ['admin','operator','user'] %}<option value="{{ ro }}" {{ 'selected' if r.role == ro }}>{{ ro }}</option>{% endfor %}</select>
+              {% for right in ['edit','approve'] %}<label class="muted-xs"><input type="checkbox" name="rights" value="{{ right }}" {{ 'checked' if right in r.rights }} data-testid="right-{{ right }}-{{ r.id }}"/> {{ right }}</label>{% endfor %}
+              <label class="muted-xs"><input type="checkbox" name="active" value="1" {{ 'checked' if r.active }} data-testid="active-user-{{ r.id }}"/> activ</label>
+              <button type="submit" class="btn-ghost" data-testid="save-user-{{ r.id }}">Salvează</button>
+            </form>
+          </td>
+          <td class="mono">{{ 'valabil până ' ~ r.lease_until if r.lease_until else 'fără limită (cont local)' }}</td>
+          <td class="mono">{{ r.last_login or '—' }}</td>
+          <td class="row-actions">
+            <button title="Schimbă parola" onclick="openPw({{ r.id }}, '{{ r.username }}')" data-testid="pw-user-{{ r.id }}"><i data-lucide="key-round"></i></button>
+            <form method="post" action="/admin/ui/user/{{ r.id }}/delete" onsubmit="return confirm('Ștergi utilizatorul {{ r.username }}?')" style="display:inline">
+              <button type="submit" class="del" data-testid="del-user-{{ r.id }}"><i data-lucide="trash-2"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="user-modal">
+  <div class="modal" data-testid="user-dialog">
+    <div class="modal-head"><h3>Utilizator nou</h3><button onclick="closeModal('user-modal')"><i data-lucide="x"></i></button></div>
+    <form method="post" action="/admin/ui/user" class="form-col">
+      <div><label>Utilizator</label><input name="username" data-testid="user-username" required /></div>
+      <div><label>Parolă</label><input name="password" type="password" data-testid="user-password" required /></div>
+      <div><label>Rol</label><select name="role" data-testid="user-role"><option value="operator">Operator</option><option value="admin">Administrator</option><option value="user">Consultare</option></select></div>
+      <div class="modal-foot"><button type="button" class="btn-ghost" onclick="closeModal('user-modal')">Anulează</button><button type="submit" class="btn-primary" data-testid="user-save">Creează</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-overlay" id="pw-modal">
+  <div class="modal" data-testid="pw-dialog">
+    <div class="modal-head"><h3 id="pw-title">Schimbă parola</h3><button onclick="closeModal('pw-modal')"><i data-lucide="x"></i></button></div>
+    <form method="post" id="pw-form" class="form-col">
+      <input type="password" name="password" placeholder="Parolă nouă" data-testid="new-password" required />
+      <div class="modal-foot"><button type="button" class="btn-ghost" onclick="closeModal('pw-modal')">Anulează</button><button type="submit" class="btn-primary" data-testid="pw-save">Salvează</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+function openPw(id, name){ document.getElementById('pw-title').textContent = 'Schimbă parola · ' + name; document.getElementById('pw-form').action = '/admin/ui/user/'+id+'/password'; openModal('pw-modal'); }
+</script>
+{% endblock %}

@@ -1,0 +1,3 @@
+{% macro attbtn(etype, id, label='Atașamente') -%}
+<button type="button" class="att-btn" onclick="event.stopPropagation();openAtt('{{ etype }}','{{ id }}')" data-testid="att-open-{{ etype }}-{{ id }}" title="{{ label }}"><i data-lucide="paperclip"></i><span>{{ label }}</span></button>
+{%- endmacro %}

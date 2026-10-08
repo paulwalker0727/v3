@@ -1,0 +1,12 @@
+<div class="sys-grid" data-testid="cloud-status">
+  <div class="sys-tile"><div class="k">PostgreSQL</div><div class="v"><span class="sys-pill {{ 'ok' if st.postgres == 'ONLINE' else ('warn' if st.postgres == 'NECONFIGURAT' else 'err') }}" data-testid="cloud-st-postgres">&#9679; {{ st.postgres }}</span></div></div>
+  <div class="sys-tile"><div class="k">Supabase Storage</div><div class="v"><span class="sys-pill {{ 'ok' if st.storage == 'ONLINE' else ('warn' if st.storage in ('NECONFIGURAT', 'NEAPLICABIL') else 'err') }}" data-testid="cloud-st-storage">&#9679; {{ st.storage }}</span></div></div>
+  <div class="sys-tile"><div class="k">Configurație cloud</div><div class="v"><span class="sys-pill {{ 'ok' if st.complete else 'warn' }}" data-testid="cloud-st-complete">&#9679; {{ 'COMPLETĂ' if st.complete else 'INCOMPLETĂ' }}</span></div></div>
+</div>
+<table class="cloud-fields" data-testid="cloud-fields">
+  {% for name, f in fields.items() %}
+  <tr><td class="mono">{{ name }}</td>
+    <td><span class="sys-pill {{ 'ok' if f.configured else 'warn' }}" data-testid="cloud-field-{{ name }}">{{ 'CONFIGURAT' if f.configured else 'NECONFIGURAT' }}</span></td>
+    <td class="muted-xs">{{ {'file': 'din backend/.env', 'server': 'din mediul serverului', 'file_pending': 'în backend/.env, încă neîncărcat în server — repornește (RESTART_BACKEND.bat)', 'none': ''}[f.source] }}</td></tr>
+  {% endfor %}
+</table>

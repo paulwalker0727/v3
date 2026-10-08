@@ -1,0 +1,4 @@
+# Dependinte necesare DOAR pentru construirea executabilului Windows.
+# Se instalează peste requirements.txt:  pip install -r requirements-build.txt
+pyinstaller>=6.6
+pyinstaller-hooks-contrib>=2024.6

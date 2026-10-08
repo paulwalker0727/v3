@@ -1,0 +1,45 @@
+{
+  "summary": "Short re-verification of the XFF/per-IP rate-limit fix from iteration_9. Spun up two fresh uvicorn servers (ports 8141 and 8142) against isolated data dirs and asserted the three required behaviours. All checks PASS and no code changes were made.",
+  "verifications": [
+    {
+      "name": "Server A (--no-proxy-headers): XFF cannot reset per-IP cerere bucket",
+      "steps": "POST /api/public/cerere (nume=A, prenume=B, privacy_ack=1) 22x with X-Forwarded-For 10.0.0.1..10.0.0.22, plus 1 extra with 9.9.9.9.",
+      "result": "First 20 = 200; 21st = 429 Retry-After=3600; 22nd = 429 Retry-After=3600; extra XFF 9.9.9.9 = 429 Retry-After=3600. PASS."
+    },
+    {
+      "name": "Server A sync-key throttle per IP ignores XFF",
+      "steps": "GET /api/sync/ping with bad X-Sync-Key, rotating X-Forwarded-For 10.0.1.1..10.0.1.6 (sync key previously issued via scripts/issue_sync_key.py --source cimitir).",
+      "result": "Attempts 1..5 = 401; 6th = 429 Retry-After=299 (cimitir_auth lock_remaining). PASS."
+    },
+    {
+      "name": "Server B (--proxy-headers --forwarded-allow-ips 127.0.0.1): per-XFF buckets",
+      "steps": "21x POST /api/public/cerere with XFF=10.0.0.1, then one with XFF=10.0.0.2.",
+      "result": "First 20 = 200; 21st = 429 Retry-After=3600; XFF=10.0.0.2 = 200 (separate budget). PASS."
+    },
+    {
+      "name": "desktop/start_local.portal_command flags",
+      "steps": "python -c '...portal_command(...)' with and without CIMITIR_BEHIND_PROXY/FORWARDED_ALLOW_IPS.",
+      "result": "Default output contains --no-proxy-headers; with CIMITIR_BEHIND_PROXY=1 and FORWARDED_ALLOW_IPS=10.1.1.1, output contains --proxy-headers --forwarded-allow-ips 10.1.1.1. PASS."
+    },
+    {
+      "name": "TRUST_PROXY removed",
+      "steps": "grep -rn TRUST_PROXY /app/backend /app/desktop /app/MODURI_RULARE.md /app/config",
+      "result": "No matches. PASS."
+    }
+  ],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "portal_ratelimit.client_ip now relies entirely on uvicorn's resolved request.client.host; this is the correct boundary and matches the documented operational contract in the module docstring.",
+    "sync_api._auth keys its throttle on 'sync:' + portal_ratelimit.client_ip, so trusting XFF without --proxy-headers would also allow bucket evasion here; verified it does not in A."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "n/a"},
+  "test_credentials": "n/a",
+  "seed_data_creation": "Issued a sync key via scripts/issue_sync_key.py into /tmp/y1 (deleted after test).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "XFF/per-IP rate-limit regression fully verified. Servers started on ports 8141/8142 against /tmp/y1 and /tmp/y2; all temp files/data dirs cleaned, servers killed. No code modifications were made this run."
+}

@@ -1,0 +1,21 @@
+{# Confirmare date extrase din document: nimic nu se salvează în înregistrare până la „Confirmă și salvează”. #}
+<div class="att-panel scan-review" id="att-{{ ent.type }}-{{ ent.id }}" data-testid="scan-review">
+  <div class="att-head"><span class="att-ent">Scanare · {{ kind_label }}</span> <b>{{ ent.title }}</b></div>
+  <div class="scan-note" data-testid="scan-original-saved"><i data-lucide="archive"></i> Fotografia originală a fost salvată în arhivă (atașamentul #{{ att_id }}). Datele de mai jos sunt doar o <b>propunere</b> a AI — verifică-le și bifează ce vrei să aplici.</div>
+  {% if error %}<div class="att-error" data-testid="att-error" role="alert"><i data-lucide="alert-triangle"></i> {{ error }}</div>{% endif %}
+  <form class="att-form" hx-post="/admin/att/{{ ent.type }}/{{ ent.id }}/scan/apply" hx-target="closest .att-panel" hx-swap="outerHTML" data-testid="scan-form">
+    <input type="hidden" name="kind" value="{{ kind }}" /><input type="hidden" name="attachment_id" value="{{ att_id }}" />
+    {% for r in rows %}
+    <div class="scan-row {{ 'low' if r.low }}" data-testid="scan-row-{{ r.field }}">
+      <label class="scan-apply"><input type="checkbox" name="apply_{{ r.field }}" value="1" {{ 'checked' if r.checked }} data-testid="scan-apply-{{ r.field }}" /> {{ r.label }}</label>
+      <input name="field_{{ r.field }}" value="{{ r.value }}" maxlength="300" data-testid="scan-value-{{ r.field }}" />
+      <div class="muted-xs">Actual: {{ r.current or '—' }}{% if r.value %} · încredere {{ (r.confidence * 100)|round|int }}%{% if r.low %} <b class="warn">verifică atent</b>{% endif %}{% else %} · necitit{% endif %}</div>
+    </div>
+    {% endfor %}
+    <div class="att-actions">
+      <button type="submit" class="att-pick att-camera" data-testid="scan-confirm"><i data-lucide="check"></i> Confirmă și salvează</button>
+      <button type="button" class="att-pick" hx-get="/admin/att/{{ ent.type }}/{{ ent.id }}" hx-target="closest .att-panel" hx-swap="outerHTML" data-testid="scan-cancel"><i data-lucide="x"></i> Renunță (originalul rămâne)</button>
+    </div>
+  </form>
+  <script>if(window.lucide)lucide.createIcons();</script>
+</div>

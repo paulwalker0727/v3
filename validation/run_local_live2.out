@@ -1,0 +1,4 @@
+server temporar: {'engine': 'postgres', 'connected': True, 'schema_version': 4, 'latency_ms': 0.3}
+pytest exit 0
+28 passed, 6 skipped in 13.74s
+ENV cloud restaurat; health: {"database":"postgres","database_status":"online","server_status":"onl

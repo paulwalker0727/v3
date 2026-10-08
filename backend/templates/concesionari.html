@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Concesionari{% endblock %}
+{% block content %}
+{% from 'partials/_att.html' import attbtn %}
+<div data-testid="concesionari-page">
+  <div class="page-head">
+    <div><h1 class="page-title">Concesionari</h1><p class="page-sub">Titularii contractelor de concesiune.</p></div>
+    <button class="btn-primary" onclick="openConces()" data-testid="add-conces-btn"><i data-lucide="plus"></i> Concesionar nou</button>
+  </div>
+  <div class="card table-card" data-testid="concesionari-table">
+    <div class="table-head-bar">
+      <div class="search"><i data-lucide="search"></i><input placeholder="Caută..." data-search-input="conces" data-testid="concesionari-table-search" /></div>
+      <span class="count" data-count="conces">{{ rows|length }} înregistrări</span>
+    </div>
+    <div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Nume</th><th>CNP</th><th>Telefon</th><th>Email</th><th></th></tr></thead>
+      <tbody data-rows="conces">
+        {% for r in rows %}
+        <tr data-search="{{ r.nume }} {{ r.prenume }} {{ r.cnp }} {{ r.telefon }} {{ r.email }}">
+          <td class="strong">{{ (r.nume ~ ' ' ~ r.prenume)|trim or '—' }}</td>
+          <td class="mono">{{ r.cnp or '—' }}</td>
+          <td class="mono">{{ r.telefon or '—' }}</td>
+          <td>{{ r.email or '—' }}</td>
+          <td class="row-actions">
+            {{ attbtn('concesionar', r.id) }}
+            <button title="Editează" onclick='openConces({{ r|tojson }})' data-testid="edit-conces-{{ r.id }}"><i data-lucide="pencil"></i></button>
+            <form method="post" action="/admin/ui/concesionar/{{ r.id }}/delete" onsubmit="return confirm('Ștergi concesionarul?')" style="display:inline">
+              <button type="submit" class="del" data-testid="del-conces-{{ r.id }}"><i data-lucide="trash-2"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="conces-modal">
+  <div class="modal" data-testid="conces-dialog">
+    <div class="modal-head"><h3 id="conces-title">Concesionar nou</h3><button onclick="closeModal('conces-modal')"><i data-lucide="x"></i></button></div>
+    <form method="post" action="/admin/ui/concesionar" class="form-grid">
+      <input type="hidden" name="id" id="c-id" />
+      <div><label>Nume</label><input name="nume" id="c-nume" data-testid="conces-nume" /></div>
+      <div><label>Prenume</label><input name="prenume" id="c-prenume" data-testid="conces-prenume" /></div>
+      <div><label>CNP</label><input name="cnp" id="c-cnp" data-testid="conces-cnp" /></div>
+      <div><label>Serie/nr. CI</label><input name="bi_ci" id="c-bi_ci" data-testid="conces-bi_ci" /></div>
+      <div class="col2"><label>Adresă</label><input name="adresa" id="c-adresa" data-testid="conces-adresa" /></div>
+      <div><label>Telefon</label><input name="telefon" id="c-telefon" data-testid="conces-telefon" /></div>
+      <div><label>Email</label><input name="email" id="c-email" data-testid="conces-email" /></div>
+      <div class="col2 modal-foot"><button type="button" class="btn-ghost" onclick="closeModal('conces-modal')">Anulează</button><button type="submit" class="btn-primary" data-testid="conces-save">Salvează</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}<script>initTableFilters('conces');</script>{% endblock %}

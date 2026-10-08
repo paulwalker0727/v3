@@ -1,0 +1,8 @@
+{
+  "total_scans": 1,
+  "total_corrections": 1,
+  "per_field_corrections": {
+    "localitate": 1
+  },
+  "auto_corrections_applied": 1
+}

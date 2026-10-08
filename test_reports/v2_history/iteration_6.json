@@ -1,0 +1,41 @@
+{
+  "summary": "Etapa 4 (hardening + notificări MOCK + Republicare + portal harta) testată complet. Backend suite: 74 passed, 2 skipped (env-only), 1 flaky in-parallel (test_live_smoke::test_sync_ping_with_valid_key — trece la rulare izolată, este cauzată de rotația cheii de sync între procesele pytest-xdist, deja documentat de review). Desktop suite: 206 passed, 2 skipped (env-only pyzbar/libzbar). CloudSyncWindow se construiește offscreen și butonul btn_republish ('♻ Republicare hartă din MAIN') există. Portal /portal/harta afișează panoul de selecție cu suprafața 12,00 m², laturile 4,00 m · 3,00 m · 4,00 m · 3,00 m și nota scării 20,00 px/m; /portal/loc/A-1 afișează aria/latura; nu există overflow orizontal pe 390px; /api/public/map nu expune PII. Nu am modificat cod aplicație.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "tests/test_live_smoke.py::test_sync_ping_with_valid_key", "issue": "Fails when run in parallel with alte teste ce emit chei de sync (pytest-xdist rotește cheia globală înainte de folosire). Trece 100% izolat. Deja notat de review request ca 'may be flaky if run in parallel'. Zero impact funcțional."},
+      {"endpoint": "starlette/formparsers", "issue": "PendingDeprecationWarning `import multipart` -> `python_multipart` (framework-level, neschimbat față de iterațiile anterioare)."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/test_reports/pytest/iter6_backend.xml",
+    "/app/test_reports/pytest/iter6_desktop.xml",
+    "/app/backend/tests/test_etapa4_hardening.py"
+  ],
+  "action_items": [
+    "(Opțional) Marchează test_sync_ping_with_valid_key ca @pytest.mark.serial sau serializează-l via dist='loadfile' / lock pe cheia de sync pentru a evita flapping la rulare cu -n auto."
+  ],
+  "critical_code_review_comments": [
+    "Forța schimbării parolei: create_token setează claim `mcp` (must-change-password) pe seed-uri implicite; middleware-ul din server.py face 303→/admin/schimba-parola pentru rutele HTML și 403 pentru /api/admin/* (verificat de test_etapa4_hardening::test_default_password_forces_change_before_any_admin_page — trece).",
+    "Brute-force staff: cimitir_auth.record_failure + lock_remaining persistă contorul în settings (loginfail:<user>); resetat la succes; blocare 5 minute confirmată la a 5-a eșec (mesaj 'blocat') chiar cu parola corectă. Utilizatori diferiți neafectați (per-user, nu global).",
+    "Throttle cheie sync: 5 chei invalide → 401 apoi 429; cheia validă rămâne 200 (per IP, nu blochează sesiunile legitime). test_sync_key_failures_throttle_but_valid_key_still_works trece.",
+    "Republicare MAIN: cloud_sync.republish_preview() calculează diff-uri, force_republish() re-împinge doar proiecția publică; test_force_republish_after_conflict_needs_explicit_call_and_keeps_local_data verifică că MAIN rămâne autoritativ și că datele locale nu sunt suprascrise. CloudSyncWindow._republish confirmă cu default=No.",
+    "Portal harta: JS-ul selectPlot() distinge click vs drag (movement guard), afișează panel cu cod/sector/status/suprafata calculată/laturi/scala; laturile sunt desenate pe SVG cu label-uri; nota 'nu este calibrată' pentru px_per_meter=0. /api/public/map expune doar geometrie + status disponibil/indisponibil — zero CNP/telefon/adresă/email/nume.",
+    "E-mail notificări MOCK: cimitir_notify.enqueue_status_email este idempotent per (cod_urmarire, template) via UNIQUE constraint; șabloane Romanian în /app/shared/cimitir_notify.py; to_email golit după send, to_masked format c***@e***; body conține doar cod urmărire + notă operator (fără PII); banner 'MOCK' vizibil în /admin/monitorizare; select în /admin/setari cu data-testid setari-notify-email; toggle notify_email_enabled=0 previne enqueue.",
+    "Toate cele 9 teste de packaging din test_build_packaging.py trec acum (workflow-ul .github/workflows/build-windows.yml, desktop/web_build/index.html placeholder, CRLF pe build_exe.bat, test isolation via _clear_modules).",
+    "Observație (nu blocantă): în backend suite pytest-xdist paralelizează test_live_smoke cu teste ce emit chei; deoarece issue_sync_key.py rotește secretul global, testul live poate primi 401. Nu afectează codul de producție."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_6.json",
+    "/app/test_reports/pytest/iter6_backend.xml",
+    "/app/test_reports/pytest/iter6_desktop.xml"
+  ],
+  "success_rate": {"backend": "74/75 in parallel (98.7%), 75/75 when the one flaky test runs isolated (100%)", "desktop": "206/206 (100%, 2 env-only skips)", "portal_playwright": "100% (panel, area, sides, mobile, PII check all pass)"},
+  "test_credentials": "admin/admin123 și user/user123 (POST /admin/access/login source_id=cimitir) — ambele forțează schimbarea parolei la primul login. Cheie sync: python /app/scripts/issue_sync_key.py.",
+  "seed_data_creation": "Instanță throwaway pe portul 8123 cu CIMITIR_DATA_DIR=/app/.tmp_test_xyz, un plot A-1 (rectangle 80x60 px, px_per_meter=20). Directorul șters după testare. Nicio modificare la /app/shared_data (preview păstrează admin/admin123 pentru forced-change flow).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Etapa 4 complet validată. Rulează backend suite izolat pe test_live_smoke.py::test_sync_ping_with_valid_key dacă vezi 401 în CI (issue_sync_key.py rotește cheia globală => race în paralel). Playwright pe portal necesită un uvicorn throwaway pe /app/.tmp_test_* deoarece preview-ul expune doar /api/*, nu /portal/*. Test_etapa4_hardening.py acoperă atât fluxul web (TestClient) cât și partea desktop (authenticate_ex/change_own_password), plus notificările MOCK end-to-end.",
+  "rca of the issue": "Nu s-au găsit defecte funcționale. Singura observație este flakinessul cunoscut al test_sync_ping_with_valid_key la rulare în paralel — cauza este că issue_sync_key.py rotește secretul global partajat, iar un alt worker pytest-xdist poate emite o cheie nouă între momentul obținerii cheii și cererea GET /api/sync/ping, invalidând-o. Mitigare recomandată: marker @pytest.mark.serial sau pytest-xdist --dist=loadfile pe test_live_smoke.py."
+}

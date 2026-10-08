@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Rapoarte{% endblock %}
+{% block content %}
+<div data-testid="rapoarte-page">
+  <div class="page-head">
+    <div><h1 class="page-title">Rapoarte</h1><p class="page-sub">Analize și exporturi oficiale.</p></div>
+    <a href="/admin/export/locuri.xlsx" class="btn-outline" data-testid="report-export-excel"><i data-lucide="file-spreadsheet"></i> Export Excel complet</a>
+  </div>
+
+  <div class="card" data-testid="pdf-reports-card">
+    <h3 class="card-title">Documente PDF</h3>
+    <form class="report-filters" action="/admin/pdf/raport-financiar" method="get" target="_blank" data-testid="pdf-fin-form">
+      <div class="report-filter-field"><label for="pdf-start">De la</label><input id="pdf-start" type="date" name="start" data-testid="pdf-start" /></div>
+      <div class="report-filter-field"><label for="pdf-end">Până la</label><input id="pdf-end" type="date" name="end" data-testid="pdf-end" /></div>
+      <div class="report-filter-actions">
+        <button type="submit" class="btn-primary" data-testid="pdf-financiar"><i data-lucide="file-down"></i> Raport financiar</button>
+        <button type="submit" formaction="/admin/pdf/registru-inhumari" class="btn-ghost" data-testid="pdf-registru"><i data-lucide="file-down"></i> Registru înhumări</button>
+        <a class="btn-ghost" href="/admin/pdf/expirari?days=30" target="_blank" rel="noopener" data-testid="pdf-expirari-30"><i data-lucide="file-down"></i> Contracte care expiră (30 zile)</a>
+        <a class="btn-ghost" href="/admin/pdf/expirari?days=90" target="_blank" rel="noopener" data-testid="pdf-expirari-90"><i data-lucide="file-down"></i> (90 zile)</a>
+      </div>
+    </form>
+  </div>
+
+  <div class="summary-grid">
+    <div class="card summary"><div class="kpi-top"><span class="kpi-label">Grad de ocupare</span><span class="kpi-ic"><i data-lucide="building-2"></i></span></div><div class="kpi-val">{{ stats.grad_ocupare }}%</div><div class="kpi-sub">{{ stats.total_locuri }} locuri totale</div></div>
+    <div class="card summary"><div class="kpi-top"><span class="kpi-label">Total încasări</span><span class="kpi-ic gold"><i data-lucide="trending-up"></i></span></div><div class="kpi-val mono">{{ stats.total_incasari|lei }}</div><div class="kpi-sub">{{ stats.nr_plati }} plăți</div></div>
+    <div class="card summary"><div class="kpi-top"><span class="kpi-label">Contracte expiră</span><span class="kpi-ic {{ 'danger' if stats.contracte_expira>0 }}"><i data-lucide="alert-triangle"></i></span></div><div class="kpi-val {{ 'text-danger' if stats.contracte_expira>0 }}">{{ stats.contracte_expira }}</div><div class="kpi-sub">în următoarele 30 zile</div></div>
+  </div>
+
+  <form class="report-filters" method="get" data-testid="report-filter-form">
+    <div class="report-filter-field">
+      <label for="report-sector">Sector</label>
+      <select id="report-sector" name="sector" data-testid="report-sector-filter">
+        <option value="">Toate sectoarele</option>
+        {% for item in available_sectors %}<option value="{{ item }}" {{ 'selected' if filters.sector == item }}>{{ item }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="report-filter-field">
+      <label for="report-start">Expiră de la</label>
+      <input id="report-start" type="date" name="start" value="{{ filters.start }}" data-testid="report-start-date" />
+    </div>
+    <div class="report-filter-field">
+      <label for="report-end">Expiră până la</label>
+      <input id="report-end" type="date" name="end" value="{{ filters.end }}" data-testid="report-end-date" />
+    </div>
+    <input type="hidden" name="page_size" value="{{ pagination.page_size }}" />
+    <div class="report-filter-actions">
+      <button type="submit" class="btn-primary" data-testid="report-apply-filters"><i data-lucide="filter"></i> Aplică</button>
+      <a href="/admin/rapoarte" class="btn-ghost" data-testid="report-reset-filters">Resetează</a>
+    </div>
+  </form>
+
+  <div class="card">
+    <h3 class="card-title">Raport ocupare pe sectoare</h3>
+    <div class="bars">
+      {% set maxtot = namespace(v=1) %}
+      {% for s in sectors %}{% set tot = (s.liber+s.ocupat+s.rezervat+s.expirat) %}{% if tot > maxtot.v %}{% set maxtot.v = tot %}{% endif %}{% endfor %}
+      {% for s in sectors %}
+      {% set tot = (s.liber+s.ocupat+s.rezervat+s.expirat) %}
+      <div class="bar-row">
+        <div class="bar-label">{{ s.sector }}</div>
+        <div class="bar-track">
+          {% for k in STATUS_KEYS %}{% if s[k] %}<div class="bar-seg" style="width: {{ (s[k]/maxtot.v*100) }}%; background: {{ STATUS_META[k].fill }}" title="{{ STATUS_META[k].label }}: {{ s[k] }}"></div>{% endif %}{% endfor %}
+        </div>
+        <div class="bar-total mono">{{ tot }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="legend inline">
+      {% for k in STATUS_KEYS %}<div class="legend-item"><span class="dot" style="background: {{ STATUS_META[k].fill }}"></span>{{ STATUS_META[k].label }}</div>{% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h3 class="card-title">Contracte în expirare (pentru notificări)</h3><span class="count" data-testid="report-expiring-count">{{ pagination.total }} rezultate</span></div>
+    {% if stats.expiring %}
+    <div class="table-scroll"><table class="tbl" data-testid="report-expiring-table">
+      <thead><tr><th>Nr. contract</th><th>Loc</th><th>Sector</th><th>Expiră</th></tr></thead>
+      <tbody>
+        {% for c in stats.expiring %}
+        <tr><td class="mono">{{ c.numar_contract or '—' }}</td><td class="mono">{{ c.cod_loc or '—' }}</td><td>{{ c._sector or '—' }}</td><td class="mono expira">{{ c._expira or c.data_sfarsit }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    {% if pagination.page_count > 1 %}
+    <nav class="pagination" aria-label="Paginare contracte" data-testid="report-pagination">
+      {% if pagination.page > 1 %}<a href="/admin/rapoarte?{{ pagination.query }}&page={{ pagination.page - 1 }}" class="page-nav" data-testid="report-page-previous"><i data-lucide="chevron-left"></i> Înapoi</a>{% endif %}
+      <span class="page-current" data-testid="report-current-page">Pagina {{ pagination.page }} din {{ pagination.page_count }}</span>
+      {% if pagination.page < pagination.page_count %}<a href="/admin/rapoarte?{{ pagination.query }}&page={{ pagination.page + 1 }}" class="page-nav" data-testid="report-page-next">Înainte <i data-lucide="chevron-right"></i></a>{% endif %}
+    </nav>
+    {% endif %}
+    {% else %}<p class="empty">Niciun contract în expirare.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,37 @@
+{
+  "summary": "Backend-only audit for Etapa 2 (Cimitir sync + web admin + public map). Ran the full backend pytest suite (61/61 passing, including all 16 test_etapa2_sync.py end-to-end tests that spin up isolated uvicorn servers and desktop MAIN clients). Additionally did live smoke tests against the preview URL for the key protocol contracts (sync auth, regression endpoints).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "starlette", "issue": "PendingDeprecationWarning: `import python_multipart` should replace `import multipart` (framework-level, non-blocking; same as iteration_3)."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_etapa2_sync.py",
+    "/app/test_reports/pytest/etapa2_results.xml",
+    "/app/test_reports/pytest/all_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Public projection (`/api/public/map`, `/loc/{cod}`, `/search`, `/cerere/{cod}`) is well-isolated from personal data; the test_server_keeps_only_explicit_public_fields test asserts extras (cnp/adresa/concesionar/top-level concesionari) never leak — the SQLite dump is also inspected. Contract worth keeping locked down going forward.",
+    "Version/hash conflict semantics on POST /api/sync/map are correct: lower map_version -> 409 stale; equal version with different snapshot_hash -> 409 conflict; equal version + same hash -> 200 duplicate:true. Public map unchanged after rejected pushes (verified).",
+    "Availability is decoupled from burials and contract expiry (test_availability_is_independent_of_burials_and_contract_expiry). Rejected /api/public/cerere on indisponibil plots returns 409; accepted ones return CR-* codes.",
+    "Requests ack correctly redacts nume/prenume/cnp/adresa/telefon/email server-side while public tracking (only 5 keys) still works; status transitions enforce version + op_id (replay dedup, older version -> 409, invalid status -> 422/400).",
+    "Web-admin RBAC (admin vs operator with edit-only vs user) enforced; last-admin protection and self-delete protection tested. Deactivated user session invalidated on next request.",
+    "Sync-key isolation across cemeteries verified: swapping suffix/prefix between two cemetery keys yields 401; local-mode server rejects sync endpoints with 404.",
+    "Rate limiting / brute-force protection on /admin/access/login and /api/sync/* still missing (noted as known-not-a-bug in review-request)."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_4.json",
+    "/app/test_reports/pytest/etapa2_results.xml",
+    "/app/test_reports/pytest/all_results.xml"
+  ],
+  "success_rate": {"backend": "100% (61/61)", "frontend": "NA"},
+  "test_credentials": "admin/admin123, user/user123, source_id=cimitir; sync key via `python /app/scripts/issue_sync_key.py` (rotates on each call).",
+  "seed_data_creation": "No writes to preview DB. All Etapa 2 tests use isolated tmp_path folders (fresh uvicorn + fresh MAIN client per test). portal_requests_enabled left at 1 on the preview.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Preview smoke-checks confirmed live: /api/sync/ping returns 401 without/with wrong X-Sync-Key and 200 {ok,cemetery_id,map_version,lease_hours} with a valid key issued via scripts/issue_sync_key.py; /api/sync/staff returns staff list w/ password_hash and lease_hours; regression endpoints /api/public/health, /search, /map, /loc, /cerere all 200; /api/admin/map.json anonymous -> 401. NOTE: running scripts/issue_sync_key.py invalidates the previous key — main agent should reissue when handing off. The 16-tests suite in test_etapa2_sync.py exhaustively covers: MAIN->online map push with version bumps + delete propagation, uncalibrated-scale hides suprafata/laturi, background+sectors+scale published, availability independent of burials & expired contracts, offline resume without duplicates, interrupted sync keeps operations & MAIN keeps working, old-version stale + snapshot conflict rejection, stale MAIN reports error and does not publish, extras/PII stripping (also asserted directly in SQLite), requests pull/ack/decision/replay with server-side redact, request document (PDF) upload reaching MAIN, staff sync + lease + revocation + reconnect + expired-lease behavior, live rights re-check in desktop, web-admin rights revocation + config toggle (portal_requests_enabled -> 503, offline_lease_hours reflected in /api/sync/staff, last-admin/self-delete protection), sync auth isolation across cemeteries + local-mode 404, MAIN refuses keys of another cemetery + http-remote insecure URL refusal. No defects.",
+  "rca of the issue": "No defects found."
+}

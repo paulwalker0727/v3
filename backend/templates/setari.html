@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Setări{% endblock %}
+{% block content %}
+<div data-testid="setari-page" class="narrow">
+  <div class="page-head"><div><h1 class="page-title">Setări</h1><p class="page-sub">Configurarea cimitirului activ.</p></div></div>
+
+  <div class="card">
+    <h3 class="card-title"><i data-lucide="database"></i> Baza de date activă</h3>
+    <div class="db-active">
+      <div class="db-ic sqlite"><i data-lucide="hard-drive"></i></div>
+      <div><div class="strong">{{ user.source.name }}</div><div class="mono muted-xs">SQLite · {{ user.source.id }}</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="card-title">Configurare cimitir și portal</h3>
+    <form method="post" action="/admin/ui/settings" data-testid="setari-form">
+      <label class="lbl">Nume afișat</label>
+      <input name="cimitir_nume" value="{{ cfg.cimitir_nume }}" {{ 'disabled' if not can_config }} data-testid="setari-nume" />
+      <label class="lbl">Depunere cereri online</label>
+      <select name="portal_requests_enabled" {{ 'disabled' if not can_config }} data-testid="setari-requests"><option value="1" {{ 'selected' if cfg.portal_requests_enabled == '1' }}>Activă</option><option value="0" {{ 'selected' if cfg.portal_requests_enabled == '0' }}>Oprită</option></select>
+      <label class="lbl">Acces MAIN fără internet (ore, reînnoit la fiecare sincronizare)</label>
+      <input name="offline_lease_hours" type="number" min="1" max="720" value="{{ cfg.offline_lease_hours }}" {{ 'disabled' if not can_config }} data-testid="setari-lease" />
+      <label class="lbl">Cetățenii trebuie să aibă cont pentru a depune cereri</label>
+      <select name="portal_require_account" {{ 'disabled' if not can_config }} data-testid="setari-require-account"><option value="1" {{ 'selected' if cfg.portal_require_account == '1' }}>Da</option><option value="0" {{ 'selected' if cfg.portal_require_account == '0' }}>Nu</option></select>
+      <label class="lbl">Notificări e-mail către cetățeni (aprobare / respingere)</label>
+      <select name="notify_email_enabled" {{ 'disabled' if not can_config }} data-testid="setari-notify-email"><option value="1" {{ 'selected' if cfg.notify_email_enabled == '1' }}>Activate</option><option value="0" {{ 'selected' if cfg.notify_email_enabled == '0' }}>Oprite</option></select>
+      <label class="lbl">Păstrare cereri aprobate (zile după închidere)</label>
+      <input name="retention_days_closed" type="number" min="1" max="3650" value="{{ cfg.retention_days_closed }}" {{ 'disabled' if not can_config }} data-testid="setari-ret-closed" />
+      <label class="lbl">Păstrare cereri respinse (zile)</label>
+      <input name="retention_days_rejected" type="number" min="1" max="3650" value="{{ cfg.retention_days_rejected }}" {{ 'disabled' if not can_config }} data-testid="setari-ret-rejected" />
+      <label class="lbl">Informare privind prelucrarea datelor (șablon — de aprobat de operator/juriști)</label>
+      <textarea name="privacy_text" rows="6" {{ 'disabled' if not can_config }} data-testid="setari-privacy">{{ cfg.privacy_text }}</textarea>
+      <p class="muted-xs"><a href="/admin/monitorizare" data-testid="link-monitorizare">Monitorizare și jurnal operațiuni</a> · Aceste setări nu reprezintă o declarație de conformitate GDPR.</p>
+      <label class="lbl">Adresa publică a portalului (folosită în linkurile din e-mailuri), ex: https://portal.exemplu.ro</label>
+      <input name="public_base_url" value="{{ cfg.public_base_url }}" {{ 'disabled' if not can_config }} data-testid="setari-public-url" />
+      <label class="lbl">E-mailuri pentru alerte „MAIN offline" (separate prin virgulă, maxim 5)</label>
+      <input name="alert_emails" value="{{ cfg.alert_emails }}" {{ 'disabled' if not can_config }} data-testid="setari-alert-emails" />
+      <label class="lbl">Furnizor e-mail (<code>mock</code> nu trimite nimic; <code>smtp</code> folosește SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM, SMTP_SECURITY din mediul serverului)</label>
+      <select name="email_provider" {{ 'disabled' if not can_config }} data-testid="setari-email-provider"><option value="mock" {{ 'selected' if cfg.email_provider == 'mock' }}>mock (nu trimite)</option><option value="smtp" {{ 'selected' if cfg.email_provider == 'smtp' }}>smtp</option></select>
+      <label class="lbl">Copii de rezervă automate</label>
+      <select name="backup_enabled" {{ 'disabled' if not can_config }} data-testid="setari-backup-enabled"><option value="1" {{ 'selected' if cfg.backup_enabled == '1' }}>Activate (zilnic)</option><option value="0" {{ 'selected' if cfg.backup_enabled == '0' }}>Oprite</option></select>
+      <label class="lbl">Folder copii de rezervă (gol = {{ cfg.backup_dir_effective }})</label>
+      <input name="backup_dir" value="{{ cfg.backup_dir }}" {{ 'disabled' if not can_config }} data-testid="setari-backup-dir" />
+      <label class="lbl">Păstrează copiile (zile)</label>
+      <input name="backup_keep_days" type="number" min="1" max="365" value="{{ cfg.backup_keep_days }}" {{ 'disabled' if not can_config }} data-testid="setari-backup-keep" />
+      {% if can_config %}<button type="submit" class="btn-primary" data-testid="setari-save"><i data-lucide="save"></i> Salvează</button>
+      {% else %}<p class="muted-xs">Doar administratorii pot modifica setările.</p>{% endif %}
+    </form>
+  </div>
+
+  <div class="card" data-testid="sync-card">
+    <h3 class="card-title">Sincronizare MAIN ↔ server</h3>
+    <p class="muted-xs">Mod: <b>{{ mode }}</b> · versiune hartă publicată: <b data-testid="sync-map-version">{{ cfg.sync_map_version or 0 }}</b> · ultima primire: {{ cfg.sync_last_push_at or '—' }}</p>
+    {% if mode == 'online' and can_config %}
+    {% if conn %}
+    <div data-testid="connection-info" class="conn-info">
+      <h4 class="card-title">Date de conectare pentru MAIN</h4>
+      <table class="mono muted-xs">
+        <tr><td>Adresă server</td><td><span data-testid="conn-server-url">{{ conn.server_url or '—' }}</span> {% if conn.server_url %}<button type="button" class="btn-ghost" data-copy="{{ conn.server_url }}" data-testid="conn-copy-url">Copiază</button>{% endif %}</td></tr>
+        <tr><td>Cimitir (prefix cheie)</td><td data-testid="conn-cemetery">{{ conn.cemetery }}</td></tr>
+        <tr><td>Mod / bază de date</td><td data-testid="conn-mode">{{ conn.mode }} / {{ conn.db_engine }}</td></tr>
+        <tr><td>Versiune</td><td>{{ conn.version }}</td></tr>
+        <tr><td>Verificare stare</td><td data-testid="conn-health-url">{{ conn.health_url or '—' }}</td></tr>
+        <tr><td>Cheie activă</td><td data-testid="conn-key-configured">{{ 'da' if conn.key_configured else 'nu (generează una)' }}</td></tr>
+      </table>
+      {% for w in conn.warnings %}<p class="muted-xs" data-testid="conn-warning">⚠ {{ w }}</p>{% endfor %}
+    </div>
+    {% endif %}
+    <form method="post" action="/admin/ui/sync-key" onsubmit="return confirm('Se generează o cheie nouă; cheia veche încetează să mai funcționeze în toate instalările MAIN. Continui?');"><button class="btn-primary" type="submit" data-testid="sync-key-btn">Generează cheie MAIN</button></form>
+    {% if new_key %}<p data-testid="sync-key-value" class="mono">{{ new_key }}</p><p><button type="button" class="btn-ghost" data-copy="{{ new_key }}" data-testid="sync-key-copy">Copiază cheia</button></p><p class="muted-xs">Se afișează o singură dată. Se introduce în MAIN → Sincronizare cloud, împreună cu adresa serverului de mai sus. Cheia veche nu mai funcționează.</p>{% endif %}
+    <script>document.querySelectorAll('[data-copy]').forEach(function(b){b.addEventListener('click',function(){navigator.clipboard&&navigator.clipboard.writeText(b.dataset.copy);b.textContent='Copiat';});});</script>
+    {% elif mode != 'online' %}<p class="muted-xs">Serverul rulează în mod local; API-ul de sincronizare este activ doar cu CIMITIR_MODE=online.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}

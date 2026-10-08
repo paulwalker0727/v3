@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 9 focused HTTP verification: 37/38 targeted checks passed across 6 isolated uvicorn servers (ports 8131-8136) + web_server TestClient + static file/import checks. Scenarios covered: (1) /admin/monitorizare offline alert flow on an online server — no-clients alert, fresh client row 'Actuală', aging the sync_clients JSON in sqlite 2h back triggers sync-offline-alert with 'peste 60 minute', span sync-offline-main-t1, 'Offline' + 'Informație veche' all present. (2) Sync-key throttling: 5 bad keys all 401; 6th bad => 429 with Retry-After=299s; valid cimitir.* key from same 127.0.0.1 still 200 during lock. (3) Local-mode server: /api/sync/ping -> 404, /admin/monitorizare does NOT render sync-no-clients-alert, /public/loc/A-1 -> 307 /portal/loc/A-1. (4) Portal register bucket (10/3600): 1-10 => 200, 11 => 429 with Retry-After=3600. (5) Portal cerere bucket (20/3600): 1-20 => 200, 21 => 429. (6) Portal login_fail_ip bucket (20/900): 20 unknown-email attempts => 401, 21st => 429. (7) CIMITIR_TRUST_PROXY=1 server: separate budgets per X-Forwarded-For IP (1.1.1.1 exhausts, 2.2.2.2 fresh 200). (8) web_server.app routes limited to /mobile-scan, /api/ai-scan-upload, /api/ai-scan-result/{session} (+docs/openapi/redoc); /app/desktop/web_build absent; cimitir.spec contains no 'web_build' reference; TestClient: /mobile-scan 200 HTML, /api/ai-scan-result/abc 200 {status:'waiting'}, /api/ai-scan-upload with doc_type=invalid => 400 'Tip document invalid'. (9) Static: /app/WINDOWS_VERIFICARE.md and /app/desktop/installer/verify_install.ps1 exist; verify_install.ps1 is referenced by cimitir_setup.iss. Windows CI/real installer NOT executed (Linux-only preview). One real finding (see backend_issues).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/public/* (portal_ratelimit.client_ip)",
+        "issue": "When CIMITIR_TRUST_PROXY is unset, X-Forwarded-For CAN still change the per-IP bucket because uvicorn ships with proxy_headers=True and forwarded_allow_ips='127.0.0.1' by default — uvicorn rewrites request.client.host from XFF before FastAPI sees the request. On a fresh online server (port 8134, TRUST_PROXY unset) the 127.0.0.1 cerere bucket was correctly 429 after 20 calls, but a 21st POST with X-Forwarded-For: 9.9.9.9 returned 200 and created a new rl:cerere:9.9.9.9 bucket, i.e. an attacker on the loopback (reverse proxy, sidecar, container) can bypass the limit by rotating the header. The app-level TRUST_PROXY=0 guard is therefore not sufficient on its own. Suggested fix: launch uvicorn with --no-proxy-headers (or --forwarded-allow-ips='') unless CIMITIR_TRUST_PROXY=1, OR inside client_ip() read the raw peer from request.scope['client'] (uvicorn stores the real peer in scope, but modifies it before view code). The underlying behaviour is standard uvicorn, so documenting the deployment requirement + fronting with the correct flag is enough."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/http_iter9_test.py",
+    "/tmp/run_tests.sh"
+  ],
+  "action_items": [
+    "Decide how to prevent X-Forwarded-For from flipping the per-IP bucket when CIMITIR_TRUST_PROXY=0 (recommend starting uvicorn with --no-proxy-headers in that mode, or deriving client_ip from the ASGI scope's raw peer rather than request.client.host).",
+    "Windows real installer / signtool / Inno Setup build was NOT exercised in this run (Linux preview). The static files WINDOWS_VERIFICARE.md and installer/verify_install.ps1 exist and verify_install.ps1 is referenced by cimitir_setup.iss, but actual Windows CI must be run on a Windows host."
+  ],
+  "critical_code_review_comments": [
+    "portal_ratelimit.LIMITS correctly enforces register=10/3600, cerere=20/3600, completari=20/3600, login_fail_ip=20/900 with sliding window persisted in SQLite settings — exercised end-to-end.",
+    "sync_api._auth lock-out: 5 missing/invalid keys from same IP triggers 429 with Retry-After, valid cimitir.* key still succeeds — isolation per IP works and local-mode correctly returns 404 for /api/sync/*.",
+    "monitorizare.html offline branch is driven by stale_minutes threshold (60 min). Aging last_seen+reported_at by 2h via sqlite reproduces the alert reliably; status cell switches to 'Offline' + 'Informație veche' and alert text includes 'peste 60 minute' — matches template contract.",
+    "desktop/web_server.py is now limited to /mobile-scan + 2 AI-scan endpoints (plus docs/openapi/redoc). /app/desktop/web_build does not exist and cimitir.spec contains no web_build reference. The invalid doc_type path returns 400 'Tip document invalid'.",
+    "Known-but-not-blocking: uvicorn default proxy_headers lets XFF rewrite request.client.host from 127.0.0.1, which can defeat CIMITIR_TRUST_PROXY=0 — see backend_issues.minor."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend_http_checks": "37/38 (97%)", "web_server_import": "100%", "static_file_checks": "100%"},
+  "test_credentials": "admin/admin123 (forced change to NouaParola!99) on each isolated data dir /tmp/x{1..6}",
+  "seed_data_creation": "Isolated data dirs /tmp/x1../tmp/x6 with per-server issued sync keys (cimitir.*). Keys embedded only in test script, data dirs are temporary.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Full backend+desktop pytest suites were already green in iteration_8 and the main agent re-ran them (backend 77, desktop 205) before this focused run. For regression on the rate limits + monitorizare offline flow, use /app/backend/tests/http_iter9_test.py together with /tmp/run_tests.sh (both self-contained). The XFF/proxy-headers interaction is a deployment configuration concern, not an application-logic regression.",
+  "rca of the issue": "X-Forwarded-For NOT resetting the limit was expected on 8134, but observed to reset. RCA: uvicorn starts with proxy_headers=True and forwarded_allow_ips='127.0.0.1' by default; because the TCP peer is loopback, uvicorn's ProxyHeadersMiddleware rewrites scope['client'] using the first XFF value BEFORE Starlette/FastAPI construct request.client. portal_ratelimit.client_ip() reads request.client.host, so it sees '9.9.9.9' and allocates a new per-IP bucket. CIMITIR_TRUST_PROXY=0 is honoured at app level but is defeated by the ASGI server. Mitigation: launch uvicorn with --no-proxy-headers when CIMITIR_TRUST_PROXY != '1', or compute the real peer from the raw transport."
+}
