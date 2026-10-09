@@ -285,25 +285,32 @@ class LocalControlPlane:
         c = self._c_ro()
         try:
             self._require(c, actor, "read", organization_uid)
-            cem = c.execute("SELECT * FROM cemeteries WHERE uid=? AND organization_uid=?", (cemetery_uid, organization_uid)).fetchone()
-            snap: Dict[str, Any] = {"exists": cem is not None, "organization_uid": organization_uid, "cemetery_uid": cemetery_uid,
-                                    "status": cem["status"] if cem else None, "data_epoch": cem["data_epoch"] if cem else None,
-                                    "schema_version": "sim-control-v1", "entities": {}, "media": [], "tombstones": 0, "open_conflicts": 0, "change_seq": None}
-            if not cem:
-                return snap
-            for r in c.execute("SELECT r.entity, r.uid, COALESCE(d.version,1) AS version, COALESCE(d.content,'{}') AS content FROM registry_rows r "
-                               "LEFT JOIN registry_row_data d ON d.cemetery_uid=r.cemetery_uid AND d.entity=r.entity AND d.uid=r.uid "
-                               "WHERE r.cemetery_uid=? ORDER BY r.entity, r.uid", (cemetery_uid,)):
-                snap["entities"].setdefault(r["entity"], []).append({"ref": r["uid"], "uid": r["uid"], "version": r["version"], "data": json.loads(r["content"])})
-            for r in c.execute("SELECT * FROM media_objects WHERE cemetery_uid=? ORDER BY uid", (cemetery_uid,)):
-                snap["media"].append({"uid": r["uid"], "kind": r["kind"], "entity_type": r["entity_type"], "entity_id": r["entity_id"], "name": r["name"],
-                                      "size": r["size"], "sha256": r["sha256"], "present": bool(r["present"])})
-            snap["tombstones"] = c.execute("SELECT COUNT(*) FROM tombstones WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
-            snap["open_conflicts"] = c.execute("SELECT COUNT(*) FROM open_conflicts WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
-            snap["change_seq"] = c.execute("SELECT MAX(change_seq) FROM registry_row_data WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
-            return snap
+            return self._snapshot_on(c, organization_uid, cemetery_uid)
         finally:
             c.close()
+
+    def _snapshot_on(self, c, organization_uid: str, cemetery_uid: str) -> Dict[str, Any]:
+        """Instantaneul LIVE al cimitirului pe o conexiune deja autorizată (folosit și în tranzacția de publish, pentru manifestul țintă)."""
+        cem = c.execute("SELECT * FROM cemeteries WHERE uid=? AND organization_uid=?", (cemetery_uid, organization_uid)).fetchone()
+        snap: Dict[str, Any] = {"exists": cem is not None, "organization_uid": organization_uid, "cemetery_uid": cemetery_uid,
+                                "status": cem["status"] if cem else None, "data_epoch": cem["data_epoch"] if cem else None,
+                                "schema_version": "sim-control-v1", "entities": {}, "media": [], "tombstones": 0, "open_conflicts": 0, "change_seq": None}
+        if not cem:
+            return snap
+        for r in c.execute("SELECT r.entity, r.uid, COALESCE(d.version,1) AS version, COALESCE(d.content,'{}') AS content FROM registry_rows r "
+                           "LEFT JOIN registry_row_data d ON d.cemetery_uid=r.cemetery_uid AND d.entity=r.entity AND d.uid=r.uid "
+                           "WHERE r.cemetery_uid=? ORDER BY r.entity, r.uid", (cemetery_uid,)):
+            snap["entities"].setdefault(r["entity"], []).append({"ref": r["uid"], "uid": r["uid"], "version": r["version"], "data": json.loads(r["content"])})
+        for r in c.execute("SELECT * FROM media_objects WHERE cemetery_uid=? ORDER BY uid", (cemetery_uid,)):
+            snap["media"].append({"uid": r["uid"], "kind": r["kind"], "entity_type": r["entity_type"], "entity_id": r["entity_id"], "name": r["name"],
+                                  "size": r["size"], "sha256": r["sha256"], "present": bool(r["present"])})
+        snap["tombstones"] = c.execute("SELECT COUNT(*) FROM tombstones WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
+        snap["open_conflicts"] = c.execute("SELECT COUNT(*) FROM open_conflicts WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
+        snap["change_seq"] = c.execute("SELECT MAX(change_seq) FROM registry_row_data WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
+        return snap
+
+    def _record_manifest_target(self, c, bootstrap_id: str, summary: Dict[str, Any]) -> None:
+        """Hook: înregistrează manifestul țintă pe run (no-op în simulatorul SQLite; `cp_bootstrap_runs.manifest_target` în PostgreSQL)."""
 
     # ------------------------------------------------------------ coduri / pairing
     def issue_code(self, actor: str, organization_uid: str, cemetery_uid: Optional[str] = None) -> str:

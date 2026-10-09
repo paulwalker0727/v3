@@ -26,6 +26,7 @@ import psycopg
 from psycopg.types.string import TextLoader
 
 import cimitir_cloud_control as cc
+import cimitir_manifest as mf
 
 PROTECTED_PROJECT_REFS = ("txuxkjgftopznvmooexq",)
 TEST_PROJECT_REF = "nhhczdmcocbobptogvsw"
@@ -498,13 +499,16 @@ class PostgresControlPlane(cc.LocalControlPlane):
             c.close()
 
     # ------------------------------------------------------------------ bootstrap runs
+    def _record_manifest_target(self, c, bootstrap_id: str, summary: Dict[str, Any]) -> None:
+        c.execute("UPDATE bootstrap_runs SET manifest_target=?::jsonb WHERE bootstrap_id=?", (json.dumps(summary, sort_keys=True), bootstrap_id))
+
     def begin_run(self, code, installation_uid, bootstrap_id, kind, cemetery_uid, plan_hash, plan=None):
         run = cc.LocalControlPlane.begin_run(self, code, installation_uid, bootstrap_id, kind, cemetery_uid, plan_hash, plan)
         if plan and plan.get("local_manifest") is not None:
             c = self._c(run_id=bootstrap_id, installation=installation_uid, org=run["organization_uid"], cems=cemetery_uid)
             try:
                 c.execute("UPDATE bootstrap_runs SET manifest_source=?::jsonb WHERE bootstrap_id=? AND manifest_source IS NULL",
-                          (json.dumps(plan["local_manifest"], sort_keys=True), bootstrap_id))
+                          (json.dumps(mf.summary(plan["local_manifest"]), sort_keys=True), bootstrap_id))
             finally:
                 c.close()
         return run

@@ -24,6 +24,20 @@ class PublishBlocked(tc.TransferBlocked):
     pass
 
 
+def _verify_target(cp, c, org: str, cem: str, expect: Dict[str, Any]) -> Dict[str, Any]:
+    """Manifestul țintă = starea cloud LIVE; trebuie calculabil și egal cu sursa (digest + numărători), altfel nimic nu devine `completed`."""
+    try:
+        m = mf.build_manifest("cloud", mf.normalize_cloud_snapshot(cp._snapshot_on(c, org, cem)))
+    except Exception as exc:  # noqa: BLE001
+        raise PublishBlocked(f"manifestul țintă nu poate fi calculat: {type(exc).__name__}") from exc
+    counts = {e: m["entities"][e]["count"] for e in ents.ORDER}
+    if m["content_digest"] != expect["source_manifest_digest"] or counts != expect["entity_counts"] or m["media"]["count"] != expect["media_count"]:
+        diff = [k for k, bad in (("digest", m["content_digest"] != expect["source_manifest_digest"]), ("entity_counts", counts != expect["entity_counts"]),
+                                 ("media_count", m["media"]["count"] != expect["media_count"])) if bad]
+        raise PublishBlocked(f"manifestul țintă diferă de manifestul sursei: {','.join(diff)}")
+    return mf.summary(m)
+
+
 @remotable
 def publish_flow_b(cp, actor: str, org: str, cem: str, bootstrap_id: str, binding_key: str, expect: Dict[str, Any], accept_missing_media: bool = False,
                    hook: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
@@ -40,6 +54,7 @@ def publish_flow_b(cp, actor: str, org: str, cem: str, bootstrap_id: str, bindin
         if not run:
             raise cc.ScopeError("bootstrap inexistent")
         if run["state"] == "completed":
+            _verify_target(cp, c, org, cem, expect)  # retry după publish: re-verifică idempotent ținta LIVE, fără al doilea publish
             c.execute("COMMIT")
             return {"published": True, "already": True}
         if run["kind"] != "B" or run["plan_hash"] != expect["plan_hash"] or run["state"] != "verifying":
@@ -104,6 +119,8 @@ def publish_flow_b(cp, actor: str, org: str, cem: str, bootstrap_id: str, bindin
         hook("publish:in_txn")
         c.execute("UPDATE cemeteries SET status='ACTIVE', data_epoch=? WHERE uid=? AND status='DRAFT'", (INITIAL_EPOCH, cem))
         cp.activate_binding(c, b["binding_uid"], INITIAL_EPOCH)
+        target = _verify_target(cp, c, org, cem, expect)
+        cp._record_manifest_target(c, bootstrap_id, target)
         c.execute("UPDATE bootstrap_runs SET state='completed', finished_at=?, error=NULL, checkpoint=? WHERE bootstrap_id=?",
                   (now, json.dumps({"phase": "published", "media_missing": mrep["missing"], "accepted_missing_media": bool(mrep["missing"] and accept_missing_media)}, sort_keys=True), bootstrap_id))
         c.execute("DELETE FROM staging_rows WHERE bootstrap_id=? AND cemetery_uid=?", (bootstrap_id, cem))

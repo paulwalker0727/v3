@@ -16,6 +16,12 @@ Stare: implementat și testat pe **PostgreSQL local**. Supabase TEST: NEATINS (u
 - Corespondențe față de simulatorul SQLite: `bindings.status` = (`revoked_at IS NOT NULL` → revoked; `active` → active; altfel pending); epoca (`sync_epoch` int) = `cemeteries.data_epoch`
   (`device_cemetery_bindings.sync_epoch` este UUID-ul Sync V2, neatins); re-pairing după revocare creează o legătură nouă (`replaced_by_binding_uid` pe cea veche).
 
+## manifest_source / manifest_target
+- `manifest_source` = rezumat (digesturi + numărători, `cimitir_manifest.summary`) al manifestului MAIN din planul B, scris la `begin_run`.
+- `manifest_target` = rezumat al stării cloud LIVE, calculat ÎN tranzacția de publish (după ACTIVE, înainte de `completed`) și verificat contra sursei (digest, numărători pe entități, media). Dacă nu poate fi calculat sau diferă ⇒ `PublishBlocked`, rollback integral (cimitir DRAFT, zero rânduri, run nu devine `completed`).
+- Retry după publish (răspuns pierdut / resume): calea `already` RE-calculează și re-verifică ținta LIVE, fără al doilea publish și fără a rescrie `manifest_target`.
+- Flux A: ținta e golul intenționat (ACTIVE + 0 rânduri), nu are `manifest_target` (necesar doar pentru B).
+
 ## Fără `public` hardcodat
 Toate obiectele se creează în `current_schema()`. Funcțiile SECURITY DEFINER (`cp_org_exists`, `cp_cemetery_org`) își fixează `search_path` la `current_schema()` prin `EXECUTE format(...)`. Testat: fresh install 001→014 în schemă temporară, `public` rămâne gol.
 

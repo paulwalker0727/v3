@@ -23,6 +23,7 @@ import cimitir_bootstrap as bs
 import cimitir_cloud_client as ccl
 import cimitir_cloud_control as cc
 import cimitir_cloud_control_pg as ccp
+import cimitir_cloud_publish as cpub
 import cimitir_cloud_staging as cs
 import cimitir_cloud_wire as wire
 import cimitir_flow_b as fb
@@ -124,6 +125,9 @@ def assert_b_done(env, w, b, plan, rep):
     assert cnt(env, "SELECT COUNT(*) FROM cp_registry_rows WHERE cemetery_uid=%s", cem) == 11
     assert cnt(env, "SELECT COUNT(*) FROM device_cemetery_bindings WHERE cemetery_uid=%s AND active AND revoked_at IS NULL", cem) == 1
     assert cnt(env, "SELECT data_epoch FROM cp_bootstrap_runs WHERE bootstrap_id=%s", plan["bootstrap_id"]) == 1
+    src, tgt = pq(env.pg, "SELECT manifest_source, manifest_target FROM cp_bootstrap_runs WHERE bootstrap_id=%s", plan["bootstrap_id"])[0]
+    assert src["content_digest"] == tgt["content_digest"] == cloud["content_digest"] and src["entity_counts"] == tgt["entity_counts"] and tgt["total_rows"] == 11
+    assert src["media_count"] == tgt["media_count"] == cloud["media"]["count"]
 
 
 # ================================================================== SCHEMĂ 014: fără duplicate de tenancy, JSONB, manifeste, indecși, RLS, grants
@@ -404,3 +408,101 @@ def test_failed_redeems_scoped_per_installation_not_global(penv):
             env.cp.preflight_for_code("cod-gresit", inst, str(uuid.uuid4()))
     with pytest.raises(cc.CodeError, match="prea multe"):
         env.cp.preflight_for_code("cod-gresit", inst, str(uuid.uuid4()))
+
+
+# ================================================================== MANIFEST_TARGET (publish verifică ținta LIVE înainte de `completed`)
+def _expect(plan):
+    lm = plan["local_manifest"]
+    return {"plan_hash": plan["plan_hash"], "source_manifest_digest": lm["content_digest"], "entity_counts": {e: v["count"] for e, v in lm["entities"].items()},
+            "media_count": lm["media"]["count"], "data_epoch": 1}
+
+
+def test_manifest_source_equals_target_after_flux_b(penv):
+    env = penv
+    w, b, code = b_world(env)
+    plan = fb.plan_flow_b(b, env.cp, w.owner1, env.inst)
+    rep = fb.execute_flow_b(b, env.cp, env.store, w.owner1, plan, plan["plan_hash"], code, env.inst, batch_size=2, chunk_size=3)
+    assert_b_done(env, w, b, plan, rep)
+    src, tgt, state = pq(env.pg, "SELECT manifest_source, manifest_target, state FROM cp_bootstrap_runs")[0]
+    assert state == "completed" and src == tgt == {**src, "side": src["side"]} or (src["content_digest"] == tgt["content_digest"])
+    assert src["content_digest"] == plan["local_manifest"]["content_digest"] and src["total_rows"] == tgt["total_rows"] == 11
+
+
+@pytest.mark.parametrize("how", ["row_missing", "uncomputable"])
+def test_target_manifest_mismatch_or_uncomputable_fails_before_completed(penv, monkeypatch, how):
+    env = penv
+    w, b, code = b_world(env)
+    plan = fb.plan_flow_b(b, env.cp, w.owner1, env.inst)
+    real = env.cp._snapshot_on
+
+    def bad(c, org, cem):
+        import inspect
+        if not any(f.function == "publish_flow_b" for f in inspect.stack()):
+            return real(c, org, cem)
+        if how == "uncomputable":
+            raise RuntimeError("snapshot indisponibil")
+        snap = real(c, org, cem)
+        ent = next(e for e, rows in snap["entities"].items() if rows)
+        snap["entities"][ent] = snap["entities"][ent][1:]
+        return snap
+    monkeypatch.setattr(env.cp, "_snapshot_on", bad)
+    with pytest.raises(Exception):  # noqa: B017
+        fb.execute_flow_b(b, env.cp, env.store, w.owner1, plan, plan["plan_hash"], code, env.inst, batch_size=2, chunk_size=3)
+    assert cnt(env, "SELECT COUNT(*) FROM cp_bootstrap_runs WHERE state='completed'") == 0
+    assert pq(env.pg, "SELECT status, data_epoch FROM cemeteries WHERE uid=%s", b.cemetery_uid)[0] == ("DRAFT", 1)  # publish anulat integral
+    assert cnt(env, "SELECT COUNT(*) FROM cp_registry_rows") == 0 and cnt(env, "SELECT COUNT(*) FROM cp_media_published") == 0
+    assert cnt(env, "SELECT manifest_target IS NULL FROM cp_bootstrap_runs") is True
+    assert cnt(env, "SELECT COUNT(*) FROM cp_audit_log WHERE action='publish_flow_b'") == 0
+    assert bs.LocalRegistry(b).sync_state != "BOUND"
+
+
+def test_retry_after_publish_reverifies_target_without_second_publish(penv):
+    env = penv
+    w, b, code = b_world(env)
+    plan = fb.plan_flow_b(b, env.cp, w.owner1, env.inst)
+    fb.execute_flow_b(b, env.cp, env.store, w.owner1, plan, plan["plan_hash"], code, env.inst, batch_size=2, chunk_size=3)
+    before = pq(env.pg, "SELECT manifest_target, finished_at FROM cp_bootstrap_runs")[0]
+    seq = cnt(env, "SELECT MAX(change_seq) FROM cp_registry_row_data")
+    exp = _expect(plan)
+    for _ in range(2):
+        assert cpub.publish_flow_b(env.cp, w.owner1, b.organization_uid, b.cemetery_uid, plan["bootstrap_id"], "nu-conteaza", exp) == {"published": True, "already": True}
+    assert pq(env.pg, "SELECT manifest_target, finished_at FROM cp_bootstrap_runs")[0] == before  # nimic rescris
+    assert cnt(env, "SELECT COUNT(*) FROM cp_audit_log WHERE action='publish_flow_b'") == 1 and cnt(env, "SELECT MAX(change_seq) FROM cp_registry_row_data") == seq
+    env.cp.sim_put_row(b.cemetery_uid, "locuri_de_veci", "extra-uid", {"cod": "X"})  # ținta LIVE s-a schimbat după publish → retry-ul o detectează
+    with pytest.raises(cpub.PublishBlocked):
+        cpub.publish_flow_b(env.cp, w.owner1, b.organization_uid, b.cemetery_uid, plan["bootstrap_id"], "nu-conteaza", exp)
+
+
+def test_response_lost_after_publish_resume_verifies_target_over_http(penv):
+    env = penv
+    w, b, code = b_world(env)
+    p, url = start_server(env, fault={"op": "publish_flow_b", "nth": 1, "mode": "kill"})
+    rcp = ccl.RemoteControlPlane(url, code, timeout=2, retries=1, backoff=0.05)
+    plan = fb.plan_flow_b(b, rcp, w.owner1, env.inst)
+    with pytest.raises(ccl.TransportError):
+        fb.execute_flow_b(b, rcp, env.store, w.owner1, plan, plan["plan_hash"], code, env.inst, batch_size=1, chunk_size=3)
+    assert p.wait(timeout=10) == 137
+    tgt0 = pq(env.pg, "SELECT manifest_target FROM cp_bootstrap_runs")[0][0]
+    assert tgt0 and tgt0["content_digest"] == plan["local_manifest"]["content_digest"]  # commit-ul a scris ținta înainte de răspuns
+    _p2, url2 = start_server(env)
+    rep = fb.execute_flow_b(b, ccl.RemoteControlPlane(url2, code), env.store, w.owner1, plan, plan["plan_hash"], code, env.inst, batch_size=1, chunk_size=3)
+    assert_b_done(env, w, b, plan, rep)
+    assert pq(env.pg, "SELECT manifest_target FROM cp_bootstrap_runs")[0][0] == tgt0 and cnt(env, "SELECT COUNT(*) FROM cp_audit_log WHERE action='publish_flow_b'") == 1
+
+
+def test_cross_tenant_target_manifest_refused(penv):
+    env = penv
+    w, b, code = b_world(env)
+    plan = fb.plan_flow_b(b, env.cp, w.owner1, env.inst)
+    fb.execute_flow_b(b, env.cp, env.store, w.owner1, plan, plan["plan_hash"], code, env.inst, batch_size=2, chunk_size=3)
+    with pytest.raises((cc.ScopeError, cc.PermissionDenied)):
+        mf.cloud_manifest(env.cp, w.owner2, b.organization_uid, b.cemetery_uid)  # owner B → org A
+    foreign = str(uuid.uuid4())
+    env.cp.create_cemetery(w.owner2, w.org2, foreign, "B")
+    assert mf.cloud_manifest(env.cp, w.owner1, b.organization_uid, foreign)["total_rows"] == 0  # cimitir B văzut de A ≡ inexistent
+    with pytest.raises((cc.ScopeError, cc.PermissionDenied)):
+        cpub.publish_flow_b(env.cp, w.owner2, b.organization_uid, b.cemetery_uid, plan["bootstrap_id"], "x", _expect(plan))
+    other = _ctx_conn(env.pg, org=w.org2, cems="*")
+    assert _count(other, "SELECT COUNT(*) FROM cp_bootstrap_runs") == 0 and other.execute("SELECT manifest_target FROM cp_bootstrap_runs").fetchall() == []
+    mine = _ctx_conn(env.pg, org=b.organization_uid, cems="*")
+    assert _count(mine, "SELECT COUNT(*) FROM cp_bootstrap_runs WHERE manifest_target IS NOT NULL") == 1
