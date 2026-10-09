@@ -21,6 +21,7 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cimitir_cp_app') THEN
         CREATE ROLE cimitir_cp_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB;
     END IF;
+EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;   -- rol cluster-global creat concurent de alt proces
 END $$;
 
 -- ---------------------------------------------------------------------------------------------------- context RLS (GUC cp.*; lipsă ⇒ NULL ⇒ acces refuzat)

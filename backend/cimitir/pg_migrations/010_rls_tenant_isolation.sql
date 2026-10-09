@@ -17,6 +17,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cimitir_app') THEN
         CREATE ROLE cimitir_app LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEROLE NOCREATEDB;   -- parola se setează separat, nu în Git
     END IF;
+EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;   -- rol cluster-global creat concurent de alt proces
 END $$;
 
 DO $$
