@@ -40,6 +40,8 @@ class MediaMissingBlocked(tc.TransferBlocked):
 
 def _ensure(cp) -> None:
     cs._ensure(cp)
+    if getattr(cp, "schema_managed", False):
+        return
     c = cp._c()
     try:
         c.executescript(_DDL)
@@ -64,6 +66,7 @@ def media_put_chunk(cp, actor: str, org: str, cem: str, bid: str, uid: str, n: i
     c = cp._c()
     try:
         c.execute("BEGIN IMMEDIATE")
+        cp._lock_cemetery(c, cem)
         s = cs._session(cp, c, actor, org, cem, bid)
         cur = c.execute("SELECT data_epoch, status FROM cemeteries WHERE uid=?", (cem,)).fetchone()
         if not cur or cur["status"] != "DRAFT" or cur["data_epoch"] != s["data_epoch"]:
@@ -119,6 +122,7 @@ def media_finalize(cp, actor: str, org: str, cem: str, bid: str, uid: str) -> Di
     c = cp._c()
     try:
         c.execute("BEGIN IMMEDIATE")
+        cp._lock_cemetery(c, cem)
         cs._session(cp, c, actor, org, cem, bid)
         row = _staged(c, bid, cem, uid)
         if row is None or not row.get("present"):
@@ -181,6 +185,7 @@ def media_cleanup(cp, actor: str, org: str, cem: str, bid: str) -> Dict[str, int
     c = cp._c()
     try:
         c.execute("BEGIN IMMEDIATE")
+        cp._lock_cemetery(c, cem)
         cs._session(cp, c, actor, org, cem, bid, need_open=False)
         a = c.execute("DELETE FROM staging_media_chunks WHERE bootstrap_id=? AND cemetery_uid=?", (bid, cem)).rowcount
         b = c.execute("DELETE FROM staging_media_blobs WHERE bootstrap_id=? AND cemetery_uid=?", (bid, cem)).rowcount

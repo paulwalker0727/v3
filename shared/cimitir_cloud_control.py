@@ -103,6 +103,46 @@ class LocalControlPlane:
         c.execute("PRAGMA foreign_keys = ON")
         return c
 
+    def _c_ro(self) -> sqlite3.Connection:
+        c = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True, timeout=15)
+        c.row_factory = sqlite3.Row
+        return c
+
+    def _cemetery_org(self, c, cemetery_uid: str) -> Optional[str]:
+        """Organizația proprietară a cimitirului (orice organizație), sau None dacă nu există."""
+        row = c.execute("SELECT organization_uid FROM cemeteries WHERE uid=?", (cemetery_uid,)).fetchone()
+        return row["organization_uid"] if row else None
+
+    def _lock_cemetery(self, c, cemetery_uid: str) -> None:
+        """Lacăt per cimitir pentru secțiuni critice (no-op în SQLite: BEGIN IMMEDIATE; pg_advisory_xact_lock în PostgreSQL)."""
+
+    def begin_request(self) -> None:
+        """Hook de transport: curăță contextul de cerere (no-op în simulatorul SQLite; în PostgreSQL resetează contextul RLS)."""
+
+    def code_row(self, secret: str):
+        c = self._c()
+        try:
+            return c.execute("SELECT * FROM pairing_codes WHERE code_hash=?", (_h(secret),)).fetchone()
+        finally:
+            c.close()
+
+    def run_state(self, bootstrap_id: str) -> Optional[str]:
+        try:
+            return self.get_run(bootstrap_id)["state"]
+        except ScopeError:
+            return None
+
+    def binding_issuer(self, binding_uid: str) -> Optional[str]:
+        c = self._c()
+        try:
+            r = c.execute("SELECT principal_uid FROM binding_issuers WHERE binding_uid=?", (binding_uid,)).fetchone()
+            return r["principal_uid"] if r else None
+        finally:
+            c.close()
+
+    def activate_binding(self, c, binding_uid: str, epoch: int) -> None:
+        c.execute("UPDATE bindings SET sync_epoch=?, status='active' WHERE binding_uid=?", (epoch, binding_uid))
+
     def _audit(self, c, actor, action, org=None, cem=None, **detail) -> None:
         c.execute("INSERT INTO audit_log (ts, actor, action, organization_uid, cemetery_uid, detail) VALUES (?,?,?,?,?,?)",
                   (self.clock(), actor, action, org, cem, json.dumps(detail, sort_keys=True)))
@@ -242,29 +282,35 @@ class LocalControlPlane:
     def export_snapshot(self, actor: str, organization_uid: str, cemetery_uid: str) -> Dict[str, Any]:
         """CITIRE STRICT READ-ONLY (conexiune `mode=ro`) a stării unui cimitir, pentru manifest. Scope: doar organizația `actor`-ului;
         un cimitir din altă organizație ≡ inexistent (fără scurgeri)."""
-        c = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True, timeout=15)
-        c.row_factory = sqlite3.Row
+        c = self._c_ro()
         try:
             self._require(c, actor, "read", organization_uid)
-            cem = c.execute("SELECT * FROM cemeteries WHERE uid=? AND organization_uid=?", (cemetery_uid, organization_uid)).fetchone()
-            snap: Dict[str, Any] = {"exists": cem is not None, "organization_uid": organization_uid, "cemetery_uid": cemetery_uid,
-                                    "status": cem["status"] if cem else None, "data_epoch": cem["data_epoch"] if cem else None,
-                                    "schema_version": "sim-control-v1", "entities": {}, "media": [], "tombstones": 0, "open_conflicts": 0, "change_seq": None}
-            if not cem:
-                return snap
-            for r in c.execute("SELECT r.entity, r.uid, COALESCE(d.version,1) AS version, COALESCE(d.content,'{}') AS content FROM registry_rows r "
-                               "LEFT JOIN registry_row_data d ON d.cemetery_uid=r.cemetery_uid AND d.entity=r.entity AND d.uid=r.uid "
-                               "WHERE r.cemetery_uid=? ORDER BY r.entity, r.uid", (cemetery_uid,)):
-                snap["entities"].setdefault(r["entity"], []).append({"ref": r["uid"], "uid": r["uid"], "version": r["version"], "data": json.loads(r["content"])})
-            for r in c.execute("SELECT * FROM media_objects WHERE cemetery_uid=? ORDER BY uid", (cemetery_uid,)):
-                snap["media"].append({"uid": r["uid"], "kind": r["kind"], "entity_type": r["entity_type"], "entity_id": r["entity_id"], "name": r["name"],
-                                      "size": r["size"], "sha256": r["sha256"], "present": bool(r["present"])})
-            snap["tombstones"] = c.execute("SELECT COUNT(*) FROM tombstones WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
-            snap["open_conflicts"] = c.execute("SELECT COUNT(*) FROM open_conflicts WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
-            snap["change_seq"] = c.execute("SELECT MAX(change_seq) FROM registry_row_data WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
-            return snap
+            return self._snapshot_on(c, organization_uid, cemetery_uid)
         finally:
             c.close()
+
+    def _snapshot_on(self, c, organization_uid: str, cemetery_uid: str) -> Dict[str, Any]:
+        """Instantaneul LIVE al cimitirului pe o conexiune deja autorizată (folosit și în tranzacția de publish, pentru manifestul țintă)."""
+        cem = c.execute("SELECT * FROM cemeteries WHERE uid=? AND organization_uid=?", (cemetery_uid, organization_uid)).fetchone()
+        snap: Dict[str, Any] = {"exists": cem is not None, "organization_uid": organization_uid, "cemetery_uid": cemetery_uid,
+                                "status": cem["status"] if cem else None, "data_epoch": cem["data_epoch"] if cem else None,
+                                "schema_version": "sim-control-v1", "entities": {}, "media": [], "tombstones": 0, "open_conflicts": 0, "change_seq": None}
+        if not cem:
+            return snap
+        for r in c.execute("SELECT r.entity, r.uid, COALESCE(d.version,1) AS version, COALESCE(d.content,'{}') AS content FROM registry_rows r "
+                           "LEFT JOIN registry_row_data d ON d.cemetery_uid=r.cemetery_uid AND d.entity=r.entity AND d.uid=r.uid "
+                           "WHERE r.cemetery_uid=? ORDER BY r.entity, r.uid", (cemetery_uid,)):
+            snap["entities"].setdefault(r["entity"], []).append({"ref": r["uid"], "uid": r["uid"], "version": r["version"], "data": json.loads(r["content"])})
+        for r in c.execute("SELECT * FROM media_objects WHERE cemetery_uid=? ORDER BY uid", (cemetery_uid,)):
+            snap["media"].append({"uid": r["uid"], "kind": r["kind"], "entity_type": r["entity_type"], "entity_id": r["entity_id"], "name": r["name"],
+                                  "size": r["size"], "sha256": r["sha256"], "present": bool(r["present"])})
+        snap["tombstones"] = c.execute("SELECT COUNT(*) FROM tombstones WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
+        snap["open_conflicts"] = c.execute("SELECT COUNT(*) FROM open_conflicts WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
+        snap["change_seq"] = c.execute("SELECT MAX(change_seq) FROM registry_row_data WHERE cemetery_uid=?", (cemetery_uid,)).fetchone()[0]
+        return snap
+
+    def _record_manifest_target(self, c, bootstrap_id: str, summary: Dict[str, Any]) -> None:
+        """Hook: înregistrează manifestul țintă pe run (no-op în simulatorul SQLite; `cp_bootstrap_runs.manifest_target` în PostgreSQL)."""
 
     # ------------------------------------------------------------ coduri / pairing
     def issue_code(self, actor: str, organization_uid: str, cemetery_uid: Optional[str] = None) -> str:
@@ -309,8 +355,8 @@ class LocalControlPlane:
             row = self._code_row(c, code, installation_uid)
             if row["cemetery_uid"] and row["cemetery_uid"] != cemetery_uid:
                 raise ScopeError("codul nu este valabil pentru acest cimitir")
-            cem = c.execute("SELECT organization_uid FROM cemeteries WHERE uid=?", (cemetery_uid,)).fetchone()
-            if cem and cem["organization_uid"] != row["organization_uid"]:
+            owner_org = self._cemetery_org(c, cemetery_uid)
+            if owner_org and owner_org != row["organization_uid"]:
                 raise ScopeError("cimitir inexistent")
             return {**self._state_of(c, cemetery_uid), "organization_uid": row["organization_uid"]}
         except CodeError:
@@ -326,6 +372,7 @@ class LocalControlPlane:
         c = self._c()
         try:
             c.execute("BEGIN IMMEDIATE")
+            self._lock_cemetery(c, cemetery_uid)
             row = self._code_row(c, code, installation_uid, allow_used_by=bootstrap_id)
             org = row["organization_uid"]
             if row["cemetery_uid"] and row["cemetery_uid"] != cemetery_uid:
@@ -410,11 +457,12 @@ class LocalControlPlane:
         c = self._c()
         try:
             c.execute("BEGIN IMMEDIATE")
+            self._lock_cemetery(c, cemetery_uid)
             row = self._code_row(c, code, installation_uid, allow_used_by=bootstrap_id)
             if row["cemetery_uid"] and row["cemetery_uid"] != cemetery_uid:
                 raise ScopeError("codul nu este valabil pentru acest cimitir")
-            owner = c.execute("SELECT organization_uid FROM cemeteries WHERE uid=?", (cemetery_uid,)).fetchone()
-            if owner and owner["organization_uid"] != row["organization_uid"]:
+            owner_org = self._cemetery_org(c, cemetery_uid)
+            if owner_org and owner_org != row["organization_uid"]:
                 raise ScopeError("cimitirul aparține altei organizații")
             if plan is None:
                 self._expire_planned(c)
@@ -552,3 +600,11 @@ class LocalControlPlane:
             self._audit(c, installation_uid, "bootstrap_rolled_back_without_key", run["organization_uid"], run["cemetery_uid"], bootstrap_id=bootstrap_id)
         finally:
             c.close()
+
+
+def open_control_plane(target, clock: Callable[[], float] = time.time):
+    """`target` = cale SQLite (simulator) sau "pg:env" (planul de control PostgreSQL; conexiunea se citește DOAR din mediu)."""
+    if str(target).startswith("pg:"):
+        import cimitir_cloud_control_pg as ccp
+        return ccp.PostgresControlPlane(clock=clock)
+    return LocalControlPlane(target, clock=clock)

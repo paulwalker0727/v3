@@ -263,7 +263,12 @@ def local_manifest(binding) -> Dict[str, Any]:
 
 # ------------------------------------------------------------------ citire cloud (simulator, read-only)
 def cloud_snapshot(cp, actor: str, organization_uid: str, cemetery_uid: str) -> Dict[str, Any]:
-    snap = dict(cp.export_snapshot(actor, organization_uid, cemetery_uid))
+    return normalize_cloud_snapshot(cp.export_snapshot(actor, organization_uid, cemetery_uid))
+
+
+def normalize_cloud_snapshot(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Instantaneul brut al cloud-ului → forma comparabilă cu cea locală (FK-uri, media normalizată)."""
+    snap = dict(raw)
     snap.update(app_version=None, sync_state=None, outbox=None, fk_check_violations=None)
     entities: Dict[str, List[Dict[str, Any]]] = {}
     for entity, rows in snap["entities"].items():
@@ -277,6 +282,12 @@ def cloud_snapshot(cp, actor: str, organization_uid: str, cemetery_uid: str) -> 
                       "present": m["present"], "size": m["size"] if m["present"] else None, "sha256": m["sha256"] if m["present"] else None,
                       "status": "ok" if m["present"] else "missing"} for m in snap["media"]]
     return snap
+
+
+def summary(m: Dict[str, Any]) -> Dict[str, Any]:
+    """Rezumat compact (digesturi + numărători) al unui manifest, pentru înregistrarea pe run (manifest_source / manifest_target)."""
+    return {"side": m.get("side"), "content_digest": m["content_digest"], "stable_digest": m.get("stable_digest"), "total_rows": m.get("total_rows"),
+            "entity_counts": {e: v["count"] for e, v in m["entities"].items()}, "media_count": m["media"]["count"]}
 
 
 def cloud_manifest(cp, actor: str, organization_uid: str, cemetery_uid: str) -> Dict[str, Any]:

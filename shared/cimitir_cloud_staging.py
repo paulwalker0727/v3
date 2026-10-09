@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS staging_rows (bootstrap_id TEXT NOT NULL, cemetery_ui
 
 
 def _ensure(cp) -> None:
+    if getattr(cp, "schema_managed", False):
+        return
     c = cp._c()
     try:
         c.executescript(_DDL)
@@ -62,6 +64,7 @@ def staging_open(cp, actor: str, org: str, cem: str, bootstrap_id: str, session:
     c = cp._c()
     try:
         c.execute("BEGIN IMMEDIATE")
+        cp._lock_cemetery(c, cem)
         cp._require(c, actor, "bootstrap", org)
         row = c.execute("SELECT status, data_epoch FROM cemeteries WHERE uid=? AND organization_uid=?", (cem, org)).fetchone()
         if not row:
@@ -116,6 +119,7 @@ def staging_put_batch(cp, actor: str, org: str, cem: str, contract: Dict[str, An
     c = cp._c()
     try:
         c.execute("BEGIN IMMEDIATE")
+        cp._lock_cemetery(c, cem)
         s = _session(cp, c, actor, org, cem, bid)
         for k in tc.SESSION_FIELDS:
             if contract[k] != s[k]:
@@ -215,6 +219,7 @@ def staging_mark_stale(cp, actor: str, org: str, cem: str) -> List[str]:
     c = cp._c()
     try:
         c.execute("BEGIN IMMEDIATE")
+        cp._lock_cemetery(c, cem)
         cp._require(c, actor, "bootstrap", org)
         ids = [r["bootstrap_id"] for r in c.execute("SELECT bootstrap_id FROM staging_sessions WHERE organization_uid=? AND cemetery_uid=? AND state='open' "
                                                     "AND last_activity_at + stale_after <= ?", (org, cem, cp.clock()))]
@@ -237,6 +242,7 @@ def staging_cleanup(cp, actor: str, org: str, cem: str, bootstrap_id: str) -> Di
     c = cp._c()
     try:
         c.execute("BEGIN IMMEDIATE")
+        cp._lock_cemetery(c, cem)
         _session(cp, c, actor, org, cem, bootstrap_id, need_open=False)
         n = c.execute("DELETE FROM staging_rows WHERE bootstrap_id=? AND cemetery_uid=?", (bootstrap_id, cem)).rowcount
         b = c.execute("DELETE FROM staging_batches WHERE bootstrap_id=? AND cemetery_uid=?", (bootstrap_id, cem)).rowcount
