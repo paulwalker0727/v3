@@ -701,6 +701,30 @@ def add_aviz(cod_loc: str, nr: str, data_aviz: Optional[str], lucrare: str = "")
         return None
 
 
+def get_aviz(aviz_id: int) -> Optional[Dict[str, Any]]:
+    with _db() as conn:
+        r = conn.execute("SELECT id, cod_loc, nr_aviz, data_aviz, lucrare, created_at FROM amenajari_avize "
+                         "WHERE id = ? AND cemetery_uid = app_default_cemetery_uid()", (aviz_id,)).fetchone()
+        return None if not r else {"id": r["id"], "cod_loc": r["cod_loc"], "nr": r["nr_aviz"], "data": r["data_aviz"],
+                                   "lucrare": r["lucrare"] or "", "stare": "", "observatii": "", "data_finalizare": "",
+                                   "created_at": r["created_at"]}
+
+
+def update_aviz(aviz_id: int, fields: Dict[str, Any]) -> bool:
+    """PostgreSQL (schema 001–014): doar nr, data, lucrare; stare/observații/finalizare există doar în SQLite local."""
+    cols = {"nr": "nr_aviz", "data": "data_aviz", "lucrare": "lucrare"}
+    sets = [(cols[k], v or "") for k, v in fields.items() if k in cols]
+    if not sets:
+        return False
+    try:
+        with _db() as conn:
+            return conn.execute(f"UPDATE amenajari_avize SET {', '.join(c + '=?' for c, _ in sets)} "
+                                "WHERE id = ? AND cemetery_uid = app_default_cemetery_uid()", (*[v for _, v in sets], aviz_id)).rowcount > 0
+    except Exception as e:
+        print(f"[PG ERROR update_aviz] {e}")
+        return False
+
+
 def delete_aviz(aviz_id: int) -> bool:
     try:
         with _db() as conn:

@@ -125,7 +125,7 @@ class LauncherWindow(QWidget):
         cards.addWidget(self._make_card(
             "💻", "Doar local", "Pe acest calculator", PAL["primary"], self.start_local))
         cards.addWidget(self._make_card(
-            "🌐", "Server în rețea", "Opțional (LAN):\nPC-uri + telefoane", PAL["green"], self.start_server))
+            "🌐", "Acces telefon în rețea", "Opțional (LAN):\nPC-uri + telefoane", PAL["green"], self.start_server))
         root.addLayout(cards)
 
         port_row = QHBoxLayout()
@@ -218,11 +218,21 @@ class LauncherWindow(QWidget):
         self._portal_proc = None
 
     def _confirm_lan(self) -> bool:
+        warn = ""
+        try:
+            import cimitir_auth
+            weak = cimitir_auth.default_password_accounts()
+            if weak:
+                warn = ("\n\n⚠ Aceste conturi au încă o parolă implicită: " + ", ".join(weak) +
+                        ". Schimbă parolele (scripts/reset_admin_password.py) ÎNAINTE de a deschide accesul în rețea.")
+        except Exception:
+            pass
         answer = QMessageBox.question(
-            self, "Server în rețea (opțional)",
+            self, "Acces telefon în rețeaua locală (opțional)",
             "Pornești portalul și administrarea web în REȚEA LOCALĂ (0.0.0.0)?\n\n"
             "Modul implicit și recomandat este «Doar local» (127.0.0.1:8000). În modul de rețea, orice dispozitiv "
-            "din aceeași rețea poate ajunge la portal și la /admin (cu autentificare). Folosește-l doar în rețele de încredere.",
+            "din aceeași rețea poate ajunge la portal și la /admin (cu autentificare). Folosește-l doar în rețele de încredere. "
+            "Nu face port forwarding și nu expune portul pe internet." + warn,
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         return answer == QMessageBox.Yes
 
@@ -238,7 +248,7 @@ class LauncherWindow(QWidget):
         if not portal_boot.port_is_free(LAN_HOST, scan_port):
             QMessageBox.warning(self, "Scanare telefon indisponibilă",
                                 f"Portul {scan_port} (scanare de pe telefon) este ocupat de alt program; nu pornesc pe alt port.")
-            self._show_server_running(f"http://{get_lan_ip()}:{port}/portal")
+            self._show_server_running(f"http://{get_lan_ip()}:{port}/admin/harta")
             return
         try:
             import web_server
@@ -251,7 +261,7 @@ class LauncherWindow(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Scanare telefon indisponibilă", f"Portalul rulează, dar scanarea de pe telefon nu a pornit:\n{e}")
         ip = get_lan_ip()
-        url = f"http://{ip}:{port}/portal"
+        url = f"http://{ip}:{port}/admin/harta"
         self._show_server_running(url)
 
     def _show_server_running(self, url):
@@ -311,7 +321,8 @@ class ServerWindow(QWidget):
         lay.addWidget(url_lbl)
 
         note = QLabel("Dispozitivele trebuie să fie în aceeași rețea (WiFi/LAN).\n"
-                      "Administrare personal: /admin (conturi create la prima pornire; parola implicită se schimbă la prima autentificare).")
+                      "Pe telefon: autentifică-te cu un cont al personalului → Hartă → locul → Fă poză. Ce adaugi apare imediat în MAIN (aceeași bază și aceleași fișiere). "
+                      "Cetățeni: /portal.")
         note.setStyleSheet(f"color:{PAL['muted']}; font-size:11px;"); note.setAlignment(Qt.AlignCenter)
         note.setWordWrap(True)
         lay.addWidget(note)

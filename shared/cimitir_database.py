@@ -439,6 +439,9 @@ def init_db() -> None:
             ("inhumati", "nr_certificat_deces TEXT"),
             ("inhumati", "nr_adeverinta_inhumare TEXT"),
             ("amenajari_avize", "lucrare TEXT"),
+            ("amenajari_avize", "stare TEXT"),
+            ("amenajari_avize", "observatii TEXT"),
+            ("amenajari_avize", "data_finalizare TEXT"),
             ("locuri_de_veci", "extra_data TEXT"),
             ("cereri_concesionare", "cod_urmarire TEXT"),
             ("cereri_concesionare", "sync_version INTEGER DEFAULT 0"),
@@ -1111,14 +1114,46 @@ def set_cover_photo(cod_loc: str, photo_id: int) -> bool:
 def list_avize_for_loc(cod_loc: str) -> List[Dict[str, Any]]:
     conn = get_connection()
     try:
-        rows = conn.execute(
-            "SELECT id, nr_aviz, data_aviz, lucrare, created_at FROM amenajari_avize "
-            "WHERE cod_loc = ? ORDER BY id",
-            (cod_loc,)
-        ).fetchall()
-        return [{"id": r["id"], "nr": r["nr_aviz"], "data": r["data_aviz"],
-                 "lucrare": (r["lucrare"] if "lucrare" in r.keys() else "") or "",
-                 "created_at": r["created_at"]} for r in rows]
+        rows = conn.execute("SELECT * FROM amenajari_avize WHERE cod_loc = ? ORDER BY id", (cod_loc,)).fetchall()
+        return [_aviz_dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _aviz_dict(r) -> Dict[str, Any]:
+    k = r.keys()
+    g = lambda c: (r[c] if c in k else "") or ""  # noqa: E731
+    return {"id": r["id"], "cod_loc": r["cod_loc"], "nr": r["nr_aviz"], "data": r["data_aviz"], "lucrare": g("lucrare"),
+            "stare": g("stare"), "observatii": g("observatii"), "data_finalizare": g("data_finalizare"),
+            "created_at": r["created_at"]}
+
+
+def get_aviz(aviz_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        r = conn.execute("SELECT * FROM amenajari_avize WHERE id = ?", (aviz_id,)).fetchone()
+        return _aviz_dict(r) if r else None
+    finally:
+        conn.close()
+
+
+_AVIZ_COLS = {"nr": "nr_aviz", "data": "data_aviz", "lucrare": "lucrare", "stare": "stare", "observatii": "observatii",
+              "data_finalizare": "data_finalizare"}
+
+
+def update_aviz(aviz_id: int, fields: Dict[str, Any]) -> bool:
+    """Actualizează doar câmpurile primite (nr, data, lucrare, stare, observatii, data_finalizare)."""
+    sets = [(_AVIZ_COLS[k], v if v is not None else "") for k, v in fields.items() if k in _AVIZ_COLS]
+    if not sets:
+        return False
+    conn = get_connection()
+    try:
+        cur = conn.execute(f"UPDATE amenajari_avize SET {', '.join(c + '=?' for c, _ in sets)} WHERE id = ?",
+                           (*[v for _, v in sets], aviz_id))
+        return cur.rowcount > 0
+    except Exception as e:
+        print(f"[DB ERROR update_aviz] {e}")
+        return False
     finally:
         conn.close()
 

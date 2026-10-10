@@ -28,19 +28,23 @@ DOC_TYPES: Dict[str, str] = {
     "contract_concesiune": "Contract concesiune", "act_aditional": "Act adițional", "chitanta": "Chitanță",
     "dovada_plata": "Dovadă plată", "certificat": "Certificat", "cerere": "Cerere", "aviz_constructie": "Aviz construcție",
     "schita": "Schiță", "carte_identitate": "Carte de identitate", "declaratie": "Declarație",
-    "fotografie_loc": "Fotografie loc", "fotografie_monument": "Fotografie monument", "proces_verbal": "Proces verbal",
-    "poza_loc": "Fotografie loc (vechi)", "cerere_doc": "Document încărcat de solicitant", "alt_document": "Alt document",
+    "fotografie_loc": "Fotografie loc (alt tip)", "fotografie_monument": "Fotografie monument", "proces_verbal": "Proces verbal",
+    "fotografie_inhumat": "Fotografie înhumat", "certificat_inhumare": "Certificat de înhumare",
+    "adeverinta_inhumare": "Adeverință de înhumare", "adeverinta": "Adeverință",
+    "lucrare_inainte": "Lucrare — ÎNAINTE", "lucrare_in_timpul": "Lucrare — ÎN TIMPUL LUCRĂRII", "lucrare_dupa": "Lucrare — DUPĂ",
+    "poza_loc": "Fotografie loc", "cerere_doc": "Document încărcat de solicitant", "alt_document": "Alt document",
 }
 # tipurile propuse primele, pe entitate (restul rămân disponibile)
 SUGGESTED: Dict[str, List[str]] = {
-    "loc": ["fotografie_loc", "fotografie_monument", "schita", "alt_document"],
+    "loc": ["poza_loc", "fotografie_monument", "schita", "alt_document"],
     "concesionar": ["carte_identitate", "cerere", "declaratie", "alt_document"],
     "contract": ["contract_concesiune", "act_aditional", "alt_document"],
-    "inhumat": ["certificat", "proces_verbal", "fotografie_loc", "alt_document"],
+    "inhumat": ["certificat_inhumare", "fotografie_inhumat", "adeverinta_inhumare", "certificat", "proces_verbal", "alt_document"],
     "plata": ["chitanta", "dovada_plata", "alt_document"],
-    "aviz": ["cerere", "aviz_constructie", "schita", "fotografie_loc", "alt_document"],
+    "aviz": ["lucrare_inainte", "lucrare_in_timpul", "lucrare_dupa", "aviz_constructie", "cerere", "schita", "alt_document"],
     "cerere": ["cerere", "carte_identitate", "declaratie", "alt_document"],
 }
+LUCRARE_FOTO = ("lucrare_inainte", "lucrare_in_timpul", "lucrare_dupa")
 # copia actului de identitate: doar unde e justificat și cu motiv scris
 ID_CARD_ENTITIES = {"concesionar", "cerere", "inhumat"}
 

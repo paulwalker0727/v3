@@ -391,7 +391,8 @@ def access_login(request: Request, username: str = Form(...), password: str = Fo
                     "lease_expired": "Accesul a expirat. Reconectează-te la server."}
         return _access_error(request, messages.get(reason, "Utilizator sau parolă greșite."), source_id)
     token = create_token(user, src["id"])
-    resp = RedirectResponse(url="/admin/schimba-parola" if user.get("must_change_password") else "/admin/", status_code=303)
+    phone = "mobile" in (request.headers.get("user-agent") or "").lower()
+    resp = RedirectResponse(url="/admin/schimba-parola" if user.get("must_change_password") else "/admin/harta" if phone else "/admin/", status_code=303)
     resp.set_cookie(COOKIE, token, httponly=True, samesite="lax", max_age=12 * 3600, secure=_cookie_secure(request))
     return resp
 
@@ -861,6 +862,9 @@ def _docs(docs):
     return out
 
 
+LUCRARE_STARI = {"planificata": "Planificată", "in_lucru": "În lucru", "finalizata": "Finalizată"}
+
+
 def _loc_detail(cod_loc: str):
     loc = cim.load_loc_by_cod(cod_loc)
     if not loc:
@@ -874,10 +878,18 @@ def _loc_detail(cod_loc: str):
             conces = None
     inhumati_l = cim.load_inhumati_for_loc(cod_loc)
     avize = cim.list_avize_for_loc(cod_loc)
+    for av in avize:
+        counts = {t: 0 for t in attachments.LUCRARE_FOTO}
+        total = 0
+        for dd in cim.list_documents("aviz", av["id"]):
+            total += 1
+            if dd.get("doc_type") in counts:
+                counts[dd["doc_type"]] += 1
+        av["foto"], av["foto_total"] = counts, total
     loc_photos = _docs(cim.list_documents("loc", cod_loc, "poza_loc"))
     loc["status"] = plot_status(loc, _expired_cods())
     return {"loc": loc, "concesionar": conces, "contracte": contracte, "inhumati": inhumati_l,
-            "avize": avize, "loc_photos": loc_photos,
+            "avize": avize, "lucrari_extended": getattr(cim, "ENGINE", "") != "postgres", "stari": LUCRARE_STARI, "loc_photos": loc_photos,
             "plati": {"total": cim.total_plati(cod_loc), "items": cim.list_plati(cod_loc)}}
 
 
@@ -1022,8 +1034,54 @@ async def plata_delete(request: Request, pid: int, cod_loc: str = Form(...)):
 async def loc_aviz(request: Request, cod_loc: str):
     _require_writer(request)
     b = dict(await request.form())
-    cim.add_aviz(cod_loc, b.get("nr", ""), b.get("data", ""), b.get("lucrare", ""))
+    aid = cim.add_aviz(cod_loc, b.get("nr", ""), b.get("data", ""), b.get("lucrare", ""))
+    if aid and getattr(cim, "ENGINE", "") != "postgres":
+        cim.update_aviz(aid, _lucrare_fields(b, {}))
     return _drawer(request, cod_loc, open_tab="t-avize")
+
+
+def _lucrare_fields(b: dict, current: dict) -> dict:
+    """Câmpurile permise pentru lucrare; la «finalizată» se completează data, la altă stare se șterge."""
+    out = {k: str(b[k]).strip()[:500] for k in ("nr", "data", "lucrare", "observatii") if k in b}
+    stare = str(b.get("stare", current.get("stare", "")) or "")
+    if stare in LUCRARE_STARI:
+        out["stare"] = stare
+        out["data_finalizare"] = (current.get("data_finalizare") or datetime.now().strftime("%d.%m.%Y")) if stare == "finalizata" else ""
+    elif not current.get("stare"):
+        out["stare"] = "planificata"
+    return out
+
+
+@admin.post("/ui/aviz/{aid}/edit", response_class=HTMLResponse)
+async def aviz_edit(request: Request, aid: int):
+    _require_writer(request)
+    cur = cim.get_aviz(aid)
+    if not cur:
+        raise HTTPException(status_code=404, detail="Lucrarea nu există")
+    b = dict(await request.form())
+    fields = _lucrare_fields(b, cur)
+    if getattr(cim, "ENGINE", "") == "postgres":
+        fields = {k: v for k, v in fields.items() if k in ("nr", "data", "lucrare")}
+    cim.update_aviz(aid, fields)
+    cimitir_requests.audit("staff", (_require(request) or {}).get("username", ""), "aviz.update", f"aviz:{aid}", json.dumps(fields, ensure_ascii=False))
+    return _drawer(request, cur["cod_loc"], open_tab="t-avize")
+
+
+_INHUMAT_EDIT = ("nume", "prenume", "cnp", "data_nasterii", "data_deces", "data_inhumare", "data_deshumare", "sex", "cauza_deces",
+                 "profesie", "religie", "ultima_adresa", "observatii", "nr_certificat_deces", "nr_adeverinta_inhumare")
+
+
+@admin.post("/ui/inhumat/{iid}/edit", response_class=HTMLResponse)
+async def inhumat_edit(request: Request, iid: int):
+    _require_writer(request)
+    cur = cim.get_inhumat(iid)
+    if not cur or not cur.get("cod_loc"):
+        raise HTTPException(status_code=404, detail="Înhumatul nu există")
+    b = dict(await request.form())
+    data = {k: (str(b[k]).strip()[:500] if k in b else (cur.get(k) or "")) for k in _INHUMAT_EDIT}
+    cim.save_inhumat(cur["cod_loc"], data, inhumat_id=iid)
+    cimitir_requests.audit("staff", (_require(request) or {}).get("username", ""), "inhumat.update", f"inhumat:{iid}", ",".join(k for k in b if k in _INHUMAT_EDIT))
+    return _drawer(request, cur["cod_loc"], open_tab="t-inhumati")
 
 
 @admin.post("/ui/aviz/{aid}/delete", response_class=HTMLResponse)
@@ -1123,7 +1181,8 @@ def _ai_ready() -> bool:
 logger = logging.getLogger("cimitir.web")
 
 
-def _att_panel(request: Request, etype: str, eid: str, user: dict, error: str = "", status_code: int = 200, notice: str = ""):
+def _att_panel(request: Request, etype: str, eid: str, user: dict, error: str = "", status_code: int = 200, notice: str = "",
+               selected: str = ""):
     ent = attachments.resolve_entity(cim, etype, eid)
     if not ent:
         raise HTTPException(status_code=404, detail="Înregistrarea nu există")
@@ -1143,16 +1202,17 @@ def _att_panel(request: Request, etype: str, eid: str, user: dict, error: str = 
         "request": request, "ent": ent, "items": items, "groups": groups, "error": error, "notice": notice,
         "scan_kinds": scanning.kinds_for(etype), "ai_ready": _ai_ready(),
         "can_write": "edit" in user["rights"], "can_history": "approve" in user["rights"], "doc_types": attachments.DOC_TYPES,
-        "suggested": attachments.SUGGESTED.get(etype, ["alt_document"])},
+        "suggested": attachments.SUGGESTED.get(etype, ["alt_document"]),
+        "selected": selected if selected in attachments.DOC_TYPES else "", "lucrare_foto": attachments.LUCRARE_FOTO},
         status_code=status_code, headers={"Cache-Control": "no-store"})
 
 
 @admin.get("/att/{etype}/{eid}", response_class=HTMLResponse)
-def att_panel(request: Request, etype: str, eid: str):
+def att_panel(request: Request, etype: str, eid: str, doc_type: str = ""):
     user = _require(request)
     if not user:
         raise HTTPException(status_code=401)
-    return _att_panel(request, etype, eid, user)
+    return _att_panel(request, etype, eid, user, selected=doc_type)
 
 
 @admin.post("/att/{etype}/{eid}", response_class=HTMLResponse)
@@ -1161,7 +1221,7 @@ async def att_upload(request: Request, etype: str, eid: str, files: list[UploadF
     user = _require_writer(request)
     if not attachments.resolve_entity(cim, etype, eid):
         raise HTTPException(status_code=404, detail="Înregistrarea nu există")
-    errors = []
+    errors, saved = [], []
     for f in files:
         data = await f.read()
         try:
@@ -1169,9 +1229,14 @@ async def att_upload(request: Request, etype: str, eid: str, files: list[UploadF
                                               title if len(files) == 1 else "", description, user["username"],
                                               source="telefon" if "mobile" in (request.headers.get("user-agent") or "").lower() else "web")
             cimitir_requests.audit("staff", user["username"], "attachment.add", f"{etype}:{eid}", attachments.audit_detail(info))
+            saved.append(info)
         except attachments.AttachmentError as exc:
             errors.append(f"{safe_name_for_msg(f.filename)}: {exc}")
-    return _att_panel(request, etype, eid, user, error=" ".join(errors), status_code=422 if errors else 200)
+    photos = sum(1 for i in saved if str(i.get("mime", "")).startswith("image/"))
+    notice = ("" if not saved else "Fotografie salvată" if len(saved) == 1 and photos == 1 else "Document salvat" if len(saved) == 1
+              else f"{len(saved)} fișiere salvate")
+    return _att_panel(request, etype, eid, user, error=" ".join(errors), status_code=422 if errors else 200, notice=notice,
+                      selected=doc_type)
 
 
 @admin.post("/mobile/token")

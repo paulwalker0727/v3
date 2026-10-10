@@ -381,7 +381,7 @@ def test_scan_permissions_and_ai_unavailable(web, ai):
     c = _client(server, "op")
     p = c.get(f"/admin/att/concesionar/{cid}")
     assert 'data-testid="scan-unavailable"' in p.text and 'data-testid="scan-camera-input"' not in p.text
-    assert 'data-testid="att-camera-input"' in p.text and "Fă fotografie" in p.text            # încărcarea simplă rămâne disponibilă
+    assert 'data-testid="att-camera-input"' in p.text and "Fă poză" in p.text            # încărcarea simplă rămâne disponibilă
     # entități fără extracție AI (contract/chitanță/aviz) nu au formular de scanare, doar arhivare foto
     assert 'data-testid="scan-start-form"' not in c.get(f"/admin/att/contract/{ids['contract']}").text
 
