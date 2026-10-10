@@ -8,19 +8,30 @@
   <form class="att-form" hx-post="/admin/att/{{ ent.type }}/{{ ent.id }}" hx-target="closest .att-panel" hx-swap="outerHTML" hx-encoding="multipart/form-data" data-testid="att-form">
     <div class="att-fields">
       <label>Tip document
-        <select name="doc_type" data-testid="att-doc-type">
-          {% for k in suggested %}<option value="{{ k }}">{{ doc_types[k] }}</option>{% endfor %}
-          <optgroup label="Alte tipuri">{% for k, v in doc_types.items() if k not in suggested and k not in ('poza_loc', 'cerere_doc') %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</optgroup>
+        <select name="doc_type" data-testid="att-doc-type" class="att-doc-type">
+          {% for k in suggested %}<option value="{{ k }}" {{ 'selected' if k == selected }}>{{ doc_types[k] }}</option>{% endfor %}
+          <optgroup label="Alte tipuri">{% for k, v in doc_types.items() if k not in suggested and k not in ('cerere_doc',) %}<option value="{{ k }}" {{ 'selected' if k == selected }}>{{ v }}</option>{% endfor %}</optgroup>
         </select></label>
       <label>Titlu <input name="title" maxlength="200" placeholder="ex: chitanta_123" data-testid="att-title" /></label>
       <label>Descriere / motiv <textarea name="description" rows="2" maxlength="1000" placeholder="Obligatoriu pentru copia actului de identitate" data-testid="att-description"></textarea></label>
     </div>
-    <div class="att-actions">
-      <label class="att-pick att-camera"><i data-lucide="camera"></i> Fă fotografie
-        <input type="file" name="files" accept="image/jpeg,image/png" capture="environment" onchange="if(this.files.length)this.form.requestSubmit()" hidden data-testid="att-camera-input" /></label>
-      <label class="att-pick"><i data-lucide="paperclip"></i> Alege fișier (JPEG, PNG, PDF)
-        <input type="file" name="files" accept="image/jpeg,image/png,application/pdf,.jpg,.jpeg,.png,.pdf" multiple onchange="if(this.files.length)this.form.requestSubmit()" hidden data-testid="att-file-input" /></label>
+    {% if ent.type == 'aviz' %}
+    <div class="cat-chips" data-testid="lucrare-categorii">
+      {% for k, lbl in [('lucrare_inainte','ÎNAINTE'),('lucrare_in_timpul','ÎN TIMPUL LUCRĂRII'),('lucrare_dupa','DUPĂ')] %}
+      <button type="button" class="chip {{ 'active' if selected == k }}" onclick="attPickCat(this,'{{ k }}')" data-testid="cat-{{ k }}">{{ lbl }}</button>
+      {% endfor %}
     </div>
+    {% endif %}
+    <div class="att-actions">
+      <label class="att-pick att-camera" data-testid="att-camera-label"><i data-lucide="camera"></i> Fă poză
+        <input type="file" accept="image/jpeg,image/png" capture="environment" onchange="attStage(this)" hidden data-testid="att-camera-input" /></label>
+      <label class="att-pick" data-testid="att-gallery-label"><i data-lucide="image"></i> Alege din galerie / PDF
+        <input type="file" accept="image/jpeg,image/png,application/pdf,.jpg,.jpeg,.png,.pdf" multiple onchange="attStage(this)" hidden data-testid="att-file-input" /></label>
+    </div>
+    <input type="file" name="files" multiple hidden class="att-stage-input" data-testid="att-stage-input" />
+    <div class="att-preview" data-testid="att-preview" hidden></div>
+    <button type="submit" class="att-send" hidden data-testid="att-upload-btn"><i data-lucide="upload"></i> <span>Încarcă</span></button>
+    <div class="att-progress" data-testid="att-progress" hidden><div class="att-bar"></div><span class="att-pct">0%</span></div>
     <div class="att-phone" data-testid="phone-box" data-etype="{{ ent.type }}" data-eid="{{ ent.id }}">
       <button type="button" class="att-pick" data-testid="phone-btn" onclick="cimMobileQr(this)"><i data-lucide="smartphone"></i> Continuă pe telefon</button>
       <div class="phone-out muted-xs" data-testid="phone-out" hidden style="margin-top:8px"></div>

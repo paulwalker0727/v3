@@ -99,6 +99,16 @@ def password_change_required(user_id: int) -> bool:
     return must_change_flag(user_id) or any(verify_password(p, row["password_hash"]) for p in DEFAULT_PASSWORDS)
 
 
+def default_password_accounts() -> List[str]:
+    """Conturile active care încă folosesc o parolă implicită (verificat pe hash) — înainte de accesul din rețea."""
+    out = []
+    for u in list_users():
+        row = _row("id=?", int(u["id"]))
+        if row and u.get("active", 1) and any(verify_password(p, row["password_hash"]) for p in DEFAULT_PASSWORDS):
+            out.append(u["username"])
+    return out
+
+
 def validate_new_password(new_password: str, old_password: str = "") -> str:
     """Întoarce mesajul de eroare sau '' dacă parola nouă e acceptabilă."""
     if len(new_password or "") < MIN_PASSWORD_LEN:

@@ -139,12 +139,12 @@ function mapSearch(v) { MAP.q = (v || '').trim().toLowerCase(); renderMap(); }
 
 /* ---------- Atașamente (sheet generic) ---------- */
 const ATT_LABELS = { loc: 'Loc de veci', concesionar: 'Concesionar', contract: 'Contract', inhumat: 'Înhumat', plata: 'Plată', aviz: 'Aviz', cerere: 'Cerere' };
-function openAtt(etype, eid) {
+function openAtt(etype, eid, docType) {
   document.getElementById('att-sheet-title').textContent = 'Atașamente · ' + (ATT_LABELS[etype] || etype);
   document.getElementById('att-body').innerHTML = '<div class="drawer-loading">Se încarcă…</div>';
   document.getElementById('att-overlay').classList.add('show');
   document.getElementById('att-sheet').classList.add('show');
-  htmx.ajax('GET', '/admin/att/' + encodeURIComponent(etype) + '/' + encodeURIComponent(eid), { target: '#att-body', swap: 'innerHTML' });
+  htmx.ajax('GET', '/admin/att/' + encodeURIComponent(etype) + '/' + encodeURIComponent(eid) + (docType ? '?doc_type=' + encodeURIComponent(docType) : ''), { target: '#att-body', swap: 'innerHTML' });
 }
 function closeAtt() {
   document.getElementById('att-overlay').classList.remove('show');
@@ -192,3 +192,38 @@ document.body.addEventListener('htmx:afterSwap', labelTables);
     document.addEventListener(n, function (e) { pts.delete(e.pointerId); if (pts.size < 2) lastDist = 0; }, true);
   });
 })();
+
+/* ---------- Încărcare foto: previzualizare înainte de trimitere, mai multe poze, progres ---------- */
+function attStage(input) {
+  const form = input.closest('form'); if (!form || !input.files.length) return;
+  form._dt = form._dt || new DataTransfer();
+  Array.from(input.files).forEach(f => form._dt.items.add(f));
+  input.value = '';
+  attRender(form);
+}
+function attRender(form) {
+  const dt = form._dt || new DataTransfer();
+  form.querySelector('.att-stage-input').files = dt.files;
+  const box = form.querySelector('.att-preview'), send = form.querySelector('.att-send');
+  box.innerHTML = '';
+  Array.from(dt.files).forEach((f, i) => {
+    const item = document.createElement('div'); item.className = 'att-prev-item'; item.dataset.testid = 'att-preview-item';
+    if (f.type.startsWith('image/')) { const im = document.createElement('img'); im.src = URL.createObjectURL(f); im.alt = ''; item.appendChild(im); }
+    else { item.textContent = 'PDF'; }
+    const x = document.createElement('button'); x.type = 'button'; x.className = 'att-prev-x'; x.textContent = '×'; x.setAttribute('aria-label', 'Elimină');
+    x.onclick = () => { const n = new DataTransfer(); Array.from(dt.files).forEach((g, j) => { if (j !== i) n.items.add(g); }); form._dt = n; attRender(form); };
+    item.appendChild(x); box.appendChild(item);
+  });
+  box.hidden = !dt.files.length; send.hidden = !dt.files.length;
+  send.querySelector('span').textContent = dt.files.length === 1 ? 'Încarcă fotografia' : 'Încarcă ' + dt.files.length + ' fișiere';
+}
+function attPickCat(btn, docType) {
+  const form = btn.closest('form'), sel = form.querySelector('.att-doc-type'); if (sel) sel.value = docType;
+  form.querySelectorAll('.cat-chips .chip').forEach(c => c.classList.toggle('active', c === btn));
+}
+document.body.addEventListener('htmx:xhr:progress', function (e) {
+  const form = e.target.closest ? e.target.closest('.att-form') : null; if (!form || !e.detail.lengthComputable) return;
+  const pr = form.querySelector('.att-progress'); if (!pr) return;
+  const pct = Math.round(100 * e.detail.loaded / e.detail.total); pr.hidden = false;
+  pr.querySelector('.att-bar').style.width = pct + '%'; pr.querySelector('.att-pct').textContent = pct + '%';
+});
