@@ -256,9 +256,43 @@ templates.env.filters["lei"] = lei
 # =============================================================================
 # AUTH — cookie session
 # =============================================================================
+REGISTRY_CHANGED_MSG = "Registrul activ s-a schimbat. Reîncarcă pagina și autentifică-te din nou."
+
+
+class RegistryChanged(HTTPException):
+    """Sesiunea a fost emisă pentru alt registru decât cel activ acum (MAIN a comutat): fail closed, 409."""
+
+    def __init__(self):
+        super().__init__(status_code=409, detail=REGISTRY_CHANGED_MSG)
+
+
+def _active_registry_uid() -> Optional[str]:
+    import cimitir_registry
+    b = cimitir_registry.current_binding()
+    return b.cemetery_uid if b is not None else None
+
+
+def _registry_label() -> Optional[str]:
+    """„Organizație — Cimitir” pentru registrul activ (None în afara modului registre)."""
+    import cimitir_registry
+    b = cimitir_registry.current_binding()
+    if b is None:
+        return None
+    try:
+        cat = cimitir_registry.RegistryCatalog(cimitir_config.data_dir())
+        cem = cat.get_cemetery(b.cemetery_uid) or {}
+        org = cat.get_organization(b.organization_uid) or {}
+    except Exception:  # noqa: BLE001
+        return None
+    cem_name = (cem.get("name") or "").strip()
+    org_name = (org.get("display_name") or org.get("official_name") or "").strip()
+    return " — ".join(x for x in (org_name, cem_name) if x) or None
+
+
 def create_token(user: dict, source_id: str) -> str:
     payload = {"sub": str(user["id"]), "username": user["username"], "role": user["role"],
                "source_id": source_id, "type": "access", "mcp": bool(user.get("must_change_password")),
+               "cemetery_uid": _active_registry_uid(),
                "jti": uuid.uuid4().hex, "exp": datetime.now(timezone.utc) + timedelta(hours=12)}
     return jwt.encode(payload, _jwt_secret(), algorithm=JWT_ALG)
 
@@ -299,6 +333,9 @@ def _cookie_secure(request: Request) -> bool:
 
 def _decode_and_bind(token: str, check_revoked: bool = True) -> dict:
     p = jwt.decode(token, _jwt_secret(), algorithms=[JWT_ALG])
+    active = _active_registry_uid()
+    if active is not None and p.get("cemetery_uid") != active:
+        raise RegistryChanged()
     src = cim.get_source(p.get("source_id") or DEFAULT_SOURCE["id"]) or DEFAULT_SOURCE
     cim.bind_source(src)
     if check_revoked and p.get("jti") and cim.get_setting(_revoked_key(p["jti"])):
@@ -313,6 +350,8 @@ def current_user(request: Request) -> Optional[dict]:
         return None
     try:
         p = _decode_and_bind(token)
+    except RegistryChanged:
+        raise
     except Exception:
         return None
     src = cim.current_source() or DEFAULT_SOURCE
@@ -323,7 +362,31 @@ def current_user(request: Request) -> Optional[dict]:
     return {"id": fresh["id"], "username": fresh["username"], "role": fresh["role"], "rights": fresh["rights"],
             "source_id": p.get("source_id"),
             "source": {"id": src["id"], "engine": src["engine"],
-                       "name": cim.get_setting("cimitir_nume") or src.get("name")}}
+                       "name": _registry_label() or cim.get_setting("cimitir_nume") or src.get("name")}}
+
+
+def _soft_user(request: Request) -> Optional[dict]:
+    """Ca current_user, dar o sesiune a altui registru = „nelogat” (pagini de login/logout/parolă)."""
+    try:
+        return current_user(request)
+    except RegistryChanged:
+        return None
+
+
+@app.exception_handler(RegistryChanged)
+async def _registry_changed_handler(request: Request, exc: RegistryChanged):
+    hdr = {"Cache-Control": "no-store"}
+    accept = request.headers.get("accept") or ""
+    if request.url.path.startswith("/api/") or "application/json" in accept or request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"detail": REGISTRY_CHANGED_MSG, "code": "registry_changed"}, status_code=409, headers=hdr)
+    if request.headers.get("hx-request"):
+        return HTMLResponse(f'<div class="registry-changed" data-testid="registry-changed-msg">{REGISTRY_CHANGED_MSG}</div>',
+                            status_code=409, headers={**hdr, "X-Registry-Changed": "1"})
+    return HTMLResponse(
+        "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Registru schimbat</title>"
+        "<body style='font-family:sans-serif;max-width:34em;margin:4em auto;padding:0 1em'>"
+        f"<h2 data-testid='registry-changed-msg'>{REGISTRY_CHANGED_MSG}</h2>"
+        "<p><a href='/admin/access' data-testid='registry-changed-login'>Autentificare</a></p>", status_code=409, headers=hdr)
 
 
 def _ctx(request: Request, user: dict, **extra) -> dict:
@@ -401,7 +464,7 @@ def access_login(request: Request, username: str = Form(...), password: str = Fo
 
 @admin.get("/schimba-parola", response_class=HTMLResponse)
 def password_page(request: Request):
-    user = current_user(request)
+    user = _soft_user(request)
     if not user:
         return _redirect_login()
     return templates.TemplateResponse(request, "schimba_parola.html", {
@@ -411,7 +474,7 @@ def password_page(request: Request):
 @admin.post("/schimba-parola", response_class=HTMLResponse)
 def password_change(request: Request, old_password: str = Form(...), new_password: str = Form(...),
                     confirm_password: str = Form(...)):
-    user = current_user(request)
+    user = _soft_user(request)
     if not user:
         return _redirect_login()
     error = "Parolele noi nu coincid." if new_password != confirm_password else cim_auth.change_own_password(
@@ -439,7 +502,7 @@ def _token_needs_change(request: Request) -> bool:
 def _access_ctx(request, **extra) -> dict:
     sources = [{"id": s["id"], "name": s["name"], "engine": s["engine"], "available": True}
                for s in cim.list_sources()]
-    admin_user = current_user(request)
+    admin_user = _soft_user(request)
     ctx = {"request": request, "sources": sources,
            "is_admin": bool(admin_user and "manage_users" in admin_user["rights"])}
     ctx.update(extra)
@@ -504,7 +567,7 @@ def logout_get(request: Request):
 def logout(request: Request):
     """Deconectare: revocă sesiunea (jti) server-side și șterge cookie-ul. CSRF: request_guard respinge POST din altă origine (403)."""
     token = request.cookies.get(COOKIE)
-    who = current_user(request) if token else None
+    who = _soft_user(request) if token else None
     revoked = revoke_token(token) if token else False
     if who:
         cimitir_requests.audit("staff", who["username"], "logout", "", "sesiune revocată" if revoked else "")
