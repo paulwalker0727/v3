@@ -27,12 +27,13 @@
       <form class="mini-card" hx-post="/admin/ui/loc/{{ cod }}/edit" hx-target="#drawer-body" hx-swap="innerHTML">
         <div class="mini-head"><h4>Identificare & poziție</h4><button type="submit" class="btn-sm" data-testid="save-loc-btn"><i data-lucide="save"></i> Salvează</button></div>
         <div class="grid2">
-          {% for f in ['sector','parcela','rand','numar','tip','categorie','capacitate','suprafata','nr_vechi','numar_cf'] %}
+          {% for f in ['sector','parcela','rand','numar','suprafata','nr_vechi','numar_cf'] %}
           <div><label>{{ f|replace('_',' ')|capitalize }}</label><input name="{{ f }}" value="{{ loc[f] if loc[f] is not none else '' }}" data-testid="field-{{ f }}" /></div>
           {% endfor %}
-          <div><label>Stare</label><input name="stare" value="{{ loc.stare or '' }}" /></div>
-          <div><label>Disponibilitate</label><input name="disponibilitate" value="{{ loc.disponibilitate or '' }}" /></div>
-          <div class="col2"><label>Observații</label><input name="observatii" value="{{ loc.observatii or '' }}" /></div>
+          {% for f in ['tip','categorie','capacitate','stare','disponibilitate'] %}
+          <div><label>{{ f|capitalize }}</label><select name="{{ f }}" data-testid="field-{{ f }}">{% for o in d.loc_options[f] %}<option value="{{ o }}" {{ 'selected' if o == (loc[f] or '')|string|trim }}>{{ o or '—' }}</option>{% endfor %}</select></div>
+          {% endfor %}
+          <div class="col2"><label>Observații</label><textarea name="observatii" rows="3" data-testid="field-observatii">{{ loc.observatii or '' }}</textarea></div>
         </div>
       </form>
       <div class="mini-card">

@@ -58,7 +58,7 @@
   <div class="main">
     <header class="topbar">
       <button class="menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')"><i data-lucide="menu"></i></button>
-      <span class="db-pill"><i data-lucide="hard-drive"></i> {{ user.source.name if user else 'Bază de date' }}</span>
+      <span class="db-pill registry-pill" data-testid="active-registry-name" title="{{ user.source.name if user else '' }}"><i data-lucide="hard-drive"></i> <span class="registry-name">{{ user.source.name if user else 'Bază de date' }}</span></span>
       {% if badges.expira > 0 %}
       <span class="alert-pill" data-testid="expiring-alert"><i data-lucide="bell"></i> {{ badges.expira }} contracte expiră</span>
       {% endif %}

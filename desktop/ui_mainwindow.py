@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QGraphicsPolygonItem
 
 from app_logging import get_logger
 import database as db
+from cimitir_loc_options import loc_observatii
 
 logger = get_logger(__name__)
 
@@ -228,6 +229,7 @@ class CemeteryUI(QMainWindow):
             ):
                 if k in loc_full and loc_full[k] is not None:
                     merged[k] = loc_full[k]
+            merged["observatii"] = loc_observatii(loc_full)
         except Exception:
             pass
 

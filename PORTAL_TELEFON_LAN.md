@@ -29,3 +29,13 @@ Metadatele în tabela `documents` (+ `amenajari_avize` cu coloanele aditive `sta
 fișierele în `media/` al registrului activ (`registries/<cemetery_uid>/media/`). Portalul urmează registrul activ din MAIN; fără scurgeri între registre.
 
 Teste: `backend/tests/test_mobile_local_portal.py`.
+
+## Registru vizibil și sesiune legată de registru
+- Bara de sus a portalului afișează `Organizație — Cimitir` (registrul activ din MAIN), inclusiv pe telefon.
+- La autentificare sesiunea primește `cemetery_uid` (registrul activ). La fiecare cerere se compară cu registrul activ curent;
+  dacă MAIN a comutat registrul, cererea este refuzată cu **409** și mesajul „Registrul activ s-a schimbat. Reîncarcă pagina și autentifică-te din nou.”
+  Sesiunea nu este mutată automat și nu se scrie nimic în noul registru (nici dacă același utilizator există în ambele registre).
+
+## Detalii loc identice în MAIN și portal
+Listele Capacitate / Tip / Stare / Categorie / Disponibilitate vin din `shared/cimitir_loc_options.py` (folosit de MAIN și de portal).
+Valorile istorice din afara listei sunt păstrate. Observațiile: `extra_data.observatii` (canonic), oglindite în coloana `observatii`.

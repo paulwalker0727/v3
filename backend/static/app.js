@@ -79,7 +79,8 @@ let MAP = { data: null, vb: { x: 0, y: 0, w: 100, h: 100 }, home: null, drag: nu
 async function initMap() {
   const svg = document.getElementById('map-svg');
   try {
-    const res = await fetch('/api/admin/map.json');
+    const res = await fetch('/api/admin/map.json', { headers: { Accept: 'application/json' } });
+    if (res.status === 409) { const j = await res.json().catch(() => ({})); showRegistryChanged(j.detail); return; }
     MAP.data = await res.json();
   } catch (e) { svg.innerHTML = '<text x="10" y="20">Eroare la încărcarea hărții</text>'; return; }
   const all = [].concat(MAP.data.plots || [], MAP.data.sectors || []);
@@ -151,6 +152,20 @@ function closeAtt() {
   document.getElementById('att-sheet').classList.remove('show');
 }
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeAtt(); });
+/* registrul activ s-a schimbat în MAIN (409): mesaj clar, fără a continua în alt registru */
+function showRegistryChanged(msg) {
+  if (document.querySelector('[data-testid="registry-changed-banner"]')) return;
+  const b = document.createElement('div');
+  b.className = 'registry-banner';
+  b.setAttribute('data-testid', 'registry-changed-banner');
+  b.innerHTML = '<span></span><a href="/admin/access">Autentificare</a>';
+  b.firstChild.textContent = msg || 'Registrul activ s-a schimbat. Reîncarcă pagina și autentifică-te din nou.';
+  document.body.appendChild(b);
+}
+document.body.addEventListener('htmx:responseError', function (e) {
+  const x = e.detail.xhr;
+  if (x && x.status === 409 && x.getResponseHeader('X-Registry-Changed')) showRegistryChanged(x.responseText.replace(/<[^>]+>/g, ''));
+});
 /* erorile de validare (422) trebuie afișate în panou, nu ignorate de htmx */
 document.body.addEventListener('htmx:beforeSwap', function (e) {
   if (e.detail.xhr && e.detail.xhr.status === 422) { e.detail.shouldSwap = true; e.detail.isError = false; }
