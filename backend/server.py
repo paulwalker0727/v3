@@ -77,6 +77,8 @@ for _lg in ("psycopg.pool", "psycopg"):
 
 
 import store as cim          # noqa: E402
+from cimitir_loc_options import (LOC_SELECT_FIELDS, is_allowed_value, loc_observatii,  # noqa: E402
+                                 observatii_metadata, options_for)
 import auth as cim_auth      # noqa: E402
 import sync_api               # noqa: E402
 import entity_sync_api        # noqa: E402
@@ -888,7 +890,9 @@ def _loc_detail(cod_loc: str):
         av["foto"], av["foto_total"] = counts, total
     loc_photos = _docs(cim.list_documents("loc", cod_loc, "poza_loc"))
     loc["status"] = plot_status(loc, _expired_cods())
-    return {"loc": loc, "concesionar": conces, "contracte": contracte, "inhumati": inhumati_l,
+    loc["observatii"] = loc_observatii(loc)
+    loc_options = {f: options_for(f, loc.get(f)) for f in LOC_SELECT_FIELDS}
+    return {"loc": loc, "loc_options": loc_options, "concesionar": conces, "contracte": contracte, "inhumati": inhumati_l,
             "avize": avize, "lucrari_extended": getattr(cim, "ENGINE", "") != "postgres", "stari": LUCRARE_STARI, "loc_photos": loc_photos,
             "plati": {"total": cim.total_plati(cod_loc), "items": cim.list_plati(cod_loc)}}
 
@@ -920,7 +924,17 @@ def loc_drawer(request: Request, cod_loc: str):
 async def loc_edit(request: Request, cod_loc: str):
     _require_writer(request)
     form = dict(await request.form())
+    form.pop("extra_data", None)
+    current = cim.load_loc_by_cod(cod_loc) or {}
+    bad = [f for f in LOC_SELECT_FIELDS if f in form and not is_allowed_value(f, form[f], current.get(f))]
+    if bad:
+        return _drawer(request, cod_loc, error=f"Valoare nepermisă pentru: {', '.join(bad)}.", status_code=400)
+    if "observatii" in form:  # aceeași scriere ca în MAIN (EditorActions.save_extra_data): extra_data + loc_extra + coloană
+        merged = {**current, "extra_data": {**(current.get("extra_data") or {}), **(cim.load_extra_data(cod_loc) or {})}}
+        form.update(observatii_metadata(merged, str(form["observatii"])))
     cim.save_loc_metadata(cod_loc, form)
+    if "observatii" in form:
+        cim.save_extra_data(cod_loc, form["extra_data"])
     return _drawer(request, cod_loc)
 
 

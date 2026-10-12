@@ -7,6 +7,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from cimitir_loc_options import loc_observatii, options_for
+
 
 # ============================================================
 # DIALOG EDITARE LOC
@@ -45,19 +47,19 @@ class EditLocDialog(QDialog):
 
         # Combo-uri
         self.cmb_capacitate = QComboBox()
-        self.cmb_capacitate.addItems(["", "Simplu", "Dublu", "Cvadrupul"])
+        self.cmb_capacitate.addItems(options_for("capacitate"))
 
         self.cmb_disponibilitate = QComboBox()
-        self.cmb_disponibilitate.addItems(["", "Ocupat", "Liber", "Posibil liber"])
+        self.cmb_disponibilitate.addItems(options_for("disponibilitate"))
 
         self.cmb_tip = QComboBox()
-        self.cmb_tip.addItems(["", "Cavou", "Cruce", "Împrejmuire", "Mormânt"])
+        self.cmb_tip.addItems(options_for("tip"))
 
         self.cmb_stare = QComboBox()
-        self.cmb_stare.addItems(["", "Foarte bună", "Bună", "Mai puțin bună"])
+        self.cmb_stare.addItems(options_for("stare"))
 
         self.cmb_categorie = QComboBox()
-        self.cmb_categorie.addItems(["", "Categoria I", "Categoria II", "Categoria III"])
+        self.cmb_categorie.addItems(options_for("categorie"))
 
         # Alte câmpuri
         self.txt_suprafata = QLineEdit()
@@ -117,6 +119,16 @@ class EditLocDialog(QDialog):
             numar = digits[:2].rjust(2, "0") if digits else ""
         return parcela, rand, numar
 
+    @staticmethod
+    def _set_combo(cmb, field: str, value: str):
+        """Selectează valoarea; una istorică (în afara listei) este adăugată ca să nu se piardă la salvare."""
+        value = str(value or "").strip()
+        if value and cmb.findText(value) < 0:
+            for opt in options_for(field, value):
+                if cmb.findText(opt) < 0:
+                    cmb.addItem(opt)
+        cmb.setCurrentText(value)
+
     def _load_or_parse(self):
         data: Dict[str, Any] = {}
         if self.actions:
@@ -134,26 +146,26 @@ class EditLocDialog(QDialog):
             self.txt_numar.setText(str(data.get("numar", "") or ""))
 
             cap = data.get("capacitate", "") or ""
-            self.cmb_capacitate.setCurrentText(cap)
+            self._set_combo(self.cmb_capacitate, "capacitate", cap)
 
             disp = data.get("disponibilitate", "") or ""
-            self.cmb_disponibilitate.setCurrentText(disp)
+            self._set_combo(self.cmb_disponibilitate, "disponibilitate", disp)
 
             tip = data.get("tip", "") or ""
-            self.cmb_tip.setCurrentText(tip)
+            self._set_combo(self.cmb_tip, "tip", tip)
 
             stare = data.get("stare", "") or ""
-            self.cmb_stare.setCurrentText(stare)
+            self._set_combo(self.cmb_stare, "stare", stare)
 
             cat = data.get("categorie", "") or ""
-            self.cmb_categorie.setCurrentText(cat)
+            self._set_combo(self.cmb_categorie, "categorie", cat)
 
             self.txt_suprafata.setText(str(data.get("suprafata", "") or ""))
             self.txt_nr_vechi.setText(str(data.get("nr_vechi", "") or ""))
             self.txt_numar_cf.setText(str(data.get("numar_cf", "") or ""))
 
-            extra = data.get("extra_data", {}) or {}
-            self.txt_observatii.setPlainText(str(extra.get("observatii", "") or ""))
+            self._loaded_loc = data
+            self.txt_observatii.setPlainText(loc_observatii(data))
             return
 
         parcela, rand, numar = self._parse_cod_loc()
@@ -182,6 +194,7 @@ class EditLocDialog(QDialog):
             "numar_cf": self.txt_numar_cf.text().strip(),
         }
         extra = {"observatii": self.txt_observatii.toPlainText().strip()}
+        metadata["observatii"] = extra["observatii"]
 
         try:
             self.actions.save_loc_metadata(self.cod_loc, metadata)
@@ -224,10 +237,10 @@ class LocuriWindow(QDialog):
 
         # filtre
         self.filter_capacitate = QComboBox()
-        self.filter_capacitate.addItems(["", "Simplu", "Dublu", "Cvadrupul"])
+        self.filter_capacitate.addItems(options_for("capacitate"))
 
         self.filter_disponibilitate = QComboBox()
-        self.filter_disponibilitate.addItems(["", "Ocupat", "Liber", "Posibil liber"])
+        self.filter_disponibilitate.addItems(options_for("disponibilitate"))
 
         self.filter_tip = QComboBox()
         self.filter_tip.addItems(["", "Cavou", "Cruce", "Împrejmuire", "Mormânt"])
@@ -446,7 +459,7 @@ class LocuriWindow(QDialog):
             self.table.setItem(row_idx, 13, QTableWidgetItem(str(val_full("numar_cf", r["numar_cf"]))))
 
             extra_dict = full.get("extra_data", {}) if isinstance(full.get("extra_data", {}), dict) else {}
-            preview = extra_dict.get("observatii") or extra_dict.get("nume") or ""
+            preview = loc_observatii(full) or extra_dict.get("nume") or ""
             self.table.setItem(row_idx, 14, QTableWidgetItem(str(preview)))
 
         self.table.resizeColumnsToContents()

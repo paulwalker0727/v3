@@ -269,7 +269,7 @@ def load_loc_by_cod(cod_loc: str) -> Optional[Dict[str, Any]]:
     with _db() as conn:
         row = conn.execute(
             "SELECT id, cod_loc, sector, parcela, rand, numar, capacitate, disponibilitate, tip, stare, categorie, "
-            "suprafata, nr_vechi, numar_cf, points, color, extra_data, "
+            "suprafata, nr_vechi, numar_cf, points, color, extra_data, observatii, "
             "(COALESCE(are_inhumari, 0) > 0 OR EXISTS (SELECT 1 FROM inhumati i WHERE i.id_loc = locuri_de_veci.id))::int "
             "AS are_inhumari FROM locuri_de_veci WHERE cod_loc = ? AND cemetery_uid = app_default_cemetery_uid()", (cod_loc,)).fetchone()
         if not row:

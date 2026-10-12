@@ -518,7 +518,7 @@ def load_loc_by_cod(cod_loc: str) -> Optional[Dict[str, Any]]:
         row = conn.execute("""
             SELECT id, cod_loc, sector, parcela, rand, numar, capacitate,
                    disponibilitate, tip, stare, categorie, suprafata,
-                   nr_vechi, numar_cf, points, color, extra_data, are_inhumari
+                   nr_vechi, numar_cf, points, color, extra_data, are_inhumari, observatii
             FROM locuri_de_veci WHERE cod_loc = ?
         """, (cod_loc,)).fetchone()
         if not row:
@@ -538,6 +538,7 @@ def load_loc_by_cod(cod_loc: str) -> Optional[Dict[str, Any]]:
             "tip": row["tip"], "stare": row["stare"], "categorie": row["categorie"],
             "suprafata": row["suprafata"], "nr_vechi": row["nr_vechi"], "numar_cf": row["numar_cf"],
             "points": points, "color": row["color"], "extra_data": extra, "are_inhumari": row["are_inhumari"],
+            "observatii": row["observatii"],
         }
     finally:
         conn.close()

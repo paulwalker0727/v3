@@ -12,6 +12,8 @@ o poate suprascrie manual dacă dorește.
 from typing import List, Tuple, Optional
 
 import os
+
+from cimitir_loc_options import options_for
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QFont, QDesktopServices
 from PySide6.QtWidgets import (
@@ -110,19 +112,19 @@ class AssignPlotCodeWindow(QDialog):
         form_char = QFormLayout()
 
         self.cmb_capacitate = QComboBox()
-        self.cmb_capacitate.addItems(["", "Simplu", "Dublu", "Cvadruplu"])
+        self.cmb_capacitate.addItems(options_for("capacitate"))
 
         self.cmb_disponibilitate = QComboBox()
-        self.cmb_disponibilitate.addItems(["", "Ocupat", "Liber", "Posibil liber"])
+        self.cmb_disponibilitate.addItems(options_for("disponibilitate"))
 
         self.cmb_tip = QComboBox()
-        self.cmb_tip.addItems(["", "Cavou", "Cruce", "Împrejmuire", "Mormânt"])
+        self.cmb_tip.addItems(options_for("tip"))
 
         self.cmb_stare = QComboBox()
-        self.cmb_stare.addItems(["", "Foarte bună", "Bună", "Mai puțin bună"])
+        self.cmb_stare.addItems(options_for("stare"))
 
         self.cmb_categorie = QComboBox()
-        self.cmb_categorie.addItems(["", "Categoria I", "Categoria II", "Categoria III"])
+        self.cmb_categorie.addItems(options_for("categorie"))
 
         form_char.addRow("Capacitate:", self.cmb_capacitate)
         form_char.addRow("Disponibilitate:", self.cmb_disponibilitate)
