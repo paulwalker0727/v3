@@ -24,6 +24,8 @@ class EditorTools:
     # distanța (în pixeli, aprox) sub care un click pe primul punct
     # e considerat „snap to close"
     SNAP_PIXELS = 12
+    # unelte auxiliare (repetitive): ESC / ✋ ies în select
+    AUX_MODES = ("calibrate", "ruler", "draw_guide_h", "draw_guide_v", "draw_guide_line", "draw_row")
 
     def __init__(self, window):
         self.w = window
@@ -54,9 +56,13 @@ class EditorTools:
             self.w.act_delete_sector.setChecked(mode == "delete_sector")
         except Exception:
             pass
+        try:
+            self.w.act_pan.setChecked(mode == "select")
+        except Exception:
+            pass
 
         # cursor
-        if mode in ("draw", "draw_sector"):
+        if mode in ("draw", "draw_sector") or mode in self.AUX_MODES:
             cursor = Qt.CrossCursor
         elif mode in ("delete", "delete_sector"):
             cursor = Qt.PointingHandCursor
@@ -74,11 +80,38 @@ class EditorTools:
             "delete": "🗑  Șterge LOC — click pe un loc pentru a-l șterge",
             "draw_sector": "🏷  Desenează SECTOR — click pentru puncte, dublu-click pentru finalizare",
             "delete_sector": "🗑  Șterge SECTOR — click pe un sector pentru a-l șterge",
+            "draw_guide_h": "─  Ghidaj orizontal — click pentru a plasa. ESC sau ✋ = ieșire.",
+            "draw_guide_v": "│  Ghidaj vertical — click pentru a plasa. ESC sau ✋ = ieșire.",
+            "draw_guide_line": "╱  Ghidaj linie — click START → click STOP. ESC sau ✋ = ieșire.",
         }
         try:
             self.w.statusBar().showMessage(messages.get(mode, ""))
         except Exception:
             pass
+
+    def exit_draw_mode(self, message: str = ""):
+        """Ieșire completă din desenare → unealta activă = select (mână)."""
+        self.w.current_points = []
+        try:
+            self.w.map_view.clear_preview()
+        except Exception:
+            pass
+        adv = getattr(self.w, "adv", None)
+        if adv is not None:
+            try:
+                adv._clear_temp_line()
+            except Exception:
+                pass
+            adv._calib_pts = []
+            if hasattr(adv, "_pending_row_order"):
+                adv._pending_row_order = None
+        self.w.map_view._middle_panning = False
+        self.set_tool_mode("select")
+        if message:
+            try:
+                self.w.statusBar().showMessage(message)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # LIVE INFO IN STATUS BAR
@@ -231,20 +264,18 @@ class EditorTools:
     def handle_key(self, event) -> bool:
         """Returnează True dacă tasta a fost consumată."""
         mode = self.w.modes.current_mode
+        key = event.key()
+        if mode in self.AUX_MODES and mode != "draw_row":
+            if key == Qt.Key_Escape:
+                self.exit_draw_mode("Unealtă anulată (ESC)")
+                return True
+            return False
         if mode not in ("draw", "draw_sector", "draw_row"):
             return False
 
-        key = event.key()
-
         # ESC → anulează desenul curent
         if key == Qt.Key_Escape:
-            if self.w.current_points:
-                self.w.current_points = []
-                self.w.map_view.clear_preview()
-                try:
-                    self.w.statusBar().showMessage("Desen anulat (ESC)")
-                except Exception:
-                    pass
+            self.exit_draw_mode("Desen anulat (ESC)")
             return True
 
         # BACKSPACE → șterge ultimul punct
