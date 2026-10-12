@@ -1,13 +1,18 @@
 -- 016: 6B — fix pentru code review (HIGH): (1) separarea drepturilor delete/cleanup, (2) cursa cleanup vs upload/finalizare. 015 rămâne NESCHIMBATĂ.
--- (1) cleanup = operație de serviciu, ÎNGUSTĂ: doar funcții SECURITY DEFINER executabile de rolul intern cimitir_storage_cleanup (NOLOGIN); cimitir_cp_app pierde DELETE pe tabel
---     și nu poate rula funcțiile. Ștergerea normală a unui owner rămâne UPDATE ... -> DELETED sub RLS (cp_tenant), fără DELETE SQL.
+-- (1) cleanup = operație de serviciu, ÎNGUSTĂ. Două roluri interne, ambele NOLOGIN/NOSUPERUSER/NOBYPASSRLS/NOCREATEDB/NOCREATEROLE:
+--       cimitir_storage_cleanup       = OWNER-ul funcțiilor SECURITY DEFINER de cleanup; are doar drepturile minime pe tabele (fără DELETE nicăieri) și nu are niciun login/membru în afara rolului migrației;
+--       cimitir_storage_cleanup_exec  = „cheia” backend-ului: doar EXECUTE pe cele 4 funcții; login-ul worker-ului de cleanup se creează de operator IN ROLE acesta (parola în afara Git).
+--     cimitir_cp_app pierde DELETE pe cp_storage_objects și nu poate rula funcțiile. Ștergerea normală a unui owner rămâne UPDATE ... -> DELETED sub RLS (cp_tenant).
 -- (2) automatul de stări e impus de DB (trigger + UPDATE condiționat pe rând blocat): STAGING(PENDING/UPLOADED/FAILED) -> READY și STAGING -> CLEANING -> DELETED
---     sunt mutual exclusive; CLEANING nu poate ajunge niciodată READY, iar READY/IMPORTED nu pot fi revendicate.
--- Schema-agnostic (current_schema()), idempotent. Rolul de login al worker-ului de cleanup se creează de operator (IN ROLE cimitir_storage_cleanup), parola nu e în Git.
+--     sunt mutual exclusive; CLEANING nu poate ajunge niciodată READY, READY/IMPORTED nu pot fi revendicate/șterse de rolul cleanup (nici prin RLS, nici prin trigger).
+-- Schema-agnostic (current_schema()), idempotent. Doar valori/identificatori constanți în SQL dinamic (format %I / %s peste liste fixe).
 
 DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cimitir_storage_cleanup') THEN
         CREATE ROLE cimitir_storage_cleanup NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cimitir_storage_cleanup_exec') THEN
+        CREATE ROLE cimitir_storage_cleanup_exec NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB;
     END IF;
 EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
 END $$;
@@ -40,14 +45,18 @@ CREATE INDEX IF NOT EXISTS cp_storage_objects_cleaning_idx ON cp_storage_objects
 REVOKE DELETE ON cp_storage_objects FROM cimitir_cp_app;
 
 -- ---------------------------------------------------------------------------------------------------- automatul de stări, impus de DB
--- Tranzițiile care implică CLEANING (și crearea de rânduri non-PENDING) sunt permise doar codului care rulează ca PROPRIETARUL tabelului,
+-- Tranzițiile care implică CLEANING (și crearea de rânduri non-PENDING) sunt permise doar codului care rulează ca PROPRIETARUL tabelului sau ca rolul cleanup,
 -- adică funcțiile SECURITY DEFINER de mai jos; cimitir_cp_app (non-proprietar) nu le poate face. Nimeni nu poate trece CLEANING -> READY/IMPORTED sau READY/IMPORTED -> CLEANING.
 CREATE OR REPLACE FUNCTION cp_storage_objects_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     v_ok boolean;
-    v_owner boolean := current_user = (SELECT pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.oid = TG_RELID);
+    v_cleanup boolean := current_user = 'cimitir_storage_cleanup';
+    v_owner boolean := v_cleanup OR current_user = (SELECT pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.oid = TG_RELID);
 BEGIN
     IF TG_OP = 'INSERT' THEN
+        IF v_cleanup AND NEW.status <> 'CLEANING' THEN
+            RAISE EXCEPTION 'cp_storage_objects: rolul cleanup inserează doar rânduri CLEANING' USING ERRCODE = 'check_violation';
+        END IF;
         IF NOT v_owner AND (NEW.status <> 'PENDING' OR NEW.cleanup_token IS NOT NULL OR NEW.cleanup_prev_status IS NOT NULL OR NEW.cleanup_claimed_at IS NOT NULL) THEN
             RAISE EXCEPTION 'cp_storage_objects: rând nou doar PENDING' USING ERRCODE = 'check_violation';
         END IF;
@@ -58,6 +67,14 @@ BEGIN
     END IF;
     IF NEW.status = 'CLEANING' AND OLD.status IN ('READY', 'IMPORTED') THEN
         RAISE EXCEPTION 'cp_storage_objects: % nu poate fi revendicat de cleanup', OLD.status USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_cleanup THEN      -- rolul cleanup: doar STAGING/DELETED -> CLEANING și CLEANING -> DELETED / starea de dinainte; identitatea rândului e imutabilă
+        IF NOT ((NEW.status = 'CLEANING' AND OLD.status IN ('PENDING', 'UPLOADED', 'FAILED', 'DELETED', 'CLEANING'))
+                OR (OLD.status = 'CLEANING' AND NEW.status IN ('DELETED', 'PENDING', 'UPLOADED', 'FAILED')))
+           OR (NEW.cemetery_uid, NEW.uid, NEW.organization_uid, NEW.storage_path, NEW.sha256, NEW.size, NEW.mime, NEW.kind, NEW.filename)
+              IS DISTINCT FROM (OLD.cemetery_uid, OLD.uid, OLD.organization_uid, OLD.storage_path, OLD.sha256, OLD.size, OLD.mime, OLD.kind, OLD.filename) THEN
+            RAISE EXCEPTION 'cp_storage_objects: tranziția % -> % nu e permisă rolului cleanup', OLD.status, NEW.status USING ERRCODE = 'check_violation';
+        END IF;
     END IF;
     IF NOT v_owner THEN
         IF (NEW.cemetery_uid, NEW.uid, NEW.organization_uid, NEW.storage_path, NEW.sha256, NEW.size, NEW.mime, NEW.kind, NEW.filename)
@@ -82,6 +99,35 @@ BEGIN
 END $$;
 DROP TRIGGER IF EXISTS cp_storage_objects_guard ON cp_storage_objects;
 CREATE TRIGGER cp_storage_objects_guard BEFORE INSERT OR UPDATE ON cp_storage_objects FOR EACH ROW EXECUTE FUNCTION cp_storage_objects_guard();
+
+-- ---------------------------------------------------------------------------------------------------- drepturi minime ale rolului cleanup (owner al funcțiilor) + politici RLS înguste
+DO $$ BEGIN
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO cimitir_storage_cleanup', current_schema());
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO cimitir_storage_cleanup_exec', current_schema());
+END $$;
+GRANT SELECT, INSERT ON cp_storage_objects TO cimitir_storage_cleanup;
+GRANT UPDATE (status, error, updated_at, cleanup_token, cleanup_prev_status, cleanup_claimed_at) ON cp_storage_objects TO cimitir_storage_cleanup;
+GRANT SELECT (uid, organization_uid) ON cemeteries TO cimitir_storage_cleanup;
+DROP POLICY IF EXISTS cp_storage_cleanup_select ON cp_storage_objects;
+CREATE POLICY cp_storage_cleanup_select ON cp_storage_objects FOR SELECT TO cimitir_storage_cleanup USING (true);
+DROP POLICY IF EXISTS cp_storage_cleanup_insert ON cp_storage_objects;
+CREATE POLICY cp_storage_cleanup_insert ON cp_storage_objects FOR INSERT TO cimitir_storage_cleanup WITH CHECK (status = 'CLEANING');
+DROP POLICY IF EXISTS cp_storage_cleanup_update ON cp_storage_objects;
+CREATE POLICY cp_storage_cleanup_update ON cp_storage_objects FOR UPDATE TO cimitir_storage_cleanup
+    USING (status NOT IN ('READY', 'IMPORTED')) WITH CHECK (status IN ('CLEANING', 'DELETED', 'PENDING', 'UPLOADED', 'FAILED'));
+DROP POLICY IF EXISTS cp_storage_cleanup_cemeteries ON cemeteries;
+CREATE POLICY cp_storage_cleanup_cemeteries ON cemeteries FOR SELECT TO cimitir_storage_cleanup USING (true);
+
+-- migrația (rolul curent) trebuie să poată face ALTER ... OWNER TO cimitir_storage_cleanup (și să reia CREATE OR REPLACE la o rulare ulterioară)
+DO $$ BEGIN
+    IF NOT pg_has_role(current_user, 'cimitir_storage_cleanup', 'USAGE') OR NOT pg_has_role(current_user, 'cimitir_storage_cleanup', 'MEMBER') THEN
+        IF current_setting('server_version_num')::int >= 160000 THEN
+            EXECUTE 'GRANT cimitir_storage_cleanup TO CURRENT_USER WITH INHERIT TRUE, SET TRUE';
+        ELSE
+            EXECUTE 'GRANT cimitir_storage_cleanup TO CURRENT_USER';
+        END IF;
+    END IF;
+END $$;
 
 -- ---------------------------------------------------------------------------------------------------- funcții înguste de cleanup (SECURITY DEFINER, search_path fixat mai jos)
 -- apărarea de tenant: perechea (organizație, cimitir) trebuie să existe exact așa; calea Storage se construiește AICI, nu vine de la apelant.
@@ -160,9 +206,11 @@ BEGIN
     RETURN FOUND;
 END $$;
 
+-- ALTER FUNCTION ... OWNER TO cere CREATE pe schemă pentru noul owner: acordat DOAR pe durata acestui bloc, apoi retras
 DO $$
 DECLARE f TEXT; r TEXT;
 BEGIN
+    EXECUTE format('GRANT CREATE ON SCHEMA %I TO cimitir_storage_cleanup', current_schema());
     FOREACH f IN ARRAY ARRAY['cp_storage_cleanup_scope(uuid, uuid)',
                              'cp_storage_cleanup_claim(uuid, uuid, uuid, double precision, integer, double precision)',
                              'cp_storage_cleanup_claim_object(uuid, uuid, text, uuid, double precision, double precision)',
@@ -178,9 +226,10 @@ BEGIN
                 EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %I', f, r);
             END IF;
         END LOOP;
+        EXECUTE format('ALTER FUNCTION %s OWNER TO cimitir_storage_cleanup', f);
         IF f NOT LIKE 'cp_storage_cleanup_scope%' THEN
-            EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO cimitir_storage_cleanup', f);
+            EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO cimitir_storage_cleanup_exec', f);
         END IF;
     END LOOP;
-    EXECUTE format('GRANT USAGE ON SCHEMA %I TO cimitir_storage_cleanup', current_schema());
+    EXECUTE format('REVOKE CREATE ON SCHEMA %I FROM cimitir_storage_cleanup', current_schema());
 END $$;

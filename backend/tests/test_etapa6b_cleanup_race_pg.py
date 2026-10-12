@@ -52,7 +52,7 @@ def pgdb():
     with psycopg.connect(_dsn(name), autocommit=True) as c:
         for f in sorted(MIG.glob("*.sql")):
             c.execute(f.read_text(encoding="utf-8"))
-        c.execute(f"GRANT cimitir_storage_cleanup TO {WORKER}")
+        c.execute(f"GRANT cimitir_storage_cleanup_exec TO {WORKER}")
     yield {"name": name, "admin": _dsn(name), "app": _dsn(name, "cimitir_cp_app"), "worker": _dsn(name, WORKER)}
     with psycopg.connect(ADMIN, autocommit=True) as c:
         c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
@@ -165,13 +165,51 @@ def test_privileges_cp_app_has_no_delete_and_cannot_call_cleanup(world):
         assert len(oids) == 4
         for oid in oids:
             assert not c.execute("SELECT has_function_privilege('cimitir_cp_app', %s, 'EXECUTE')", (oid,)).fetchone()[0]
-            assert c.execute("SELECT has_function_privilege('cimitir_storage_cleanup', %s, 'EXECUTE')", (oid,)).fetchone()[0]
+            assert c.execute("SELECT has_function_privilege('cimitir_storage_cleanup_exec', %s, 'EXECUTE')", (oid,)).fetchone()[0]
             assert not c.execute("SELECT has_function_privilege('public', %s, 'EXECUTE')", (oid,)).fetchone()[0]
-        assert c.execute("SELECT rolcanlogin, rolsuper, rolbypassrls FROM pg_roles WHERE rolname='cimitir_storage_cleanup'").fetchone() == (False, False, False)
+        assert c.execute("SELECT count(*) FROM pg_proc WHERE proname LIKE 'cp_storage_cleanup_%%' AND pg_get_userbyid(proowner) = 'cimitir_storage_cleanup' AND prosecdef").fetchone()[0] == 5
+        for role in ("cimitir_storage_cleanup", "cimitir_storage_cleanup_exec"):
+            assert c.execute("SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname=%s", (role,)).fetchone() == (False,) * 5
         assert not c.execute("SELECT has_table_privilege('cimitir_cp_app','cp_storage_objects','DELETE')").fetchone()[0]
+        assert not c.execute("SELECT bool_or(has_table_privilege('cimitir_storage_cleanup', c.oid, 'DELETE') OR has_table_privilege('cimitir_storage_cleanup', c.oid, 'TRUNCATE')) "
+                             "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'").fetchone()[0]       # niciun DELETE/TRUNCATE nicăieri
+        assert not c.execute("SELECT has_table_privilege('cimitir_storage_cleanup','cp_storage_objects','DELETE')").fetchone()[0]
+        assert c.execute("SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid JOIN pg_roles u ON u.oid=m.member WHERE r.rolname='cimitir_storage_cleanup' AND u.rolcanlogin AND NOT u.rolsuper").fetchone()[0] == 0
         for oid in oids:                                             # SECURITY DEFINER + search_path fixat; nicio funcție nu primește o cale de la apelant
             row = c.execute("SELECT prosecdef, proconfig, proargnames FROM pg_proc WHERE oid=%s", (oid,)).fetchone()
             assert row[0] and any(x.startswith("search_path=") for x in row[1]) and not any("path" in n for n in row[2] if n.startswith("p_"))
+
+
+def test_cleanup_role_cannot_touch_ready_imported_or_delete(world):
+    pg, t = world["pg"], world["T"]["A"]
+    ready, _ = new(world)
+    imp, _ = new(world)
+    pend, _ = new(world)
+    force(world, "A", ready, "READY")
+    force(world, "A", imp, "READY")
+    force(world, "A", imp, "IMPORTED")
+    with adm(pg) as c:
+        c.execute("SET ROLE cimitir_storage_cleanup")                  # exact drepturile rolului owner al funcțiilor (RLS + GRANT + trigger), în afara funcțiilor
+        for u in (ready, imp):
+            assert c.execute("UPDATE cp_storage_objects SET status='DELETED' WHERE uid=%s", (u,)).rowcount == 0           # RLS: READY/IMPORTED nu sunt actualizabile
+            assert c.execute("UPDATE cp_storage_objects SET status='CLEANING', cleanup_token=%s, cleanup_prev_status='PENDING', cleanup_claimed_at=now() WHERE uid=%s", (str(uuid.uuid4()), u)).rowcount == 0
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            c.execute("DELETE FROM cp_storage_objects WHERE uid=%s", (pend,))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            c.execute("UPDATE cp_storage_objects SET size=5 WHERE uid=%s", (pend,))                                       # coloane în afara listei de UPDATE
+        with pytest.raises(psycopg.errors.Error):                                                                         # nici STAGING -> READY / DELETED direct
+            c.execute("UPDATE cp_storage_objects SET status='READY' WHERE uid=%s", (pend,))
+        with pytest.raises(psycopg.errors.CheckViolation):
+            c.execute("UPDATE cp_storage_objects SET status='DELETED' WHERE uid=%s", (pend,))
+        with pytest.raises(psycopg.errors.Error):
+            c.execute("INSERT INTO cp_storage_objects (cemetery_uid, uid, organization_uid, kind, filename, mime, size, sha256, storage_path, status) "
+                      "VALUES (%s,%s,%s,'document','x','application/pdf',1,%s,%s,'READY')", (t["cem"], str(uuid.uuid4()), t["org"], "a" * 64, "field/z"))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            c.execute("SELECT 1 FROM organizations LIMIT 1")
+    assert status(world, "A", ready) == "READY" and status(world, "A", imp) == "IMPORTED" and status(world, "A", pend) == "PENDING"
+    with wrk(pg) as w:                                                  # login-ul worker nu poate face SET ROLE pe rolul owner
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            w.execute("SET ROLE cimitir_storage_cleanup")
 
 
 def test_cleanup_without_service_url_is_refused(world):
