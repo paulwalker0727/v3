@@ -16,7 +16,7 @@ Documente:
 from typing import Optional, Dict, List
 import os
 
-from PySide6.QtCore import QDate, QUrl
+from PySide6.QtCore import QDate, QUrl, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -25,6 +25,74 @@ from PySide6.QtWidgets import (
 )
 
 import database as db
+
+
+BLANK_DATE = QDate(1800, 1, 1)  # valoare internă „fără dată”; NU se salvează niciodată
+_DATE_FORMATS = ("dd.MM.yyyy", "ddMMyyyy", "yyyy-MM-dd")
+
+
+class OptionalDateEdit(QDateEdit):
+    """QDateEdit care poate reprezenta „fără dată”. `value_str()` întoarce "" când nu există dată (niciodată sentinelul)."""
+
+    def __init__(self):
+        super().__init__()
+        self.setDisplayFormat("dd.MM.yyyy")
+        self.setCalendarPopup(True)
+        self.setMinimumDate(BLANK_DATE)
+        self.setSpecialValueText("fără dată")
+        self._raw = ""
+        self.set_blank()
+        self.dateChanged.connect(self._on_user_change)
+
+    def _on_user_change(self, _d):
+        self._raw = ""
+        self.setSpecialValueText("fără dată")
+
+    def is_blank(self) -> bool:
+        return self.date() == BLANK_DATE
+
+    def set_blank(self):
+        self._raw = ""
+        self.setSpecialValueText("fără dată")
+        self.setDate(BLANK_DATE)
+
+    def set_from_text(self, value):
+        """Setează din textul din DB; un text nerecunoscut e păstrat neschimbat (nu se pierde la Save)."""
+        value = str(value or "").strip()
+        if not value:
+            self.set_blank()
+            return
+        for fmt in _DATE_FORMATS:
+            d = QDate.fromString(value, fmt)
+            if d.isValid() and d > BLANK_DATE:
+                self.setDate(d)
+                return
+        self.set_blank()
+        self._raw = value
+        self.setSpecialValueText(value)
+
+    def value_str(self) -> str:
+        if self.is_blank():
+            return self._raw
+        return self.date().toString("dd.MM.yyyy")
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and (event.modifiers() & Qt.ControlModifier or self.is_blank()):
+            self.set_blank()
+            return
+        super().keyPressEvent(event)
+
+
+def _date_row(edit: OptionalDateEdit) -> QWidget:
+    w = QWidget()
+    h = QHBoxLayout(w)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.addWidget(edit, 1)
+    btn = QPushButton("Fără dată")
+    btn.setToolTip("Șterge data (câmpul rămâne gol)")
+    btn.clicked.connect(edit.set_blank)
+    h.addWidget(btn)
+    return w
 
 
 DOC_TYPES = [
@@ -79,10 +147,10 @@ class AddInhumatDialog(QDialog):
         form.addRow("Nume:", self.txt_nume)
         form.addRow("Prenume:", self.txt_prenume)
         form.addRow("CNP:", self.txt_cnp)
-        form.addRow("Data nașterii:", self.txt_data_nasterii)
-        form.addRow("Data deces:", self.txt_data_deces)
-        form.addRow("Data înhumare:", self.txt_data_inhumare)
-        form.addRow("Data deshumare:", self.txt_data_deshumare)
+        form.addRow("Data nașterii:", _date_row(self.txt_data_nasterii))
+        form.addRow("Data deces:", _date_row(self.txt_data_deces))
+        form.addRow("Data înhumare:", _date_row(self.txt_data_inhumare))
+        form.addRow("Data deshumare:", _date_row(self.txt_data_deshumare))
         form.addRow("Sex:", self.cmb_sex)
         form.addRow("Cauza deces:", self.txt_cauza_deces)
         form.addRow("Profesie:", self.txt_profesie)
@@ -181,11 +249,6 @@ class AddInhumatDialog(QDialog):
         # ---- populate ----
         if self._existing:
             self.populate(self._existing)
-        else:
-            today = QDate.currentDate()
-            for f in (self.txt_data_nasterii, self.txt_data_deces,
-                      self.txt_data_inhumare, self.txt_data_deshumare):
-                f.setDate(today)
 
         # ascundem butonul „save and add" în modul editare
         if self._inhumat_id:
@@ -194,11 +257,8 @@ class AddInhumatDialog(QDialog):
 
     # ---------------------------------------------------------------
     @staticmethod
-    def _mk_date_edit() -> QDateEdit:
-        d = QDateEdit()
-        d.setDisplayFormat("dd.MM.yyyy")
-        d.setCalendarPopup(True)
-        return d
+    def _mk_date_edit() -> OptionalDateEdit:
+        return OptionalDateEdit()
 
     # ---------------------------------------------------------------
     # DOCUMENTE
@@ -333,14 +393,9 @@ class AddInhumatDialog(QDialog):
         self.txt_prenume.setText(str(data.get("prenume", "") or ""))
         self.txt_cnp.setText(str(data.get("cnp", "") or ""))
 
-        def set_date(field: QDateEdit, value: Optional[str]):
-            if not value:
-                return
-            for fmt in ("dd.MM.yyyy", "ddMMyyyy", "yyyy-MM-dd"):
-                d = QDate.fromString(value, fmt)
-                if d.isValid():
-                    field.setDate(d)
-                    return
+        def set_date(field: OptionalDateEdit, value: Optional[str]):
+            if value:
+                field.set_from_text(value)
 
         set_date(self.txt_data_nasterii, data.get("data_nasterii"))
         set_date(self.txt_data_deces, data.get("data_deces"))
@@ -363,10 +418,10 @@ class AddInhumatDialog(QDialog):
             "nume": self.txt_nume.text().strip(),
             "prenume": self.txt_prenume.text().strip(),
             "cnp": self.txt_cnp.text().strip(),
-            "data_nasterii": self.txt_data_nasterii.date().toString("dd.MM.yyyy"),
-            "data_deces": self.txt_data_deces.date().toString("dd.MM.yyyy"),
-            "data_inhumare": self.txt_data_inhumare.date().toString("dd.MM.yyyy"),
-            "data_deshumare": self.txt_data_deshumare.date().toString("dd.MM.yyyy"),
+            "data_nasterii": self.txt_data_nasterii.value_str(),
+            "data_deces": self.txt_data_deces.value_str(),
+            "data_inhumare": self.txt_data_inhumare.value_str(),
+            "data_deshumare": self.txt_data_deshumare.value_str(),
             "sex": self.cmb_sex.currentText().strip(),
             "cauza_deces": self.txt_cauza_deces.text().strip(),
             "profesie": self.txt_profesie.text().strip(),
@@ -387,10 +442,9 @@ class AddInhumatDialog(QDialog):
         self.txt_nume.clear()
         self.txt_prenume.clear()
         self.txt_cnp.clear()
-        today = QDate.currentDate()
         for f in (self.txt_data_nasterii, self.txt_data_deces,
                   self.txt_data_inhumare, self.txt_data_deshumare):
-            f.setDate(today)
+            f.set_blank()
         self.cmb_sex.setCurrentIndex(0)
         self.txt_cauza_deces.clear()
         self.txt_profesie.clear()
