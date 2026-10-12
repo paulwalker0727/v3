@@ -121,12 +121,12 @@ print("RESULT " + json.dumps(out))
 '''
 
 
-def _run(tmp_path: Path) -> dict:
+def _run(tmp_path: Path, code: str = WORKER) -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("CIMITIR_")}
     env.update(CIMITIR_DATA_DIR=str(tmp_path / "data"), CIMITIR_ENV_FILE=str(tmp_path / "nu.env"),
                CIMITIR_LOG_DIR=str(tmp_path / "logs"), CIMITIR_DB_ENGINE="sqlite", CIMITIR_MODE="local",
                DATABASE_URL="", QT_QPA_PLATFORM="offscreen")
-    proc = subprocess.run([sys.executable, "-c", WORKER.format(desktop=str(DESKTOP))],
+    proc = subprocess.run([sys.executable, "-c", code.format(desktop=str(DESKTOP))],
                           env=env, cwd=str(DESKTOP), capture_output=True, text=True, timeout=150)
     assert proc.returncode == 0, proc.stderr[-2500:]
     return json.loads([ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT ")][-1][7:])

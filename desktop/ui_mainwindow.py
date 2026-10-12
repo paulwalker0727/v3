@@ -1058,6 +1058,12 @@ class CemeteryUI(QMainWindow):
         except Exception:
             pass
 
+    def _status_text(self) -> str:
+        try:
+            return self.statusBar().currentMessage()
+        except Exception:
+            return ""
+
     def exit_draw_mode(self, message: str = ""):
         self.tools.exit_draw_mode(message)
 
@@ -1114,7 +1120,7 @@ class CemeteryUI(QMainWindow):
         try:
             self._finalize_polygon_impl(points)
         finally:
-            self.exit_draw_mode()
+            self.exit_draw_mode(self._status_text())
 
     def _finalize_polygon_impl(self, points):
         if not points or len(points) < 3:
@@ -1269,7 +1275,7 @@ class CemeteryUI(QMainWindow):
         try:
             self._finalize_sector_impl(points)
         finally:
-            self.exit_draw_mode()
+            self.exit_draw_mode(self._status_text())
 
     def _finalize_sector_impl(self, points):
         if not points or len(points) < 3:
