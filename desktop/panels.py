@@ -37,6 +37,7 @@ from PySide6.QtGui import QPixmap
 
 from ui_utils import show_message, ask_confirmation, ask_text_input
 import database as db
+import work_details as wd
 
 # -------------------------
 # Worker signals
@@ -403,11 +404,12 @@ class DocumentStrip(QWidget):
     doc_type: filtru optional (ex: "poza_loc")
     """
     def __init__(self, entity_type: str, entity_id=None, doc_type: str = "",
-                 title: str = "Documente (foto/PDF)", parent=None):
+                 title: str = "Documente (foto/PDF)", parent=None, exclude_types=()):
         super().__init__(parent)
         self.entity_type = entity_type
         self.entity_id = entity_id
         self.doc_type = doc_type or ""
+        self.exclude_types = tuple(exclude_types)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
@@ -460,6 +462,8 @@ class DocumentStrip(QWidget):
                                      self.doc_type or None)
         except Exception:
             docs = []
+        if self.exclude_types:
+            docs = [d for d in docs if d.get("doc_type") not in self.exclude_types]
         if not docs:
             empty = QLabel("(niciun document)")
             empty.setStyleSheet("color:#888; font-size:11px; padding:2px;")
@@ -547,6 +551,59 @@ class DocumentStrip(QWidget):
                          "Următoarele fișiere nu au putut fi salvate:\n\n" + "\n".join(failed),
                          level="warning")
         self.refresh()
+# -------------------------
+# AvizDocsPanel — detalii lucrare (din telefon/MAIN) + documente grupate pe etape
+# -------------------------
+class AvizDocsPanel(QWidget):
+    """Stare, dată finalizare, observații + ÎNAINTE / ÎN TIMPUL LUCRĂRII / DUPĂ + necategorizate (aceleași `documents`)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        form = QFormLayout()
+        self.lbl_stare = QLabel("—")
+        self.lbl_stare.setObjectName("aviz-stare")
+        self.lbl_final = QLabel("—")
+        self.lbl_final.setObjectName("aviz-finalizare")
+        self.lbl_obs = QLabel("—")
+        self.lbl_obs.setObjectName("aviz-observatii")
+        self.lbl_obs.setWordWrap(True)
+        self.lbl_obs.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        form.addRow("Stare:", self.lbl_stare)
+        form.addRow("Data finalizării:", self.lbl_final)
+        form.addRow("Observații:", self.lbl_obs)
+        v.addLayout(form)
+        self.strips = {}
+        for key, label in wd.STAGES:
+            st = DocumentStrip("aviz", None, doc_type=key, title=label)
+            st.setObjectName("aviz-stage-" + key)
+            self.strips[key] = st
+            v.addWidget(st)
+        self.other = DocumentStrip("aviz", None, doc_type="", title=wd.OTHER_LABEL, exclude_types=wd.STAGE_TYPES)
+        self.other.setObjectName("aviz-stage-other")
+        v.addWidget(self.other)
+        v.addStretch()
+
+    def set_entity(self, entity_type: str, entity_id, doc_type: str = ""):
+        av = None
+        if entity_id not in (None, ""):
+            try:
+                av = db.get_aviz(int(entity_id))
+            except Exception:
+                av = None
+        if av:
+            self.lbl_stare.setText(wd.stare_label(av))
+            self.lbl_final.setText(wd.finalizare_label(av) or "—")
+            self.lbl_obs.setText(str(av.get("observatii") or "") or "—")
+        else:
+            for lbl in (self.lbl_stare, self.lbl_final, self.lbl_obs):
+                lbl.setText("—")
+        for st in list(self.strips.values()) + [self.other]:
+            st.set_entity(entity_type, entity_id, st.doc_type)
+
+
 # -------------------------
 # RightPanel
 # -------------------------
@@ -965,24 +1022,26 @@ class RightPanel(QWidget):
         v.addLayout(top)
 
         # tabel avize: Număr | Data | Lucrare | Fotografie
-        self.tbl_avize = QTableWidget(0, 4)
-        self.tbl_avize.setHorizontalHeaderLabels(["Număr aviz", "Data aviz", "Lucrare", "Fotografie"])
+        self.tbl_avize = QTableWidget(0, 6)
+        self.tbl_avize.setHorizontalHeaderLabels(["Număr aviz", "Data aviz", "Lucrare", "Fotografie", "Stare", "Finalizată la"])
         header = self.tbl_avize.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.tbl_avize.setMaximumHeight(190)
         self.tbl_avize.setSelectionBehavior(QTableWidget.SelectRows)
         self.tbl_avize.setSelectionMode(QTableWidget.SingleSelection)
         v.addWidget(self.tbl_avize)
 
         # documente atașate la avizul selectat (foto lucrare + acte)
-        self.doc_strip_aviz = DocumentStrip(
-            "aviz", entity_id=None, doc_type="",
-            title="Documente aviz / autorizație lucrare (foto / PDF)"
-        )
-        v.addWidget(self.doc_strip_aviz)
-        v.addStretch()
+        self.doc_strip_aviz = AvizDocsPanel()
+        aviz_scroll = QScrollArea()
+        aviz_scroll.setWidgetResizable(True)
+        aviz_scroll.setWidget(self.doc_strip_aviz)
+        v.addWidget(aviz_scroll, 1)
         w.setLayout(v)
 
         # Connect actions
@@ -1210,9 +1269,11 @@ class RightPanel(QWidget):
         except Exception:
             avize_db = []
         self._populate_avize_table(avize_db)
-        # reset doc strip aviz până când user selectează un rând
+        # reset doc strip aviz, apoi selectăm prima lucrare ca detaliile să fie vizibile
         try:
             self.doc_strip_aviz.set_entity("aviz", None)
+            if self.tbl_avize.rowCount() > 0:
+                self.tbl_avize.selectRow(0)
         except Exception:
             pass
 
@@ -1477,6 +1538,8 @@ class RightPanel(QWidget):
             photo_item = QTableWidgetItem(photo_ref)
             photo_item.setData(Qt.UserRole, a.get("photo"))
             self.tbl_avize.setItem(r, 3, photo_item)
+            self.tbl_avize.setItem(r, 4, QTableWidgetItem(wd.stare_label(a)))
+            self.tbl_avize.setItem(r, 5, QTableWidgetItem(wd.finalizare_label(a)))
         # update remove button state
         self.btn_remove_aviz.setEnabled(self._editing_enabled and self.tbl_avize.rowCount() > 0)
 

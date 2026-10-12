@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 import database as db
+import work_details as wd
 
 try:
     from panels import PhotoLightbox
@@ -537,23 +538,45 @@ class OperatorDetailPanel(QWidget):
         title = f"Aviz {av.get('nr','') or '?'}"
         if av.get("lucrare"):
             title += f" — {av.get('lucrare')}"
+        if av.get("stare"):
+            title += f" · {wd.stare_label(av)}"
         sub = CollapsibleSection(title, self._pal, expanded=False, accent=self._pal["warning"])
         sub.add(self._info_row("Nr. aviz", str(av.get("nr", "") or "")))
         sub.add(self._info_row("Data aviz", str(av.get("data", "") or "")))
         sub.add(self._info_row("Lucrare", str(av.get("lucrare", "") or "")))
-        lbl = QLabel("Fotografii lucrare / autorizație (imagine/PDF)")
-        lbl.setStyleSheet(f"color: {self._pal['accent']}; background: transparent; border: none; font-weight: 600; margin-top: 4px;")
-        sub.add(lbl)
-        strip = PhotoStrip(
-            self._pal,
-            on_add=lambda a=aid: self._add_aviz_photo(a),
-            on_delete=lambda d, c=cod_loc: self._delete_doc(d, c),
-            add_text="➕  Adaugă foto lucrare / autorizație (imagine/PDF)",
-        )
-        strip.set_docs(db.list_documents("aviz", aid))
-        sub.add(strip)
+        for name, label, value in (("stare", "Stare", wd.stare_label(av)),
+                                   ("finalizare", "Data finalizării", wd.finalizare_label(av)),
+                                   ("observatii", "Observații", str(av.get("observatii", "") or ""))):
+            row = self._info_row(label, value)
+            row.setObjectName(f"aviz-{name}")
+            sub.add(row)
+        groups = wd.split_docs(db.list_documents("aviz", aid))
+        for key, label in wd.STAGES:
+            sub.add(self._aviz_stage_strip(cod_loc, aid, key, label, groups[key],
+                                           lambda a=aid, k=key: self._add_aviz_photo(a, k)))
+        sub.add(self._aviz_stage_strip(cod_loc, aid, "other", wd.OTHER_LABEL, groups["other"],
+                                       lambda a=aid: self._add_aviz_photo(a)))
         sub.add(self._phone_btn("aviz", aid, f"Aviz #{aid}"))
         return sub
+
+    def _aviz_stage_strip(self, cod_loc: str, aid, key: str, label: str, docs: List[Dict], on_add) -> QWidget:
+        box = QWidget()
+        box.setObjectName(f"aviz-stage-{key}")
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        lbl = QLabel(f"{label} ({len(docs)})")
+        lbl.setStyleSheet(f"color: {self._pal['accent']}; background: transparent; border: none; font-weight: 600; margin-top: 4px;")
+        lay.addWidget(lbl)
+        strip = PhotoStrip(
+            self._pal,
+            on_add=on_add,
+            on_delete=lambda d, c=cod_loc: self._delete_doc(d, c),
+            add_text="➕  Adaugă (imagine/PDF)",
+        )
+        strip.set_docs(docs)
+        lay.addWidget(strip)
+        return box
 
     def _add_aviz(self, cod_loc: str):
         try:
@@ -573,13 +596,13 @@ class OperatorDetailPanel(QWidget):
             db.add_document("aviz", aid, "foto_lucrare", res["photo"], caption=res.get("lucrare", ""))
         self.show_loc(cod_loc)
 
-    def _add_aviz_photo(self, aviz_id):
+    def _add_aviz_photo(self, aviz_id, doc_type: str = "foto_lucrare"):
         files, _ = QFileDialog.getOpenFileNames(
             self, "Alege fotografii lucrare / autorizație (imagine/PDF)", "", "Documente (*.png *.jpg *.jpeg *.pdf)")
         if not files:
             return
         for f in files:
-            db.add_document("aviz", aviz_id, "foto_lucrare", f)
+            db.add_document("aviz", aviz_id, doc_type, f)
         if self.current_cod_loc:
             self.show_loc(self.current_cod_loc)
 
