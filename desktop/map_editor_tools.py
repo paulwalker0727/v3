@@ -54,6 +54,10 @@ class EditorTools:
             self.w.act_delete_sector.setChecked(mode == "delete_sector")
         except Exception:
             pass
+        try:
+            self.w.act_pan.setChecked(mode == "select")
+        except Exception:
+            pass
 
         # cursor
         if mode in ("draw", "draw_sector"):
@@ -79,6 +83,29 @@ class EditorTools:
             self.w.statusBar().showMessage(messages.get(mode, ""))
         except Exception:
             pass
+
+    def exit_draw_mode(self, message: str = ""):
+        """Ieșire completă din desenare → unealta activă = select (mână)."""
+        self.w.current_points = []
+        try:
+            self.w.map_view.clear_preview()
+        except Exception:
+            pass
+        adv = getattr(self.w, "adv", None)
+        if adv is not None:
+            try:
+                adv._clear_temp_line()
+            except Exception:
+                pass
+            if hasattr(adv, "_pending_row_order"):
+                adv._pending_row_order = None
+        self.w.map_view._middle_panning = False
+        self.set_tool_mode("select")
+        if message:
+            try:
+                self.w.statusBar().showMessage(message)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # LIVE INFO IN STATUS BAR
@@ -238,13 +265,7 @@ class EditorTools:
 
         # ESC → anulează desenul curent
         if key == Qt.Key_Escape:
-            if self.w.current_points:
-                self.w.current_points = []
-                self.w.map_view.clear_preview()
-                try:
-                    self.w.statusBar().showMessage("Desen anulat (ESC)")
-                except Exception:
-                    pass
+            self.exit_draw_mode("Desen anulat (ESC)")
             return True
 
         # BACKSPACE → șterge ultimul punct

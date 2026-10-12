@@ -593,7 +593,7 @@ class CemeteryUI(QMainWindow):
         self.act_pan.setCheckable(True)
         self.act_pan.setChecked(True)
         self.act_pan.setToolTip("Pan hartă. Poți naviga oricând și cu butonul din mijloc al mouse-ului.")
-        self.act_pan.triggered.connect(lambda: self.map_view.set_pan_mode(True))
+        self.act_pan.triggered.connect(lambda: self.exit_draw_mode())
         toolbar.addAction(self.act_pan)
 
         lbl = QLabel("  🖱 mijloc = navighezi oricând  ")
@@ -1058,6 +1058,9 @@ class CemeteryUI(QMainWindow):
         except Exception:
             pass
 
+    def exit_draw_mode(self, message: str = ""):
+        self.tools.exit_draw_mode(message)
+
     def eventFilter(self, source, event):
         try:
             return self.events.eventFilter(source, event)
@@ -1108,6 +1111,12 @@ class CemeteryUI(QMainWindow):
     # finalize polygon (loc) - importuri lazy si verificari
     # ---------------------------
     def finalize_polygon(self, points):
+        try:
+            self._finalize_polygon_impl(points)
+        finally:
+            self.exit_draw_mode()
+
+    def _finalize_polygon_impl(self, points):
         if not points or len(points) < 3:
             return
 
@@ -1257,6 +1266,12 @@ class CemeteryUI(QMainWindow):
     # finalize sector
     # ---------------------------
     def finalize_sector(self, points):
+        try:
+            self._finalize_sector_impl(points)
+        finally:
+            self.exit_draw_mode()
+
+    def _finalize_sector_impl(self, points):
         if not points or len(points) < 3:
             return
 
