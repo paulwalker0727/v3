@@ -74,7 +74,15 @@ def live():
         v = c.pgconn.encrypt_password(pw.encode(), b"cimitir_cp_app", b"scram-sha-256").decode()
         c.execute(sql.SQL("ALTER ROLE cimitir_cp_app PASSWORD {}").format(sql.Literal(v)))
     app = u._replace(netloc=f"cimitir_cp_app.{REF}:{pw}@{u.hostname}:{u.port}").geturl()
+    pw2 = secrets.token_urlsafe(48)                      # worker de cleanup (016): login membru al rolului intern cimitir_storage_cleanup; NU e cimitir_cp_app
+    with psycopg.connect(admin, autocommit=True) as c:
+        if not c.execute("SELECT 1 FROM pg_roles WHERE rolname='cimitir_cleanup_test'").fetchone():
+            c.execute("CREATE ROLE cimitir_cleanup_test LOGIN NOSUPERUSER NOBYPASSRLS IN ROLE cimitir_storage_cleanup")
+        v2 = c.pgconn.encrypt_password(pw2.encode(), b"cimitir_cleanup_test", b"scram-sha-256").decode()
+        c.execute(sql.SQL("ALTER ROLE cimitir_cleanup_test PASSWORD {}").format(sql.Literal(v2)))
+    cleanup = u._replace(netloc=f"cimitir_cleanup_test.{REF}:{pw2}@{u.hostname}:{u.port}").geturl()
     os.environ["CIMITIR_CP_DATABASE_URL"], os.environ["CIMITIR_CP_ADMIN_DATABASE_URL"] = app, admin
+    os.environ["CIMITIR_CP_CLEANUP_DATABASE_URL"] = cleanup
     os.environ["CIMITIR_ALLOW_TEST_SECRETSTORE"] = "1"
     store = st.SupabaseStorage(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SECRET_KEY"], BUCKET)
     yield {"admin": admin, "app": app, "storage": store}
@@ -91,7 +99,7 @@ def penv(renv, live):
 
 def mk(live):
     cp = ccp.PostgresControlPlane(url=live["app"], admin_url=live["admin"])
-    return cp, fs.FieldMediaStore(cp, live["storage"])
+    return cp, fs.FieldMediaStore(cp, live["storage"], cleanup_url=os.environ["CIMITIR_CP_CLEANUP_DATABASE_URL"])
 
 
 def ctxc(live, **ctx):
@@ -294,7 +302,10 @@ def test_06_cross_tenant_storage_isolation(live):
     cb = ctxc(live, org=B["org"], cems=B["cem"])
     leaks += cb.execute("SELECT COUNT(*) FROM cp_storage_objects WHERE cemetery_uid=%s", (A["cem"],)).fetchone()[0]
     assert cb.execute("UPDATE cp_storage_objects SET status='DELETED' WHERE cemetery_uid=%s", (A["cem"],)).rowcount == 0
-    assert cb.execute("DELETE FROM cp_storage_objects WHERE cemetery_uid=%s", (A["cem"],)).rowcount == 0
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):          # 016: cimitir_cp_app nu mai are DELETE (cleanup = rol/funcții separate)
+        cb.execute("DELETE FROM cp_storage_objects WHERE cemetery_uid=%s", (A["cem"],))
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        cb.execute("SELECT * FROM cp_storage_cleanup_claim(%s,%s,%s,0,10,900)", (A["org"], A["cem"], str(uuid.uuid4())))
     with pytest.raises(psycopg.errors.Error):
         cb.execute("INSERT INTO cp_storage_objects (cemetery_uid, uid, organization_uid, kind, filename, mime, size, sha256, storage_path, status) "
                    "VALUES (%s,%s,%s,'document','x','application/pdf',1,%s,%s,'READY')", (A["cem"], str(uuid.uuid4()), A["org"], "a" * 64, "field/x/y/z"))
