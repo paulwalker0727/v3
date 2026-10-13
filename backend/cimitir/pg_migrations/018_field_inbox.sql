@@ -123,16 +123,25 @@ END $$;
 DROP TRIGGER IF EXISTS cp_field_inbox_attachments_guard ON cp_field_inbox_attachments;
 CREATE TRIGGER cp_field_inbox_attachments_guard BEFORE INSERT ON cp_field_inbox_attachments FOR EACH ROW EXECUTE FUNCTION cp_field_inbox_attachments_guard();
 
--- un obiect READY legat de un item nerespins nu poate fi șters (READY -> DELETED); rolul de cleanup nu e afectat (nu atinge READY, iar trigger-ul ignoră alte tranziții)
-CREATE OR REPLACE FUNCTION cp_storage_objects_inbox_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+-- un obiect READY legat de un item nerespins nu poate fi șters (READY -> DELETED). Rolul de cleanup (cimitir_storage_cleanup) nu are drepturi pe tabelele inbox și nu face niciodată
+-- READY -> DELETED, deci verificarea e într-un IF imbricat (nu se pregătește/evaluează pe celelalte tranziții) iar funcția e SECURITY DEFINER cu search_path fixat (doar un boolean, fără scurgeri;
+-- pe Supabase/PG mai nou expresia compusă cerea drepturi pe cp_field_inbox_attachments chiar și pe calea de cleanup).
+CREATE OR REPLACE FUNCTION cp_storage_objects_inbox_guard() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
-    IF OLD.status = 'READY' AND NEW.status = 'DELETED'
-       AND EXISTS (SELECT 1 FROM cp_field_inbox_attachments a JOIN cp_field_inbox_items i ON i.cemetery_uid = a.cemetery_uid AND i.uid = a.item_uid
-                   WHERE a.cemetery_uid = OLD.cemetery_uid AND a.object_uid = OLD.uid AND i.status <> 'REJECTED') THEN
-        RAISE EXCEPTION 'cp_storage_objects: obiectul este legat de un item Field Inbox activ' USING ERRCODE = 'check_violation';
+    IF OLD.status = 'READY' THEN
+        IF NEW.status = 'DELETED' THEN
+            IF EXISTS (SELECT 1 FROM cp_field_inbox_attachments a JOIN cp_field_inbox_items i ON i.cemetery_uid = a.cemetery_uid AND i.uid = a.item_uid
+                       WHERE a.cemetery_uid = OLD.cemetery_uid AND a.object_uid = OLD.uid AND i.status <> 'REJECTED') THEN
+                RAISE EXCEPTION 'cp_storage_objects: obiectul este legat de un item Field Inbox activ' USING ERRCODE = 'check_violation';
+            END IF;
+        END IF;
     END IF;
     RETURN NEW;
 END $$;
+DO $$ BEGIN
+    EXECUTE format('ALTER FUNCTION cp_storage_objects_inbox_guard() SET search_path = %I, pg_catalog', current_schema());
+END $$;
+REVOKE ALL ON FUNCTION cp_storage_objects_inbox_guard() FROM PUBLIC;
 DROP TRIGGER IF EXISTS cp_storage_objects_inbox_guard ON cp_storage_objects;
 CREATE TRIGGER cp_storage_objects_inbox_guard BEFORE UPDATE ON cp_storage_objects FOR EACH ROW EXECUTE FUNCTION cp_storage_objects_inbox_guard();
 

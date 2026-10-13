@@ -50,6 +50,9 @@ def _migration(live):
         for t in T.values():
             c.execute("DELETE FROM cp_field_inbox_attachments WHERE cemetery_uid=%s", (t["cem"],))
             c.execute("DELETE FROM cp_field_inbox_items WHERE cemetery_uid=%s", (t["cem"],))
+            for o in live["storage"].list_prefix(f"field/{t['org']}/{t['cem']}"):         # doar obiectele create de acest run
+                live["storage"].delete(f"field/{t['org']}/{t['cem']}/{o['name']}")
+            c.execute("DELETE FROM cp_storage_objects WHERE cemetery_uid=%s", (t["cem"],))
     if os.environ.get("LIVE_REPORT_6C"):
         Path(os.environ["LIVE_REPORT_6C"]).write_text(json.dumps(RES, indent=1, default=str))
 
@@ -74,6 +77,12 @@ def test_00_setup(penv, live):
         main = penv.store.get(bs.LocalRegistry(b).get("cloud_secret_ref"))
         T[tag] = {"org": org, "cem": b.cemetery_uid, "main": main, "main_b": main.split(".")[1]}
         T[tag]["phone"], T[tag]["phone_b"] = seed_binding({"admin": live["admin"]}, org, b.cemetery_uid, "MOBILE")
+    a2 = str(uuid.uuid4())                                           # al doilea cimitir al organizației A
+    with aconn(live) as c:
+        c.execute("INSERT INTO cemeteries (uid, organization_uid, name, internal_code, status, data_epoch) VALUES (%s,%s,'6C-TEST A2',%s,'DRAFT',1)", (a2, T["A"]["org"], a2))
+    T["A2"] = {"org": T["A"]["org"], "cem": a2}
+    T["A2"]["main"], T["A2"]["main_b"] = seed_binding({"admin": live["admin"]}, T["A"]["org"], a2, "MAIN")
+    T["A2"]["phone"], T["A2"]["phone_b"] = seed_binding({"admin": live["admin"]}, T["A"]["org"], a2, "MOBILE")
     assert live["storage"].bucket_info()["public"] is False
 
 
@@ -181,3 +190,58 @@ def test_06_http_no_secret_leak_and_private_storage(svc, live):
         assert secret not in blob
     assert re.search(r"postgres(ql)?://", blob) is None
     RES["PUBLIC STORAGE ACCESS"], RES["SECRET EXPOSED"] = "NO", "NO"
+
+
+def test_07_cross_cemetery_same_org_zero_leakage(svc, live):
+    A, A2 = T["A"], T["A2"]
+    i1 = svc.create_item(A["phone"], A["cem"], idem(), "DOCUMENT", PAY["DOCUMENT"], grave_uid="G-L")["item"]
+    f1 = svc.attach_file(A["phone"], A["cem"], i1["uid"], str(uuid.uuid4()), "f", "application/pdf", _pdf())["file"]["uid"]
+    i2 = svc.create_item(A2["phone"], A2["cem"], idem(), "WORK", PAY["WORK"], grave_uid="G-L")["item"]
+    leaks = 0
+    for key, cem, uid in ((A["main"], A2["cem"], i2["uid"]), (A["main"], A["cem"], i2["uid"]), (A2["main"], A["cem"], i1["uid"]), (A2["main"], A2["cem"], i1["uid"]), (A2["phone"], A2["cem"], i1["uid"])):
+        for call in (lambda: svc.get_item(key, cem, uid), lambda: svc.accept(key, cem, uid), lambda: svc.reject(key, cem, uid, "x"), lambda: svc.mark_imported(key, cem, uid),
+                     lambda: svc.file_url(key, cem, uid, f1), lambda: svc.list_items(key, cem)):
+            try:
+                r = call()
+                leaks += 1 if (isinstance(r, dict) or (isinstance(r, list) and any(i["cemetery_uid"] != cem for i in r))) else 0
+            except (cc.ScopeError, cc.PermissionDenied, fi.FieldInboxError):
+                pass
+    assert leaks == 0
+    assert {i["uid"] for i in svc.list_items(A["main"], A["cem"])}.isdisjoint({i2["uid"]}) and {i["uid"] for i in svc.list_items(A2["main"], A2["cem"])}.isdisjoint({i1["uid"]})
+    c = psycopg.connect(live["app"], autocommit=True)                    # RLS direct (cimitir_cp_app): contextul cimitirului A nu vede A2, deși organizația e aceeași
+    c.execute("SELECT set_config('cp.org', %s, false), set_config('cp.cems', %s, false)", (A["org"], A["cem"]))
+    assert c.execute("SELECT count(*) FROM cp_field_inbox_items WHERE cemetery_uid=%s", (A2["cem"],)).fetchone()[0] == 0
+    assert c.execute("SELECT count(*) FROM cp_storage_objects WHERE cemetery_uid=%s", (A2["cem"],)).fetchone()[0] == 0
+    assert c.execute("UPDATE cp_field_inbox_items SET status='REJECTED', reviewed_at=now(), reviewed_by=%s, rejection_reason='x' WHERE cemetery_uid=%s", (A["main_b"], A2["cem"])).rowcount == 0
+    c.close()
+    RES["CROSS CEMETERY"] = "0 leaks"
+
+
+def test_08_sha256_signed_url_and_cross_tenant_storage(svc, live):
+    A, B = T["A"], T["B"]
+    it = svc.create_item(A["phone"], A["cem"], idem(), "DOCUMENT", PAY["DOCUMENT"], grave_uid="G-L")["item"]
+    data = _pdf()
+    cl = TestClient(fih.create_app(svc))
+    hd = {"Authorization": f"Binding {A['phone']}", "Content-Type": "application/pdf", "X-File-Name": "a.pdf"}
+    bad = cl.post(fih.PREFIX + f"/items/{it['uid']}/files", headers={**hd, "X-File-Uid": str(uuid.uuid4()), "X-File-Sha256": "0" * 64}, content=data)
+    assert bad.status_code == 400 and bad.json()["code"] == "HASH_MISMATCH"                         # SHA-256 greșit: nimic scris
+    fu = str(uuid.uuid4())
+    ok = cl.post(fih.PREFIX + f"/items/{it['uid']}/files", headers={**hd, "X-File-Uid": fu, "X-File-Sha256": sha(data)}, content=data)
+    assert ok.status_code == 201 and ok.json()["result"]["file"]["sha256"] == sha(data)
+    path = fs.storage_path(A["org"], A["cem"], fu)
+    assert live["storage"].stat(path)["size"] == len(data)
+    assert live["storage"].stat(fs.storage_path(A["org"], A["cem"], str(uuid.UUID(int=0)))) is None
+    hit = 0
+    for key, cem in ((B["main"], B["cem"]), (B["phone"], B["cem"]), (B["main"], A["cem"])):
+        for call in (lambda: svc.media.download_url(key, cem, fu), lambda: svc.file_url(key, cem, it["uid"], fu), lambda: svc.media.status(key, cem, fu)):
+            try:
+                r = call()
+                hit += 1 if r else 0
+            except (cc.ScopeError, cc.PermissionDenied, fi.FieldInboxError, fs.FieldStorageError):
+                pass
+    assert hit == 0                                                                                   # niciun signed URL / status cross-tenant
+    u = svc.file_url(A["main"], A["cem"], it["uid"], fu, ttl=100000)
+    assert u["expires_in"] == 300 and requests.get(u["url"], timeout=30).content == data
+    token_url = u["url"]
+    assert requests.get(token_url.split("?")[0], timeout=20).status_code >= 400                  # fără token: refuz
+    RES["SIGNED URL MAX TTL"] = u["expires_in"]

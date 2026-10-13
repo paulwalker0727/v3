@@ -505,3 +505,25 @@ def test_http_api_flow_security_and_no_secret_leak(fw):
         assert secret not in blob, "secret în răspuns"
     assert re.search(r"postgres(ql)?://", blob) is None
     assert all("no-store" in s for s in seen if "Cache-Control" in s)
+
+
+def test_cleanup_role_path_never_needs_inbox_privileges(fw):
+    """Regresie (găsită LIVE pe Supabase): trigger-ul inbox de pe cp_storage_objects nu trebuie să ceară drepturi pe tabelele inbox rolului de cleanup."""
+    t, media = fw["T"]["A"], fw["media"]
+    d = pdf()
+    uid = str(uuid.uuid4())
+    media.begin_upload(t["phone"], t["cem"], uid, "x.pdf", "application/pdf", len(d), sha(d), "document")
+    with adm(fw["pg"]) as c:
+        row = c.execute("SELECT prosecdef, proconfig FROM pg_proc WHERE proname='cp_storage_objects_inbox_guard'").fetchone()
+        assert row[0] and any(x.startswith("search_path=") for x in row[1])
+        assert not c.execute("SELECT has_table_privilege('cimitir_storage_cleanup','cp_field_inbox_attachments','SELECT')").fetchone()[0]
+        c.execute("UPDATE cp_storage_objects SET updated_at = now() - interval '9 hours' WHERE uid=%s", (uid,))
+        c.execute("SET ROLE cimitir_storage_cleanup")
+        assert c.execute("UPDATE cp_storage_objects SET status='CLEANING', cleanup_token=%s, cleanup_prev_status='PENDING', cleanup_claimed_at=now() WHERE uid=%s",
+                         (str(uuid.uuid4()), uid)).rowcount == 1
+        c.execute("RESET ROLE")
+    u2 = str(uuid.uuid4())
+    media.begin_upload(t["phone"], t["cem"], u2, "y.pdf", "application/pdf", len(d), sha(d), "document")
+    with adm(fw["pg"]) as c:
+        c.execute("UPDATE cp_storage_objects SET updated_at = now() - interval '9 hours' WHERE uid=%s", (u2,))
+    assert media.cleanup_orphans(t["main"], t["cem"], older_than_s=60)["stale_rows"] == 1
