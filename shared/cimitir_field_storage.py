@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import sqlite3
 import uuid
 from typing import Any, Dict, Optional
 
@@ -211,7 +212,11 @@ class FieldMediaStore:
             r = self._row(c, cem, uid)
             if not r:
                 raise cc.ScopeError("obiect inexistent")
-            if r["status"] != "DELETED" and not self._cas(c, cem, uid, _STAGING + ("READY",), "DELETED"):
+            try:
+                cas_ok = r["status"] == "DELETED" or self._cas(c, cem, uid, _STAGING + ("READY",), "DELETED")
+            except sqlite3.IntegrityError:                    # 018: obiect legat de un item Field Inbox activ
+                raise Conflict("obiectul este legat de un item Field Inbox activ") from None
+            if not cas_ok:
                 r = self._row(c, cem, uid)
                 if r["status"] != "DELETED":
                     raise Conflict("obiect revendicat de cleanup" if r["status"] == "CLEANING" else f"obiectul nu poate fi șters ({r['status']})")
