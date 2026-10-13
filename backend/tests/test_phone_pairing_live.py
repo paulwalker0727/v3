@@ -127,3 +127,33 @@ def test_03_concurrent_redeem_and_rate_limit(svc, live):
         except pp.RateLimited:
             out.append("l")
     assert out.count("r") == pp.RATE_LIMIT and out.count("l") == 2
+
+
+def test_04_phone_privileges_own_items_only_secrets_absent_and_inbox_regression(svc, live, caplog):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    s, inbox = svc
+    tA = T["A"]
+    code1, code2 = s.issue_code(tA["main"])["code"], s.issue_code(tA["main"])["code"]
+    p1, p2 = s.redeem(code1, "P1", source="198.51.100.40"), s.redeem(code2, "P2", source="198.51.100.41")
+    i1 = inbox.create_item(p1["binding_key"], tA["cem"], "live-" + uuid.uuid4().hex, "WORK", dict(PAY["WORK"]), grave_uid="G")["item"]
+    i2 = inbox.create_item(p2["binding_key"], tA["cem"], "live-" + uuid.uuid4().hex, "WORK", dict(PAY["WORK"]), grave_uid="G")["item"]
+    assert [x["uid"] for x in inbox.list_items(p1["binding_key"], tA["cem"])] == [i1["uid"]]
+    with pytest.raises(cc.ScopeError):
+        inbox.get_item(p1["binding_key"], tA["cem"], i2["uid"])
+    for call in (lambda: inbox.accept(p1["binding_key"], tA["cem"], i1["uid"]), lambda: inbox.reject(p1["binding_key"], tA["cem"], i1["uid"], "x"),
+                 lambda: inbox.mark_imported(p1["binding_key"], tA["cem"], i1["uid"]), lambda: s.issue_code(p1["binding_key"]), lambda: s.list_phones(p1["binding_key"]),
+                 lambda: s.revoke_phone(p1["binding_key"], p2["binding_uid"])):
+        with pytest.raises(cc.PermissionDenied):
+            call()
+    assert {x["uid"] for x in inbox.list_items(tA["main"], tA["cem"], "PENDING") if x["uid"] in (i1["uid"], i2["uid"])} == {i1["uid"], i2["uid"]}
+    assert inbox.accept(tA["main"], tA["cem"], i1["uid"])["item"]["status"] == "ACCEPTED"
+    assert inbox.reject(tA["main"], tA["cem"], i2["uid"], "motiv")["item"]["status"] == "REJECTED"
+    assert inbox.mark_imported(tA["main"], tA["cem"], i1["uid"])["item"]["status"] == "IMPORTED"
+    with aconn(live) as c:
+        assert c.execute("SELECT count(*) FROM cp_binding_issuers WHERE binding_uid IN (%s,%s)", (p1["binding_uid"], p2["binding_uid"])).fetchone()[0] == 0
+        dump = "".join(r[0] for tbl in ("device_pairing_codes", "device_cemetery_bindings", "devices", "cp_audit_log", "cp_pairing_attempts", "cp_field_inbox_items")
+                       for r in c.execute(f"SELECT t::text FROM {tbl} t").fetchall())
+    needles = [pp.normalize_code(code1), pp.normalize_code(code2), p1["binding_key"], p2["binding_key"], p1["binding_key"].split(".", 2)[2], p2["binding_key"].split(".", 2)[2]]
+    assert not any(n in dump for n in needles) and not any(n in caplog.text for n in needles)
+    assert "phone_paired" in dump and "phone_code_issued" in dump and "phone_revoked" in dump
