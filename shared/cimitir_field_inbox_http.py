@@ -144,7 +144,11 @@ def create_router(service: fi.FieldInboxService) -> APIRouter:
 def create_app(service: Optional[fi.FieldInboxService] = None) -> FastAPI:
     """Aplicația cloud Field Inbox; fără `service` îl construiește din mediu (CIMITIR_CP_DATABASE_URL, SUPABASE_*)."""
     app = FastAPI(title="Cimitir Field Inbox", docs_url=None, redoc_url=None, openapi_url=None)
-    app.include_router(create_router(service or fi.build_service_from_env()))
+    import cimitir_phone_pairing as pp
+    import cimitir_phone_pairing_http as pph
+    service = service or fi.build_service_from_env()
+    app.include_router(create_router(service))
+    app.include_router(pph.create_router(pp.PhonePairingService(service)))
 
     @app.get(wire.API + "/field-inbox-health")
     def health():

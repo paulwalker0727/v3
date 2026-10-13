@@ -449,7 +449,7 @@ def test_production_is_hard_blocked(fw):
     with pytest.raises(RuntimeError):
         ccp.PostgresControlPlane(url="postgresql://cimitir_cp_app.txuxkjgftopznvmooexq:x@aws-0-eu.pooler.supabase.com:6543/postgres")
     migs = [f.name for f in sorted(MIG.glob("*.sql"))]
-    assert migs[-4:] == ["015_field_storage.sql", "016_field_storage_cleanup.sql", "017_revoke_cleanup_role_membership.sql", "018_field_inbox.sql"]
+    assert migs[-5:] == ["015_field_storage.sql", "016_field_storage_cleanup.sql", "017_revoke_cleanup_role_membership.sql", "018_field_inbox.sql", "019_phone_pairing.sql"]
 
 
 # ===================================================================== 6. API HTTP (aceleași reguli, prin FastAPI)
