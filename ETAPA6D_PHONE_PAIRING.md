@@ -25,7 +25,7 @@ Rute: `/api/v1/phone-pairing/{codes,redeem,phones,phones/{uid}/revoke}`; `cimiti
 | izolare A/B | legătura e per cimitir; RLS + filtre explicite; MAIN vede/revocă doar telefoanele cimitirului propriu |
 | revocare | `revoke_phone` (doar MAIN, doar legături MOBILE din cimitirul propriu, idempotent); trigger DB: o legătură revocată nu se reactivează și nu își schimbă cheia |
 | fără secrete în telefon | telefonul primește doar cheia propriei legături; nu primește service-role / parole DB / `SUPABASE_SECRET_KEY` |
-| rate limiting | `cp_pairing_attempts`: contor atomic per găleată (hash IP sursă + hash `client_id`), 10 încercări / 15 min, numărat ÎNAINTE de verificarea codului (plafon valabil și sub concurență); succes = refund; 429 + `Retry-After` |
+| rate limiting | `cp_pairing_attempts`: contor atomic per găleată (hash IP sursă, validat prin proxy de încredere explicit + hash `client_id`), 10 încercări / 15 min, numărat ÎNAINTE de verificarea codului (plafon valabil și sub concurență); succes = refund; 429 + `Retry-After` |
 | validare server-side | tot (cod, TTL, tenant, rol MAIN, statusuri) în server + DB; clientul nu e crezut |
 | privilegii minime | legătura MOBILE: fără emitent de bootstrap (trigger DB), fără accept/reject/imported (018), fără emitere/listare/revocare; vede doar itemurile proprii |
 
@@ -37,7 +37,7 @@ Rute: `/api/v1/phone-pairing/{codes,redeem,phones,phones/{uid}/revoke}`; `cimiti
 - `cimitir_field_inbox_http.create_app`: montează routerul de pairing.
 
 ## Configurare operațională
-- În spatele unui proxy invers setează `CIMITIR_PAIRING_TRUSTED_PROXIES=<nr. proxy-uri>` (se folosește a N-a intrare de la dreapta din `X-Forwarded-For`). Fără setare, `X-Forwarded-For` e ignorat (nu poate fi falsificat), dar toți clienții din spatele proxy-ului împart aceeași găleată IP.
+- Rate limiting folosește IP-ul conexiunii (socket). Dacă serverul e în spatele unui reverse proxy, declară-l explicit: `CIMITIR_PAIRING_TRUSTED_PROXIES=<IP/CIDR,...>` (ex. `10.0.0.5,172.16.0.0/12`, adresele proxy-urilor așa cum le vede serverul). `X-Forwarded-For` se ia în calcul numai dacă IP-ul conexiunii e într-o rețea declarată; clientul real = prima intrare de la dreapta care nu e proxy de încredere, deci clienții din spatele proxy-ului au găleți separate, iar intrările din stânga (controlate de client) nu pot evita limita. Fără setare, cu valoare invalidă (intrare greșită, CIDR /0, vechiul număr de hop-uri) sau cu `X-Forwarded-For` malformat, header-ele forward sunt ignorate și limita rămâne activă pe IP-ul conexiunii (fail-safe). Alte header-e (`X-Real-IP`, `Forwarded`) nu se folosesc. IPv6: găleată pe /64. Nu declara niciodată un proxy către care clienții pot ajunge direct.
 - Pierderea răspunsului de redeem: codul e deja consumat ⇒ MAIN emite un cod nou; legătura orfană se revocă din `GET /phones` + `revoke`.
 
 ## Teste

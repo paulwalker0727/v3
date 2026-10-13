@@ -427,14 +427,86 @@ def test_http_flow_headers_errors_and_no_echo(pw):
     assert cl.get(fih.PREFIX + "/items", headers=H(key)).status_code == 401
 
 
-def test_http_rate_limit_ignores_spoofed_forwarded_for_unless_trusted(pw, monkeypatch):
-    cl = pw["client"]
+class _Peer:
+    """Doar în teste: setează IP-ul conexiunii (scope['client']) din header-ul x-test-peer."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            hdrs = [(k, v) for k, v in scope["headers"] if k != b"x-test-peer"]
+            peer = dict(scope["headers"]).get(b"x-test-peer")
+            scope = {**scope, "headers": hdrs, "client": (peer.decode(), 40000) if peer else scope.get("client")}
+        await self.app(scope, receive, send)
+
+
+@pytest.fixture()
+def px(pw, monkeypatch):
+    monkeypatch.delenv(pph.ENV_TRUSTED, raising=False)
+    app = FastAPI()
+    app.include_router(pph.create_router(pw["pp"]))
+    cl = TestClient(_Peer(app))
+
+    def hit(peer, xff=None):
+        h = {"x-test-peer": peer}
+        if xff is not None:
+            h["X-Forwarded-For"] = xff
+        return cl.post(pph.PREFIX + "/redeem", json={"code": pp.display_code(pp.new_code())}, headers=h).status_code
+
+    def buckets():
+        return {r[0] for r in sqlrow(pw, "SELECT bucket FROM cp_pairing_attempts")}
+    return {"hit": hit, "buckets": buckets, "env": monkeypatch.setenv}
+
+
+def _bucket(ip):
+    return "ip:" + pp._h("ip|" + ip)[:40]
+
+
+def test_proxy_no_trusted_proxy_forwarded_for_is_ignored(px):
     for i in range(pp.RATE_LIMIT):
-        assert cl.post(pph.PREFIX + "/redeem", json={"code": pp.display_code(pp.new_code())}, headers={"X-Forwarded-For": f"1.2.3.{i}"}).status_code == 401
-    r = cl.post(pph.PREFIX + "/redeem", json={"code": pp.display_code(pp.new_code())}, headers={"X-Forwarded-For": "1.2.3.250"})
-    assert r.status_code == 429 and int(r.headers["retry-after"]) >= 1 and r.json()["code"] == "RATE_LIMITED"
-    monkeypatch.setenv("CIMITIR_PAIRING_TRUSTED_PROXIES", "1")                          # în spatele unui proxy de încredere: se ia IP-ul real
-    assert cl.post(pph.PREFIX + "/redeem", json={"code": pp.display_code(pp.new_code())}, headers={"X-Forwarded-For": "203.0.113.77"}).status_code == 401
+        assert px["hit"]("198.51.100.7", f"1.2.3.{i}") == 401
+    assert px["hit"]("198.51.100.7", "1.2.3.250") == 429
+    assert px["hit"]("198.51.100.7") == 429
+    assert px["buckets"]() == {_bucket("198.51.100.7")}
+
+
+def test_proxy_trusted_proxy_uses_real_client_ip(px):
+    px["env"](pph.ENV_TRUSTED, "10.0.0.5")
+    for _ in range(pp.RATE_LIMIT):
+        assert px["hit"]("10.0.0.5", "203.0.113.9") == 401
+    assert px["hit"]("10.0.0.5", "203.0.113.9") == 429
+    assert px["buckets"]() == {_bucket("203.0.113.9")}                         # nu și IP-ul proxy-ului
+
+
+def test_proxy_two_clients_behind_same_trusted_proxy_are_isolated(px):
+    px["env"](pph.ENV_TRUSTED, "10.0.0.0/24")
+    for _ in range(pp.RATE_LIMIT):
+        assert px["hit"]("10.0.0.5", "203.0.113.9") == 401
+    assert px["hit"]("10.0.0.5", "203.0.113.9") == 429                        # clientul 1 blocat
+    assert px["hit"]("10.0.0.5", "203.0.113.10") == 401                       # clientul 2, același proxy: neafectat
+    assert px["hit"]("10.0.0.6", "203.0.113.10") == 401                       # același client prin alt proxy de încredere: aceeași găleată
+    assert _bucket("10.0.0.5") not in px["buckets"]() and _bucket("203.0.113.10") in px["buckets"]()
+
+
+def test_proxy_direct_client_cannot_evade_by_spoofing_forwarded_for(px):
+    px["env"](pph.ENV_TRUSTED, "10.0.0.5")
+    for i in range(pp.RATE_LIMIT):                                             # client direct (nu e proxy de încredere) își schimbă X-Forwarded-For
+        assert px["hit"]("198.51.100.7", f"203.0.113.{i}, 10.0.0.5") == 401
+    assert px["hit"]("198.51.100.7", "203.0.113.250") == 429
+    assert px["hit"]("198.51.100.7", "203.0.113.251, 10.0.0.5") == 429
+    for i in range(pp.RATE_LIMIT):                                             # prin proxy: intrările din stânga (controlate de client) nu schimbă găleata
+        assert px["hit"]("10.0.0.5", f"9.9.9.{i}, 203.0.113.50") == 401
+    assert px["hit"]("10.0.0.5", "8.8.8.8, 203.0.113.50") == 429
+
+
+@pytest.mark.parametrize("cfg", ["garbage", "1", "0.0.0.0/0", "::/0", "10.0.0.5,,", "10.0.0.5,bad", "10.0.0.5/8", "*", "10.0.0.5 10.0.0.6"])
+def test_proxy_invalid_config_fails_safe_and_rate_limit_stays_on(px, cfg):
+    px["env"](pph.ENV_TRUSTED, cfg)
+    for i in range(pp.RATE_LIMIT):
+        assert px["hit"]("10.0.0.5", f"203.0.113.{i}") == 401
+    assert px["hit"]("10.0.0.5", "203.0.113.250") == 429                       # header-ele ignorate, găleata = IP-ul conexiunii
+    assert px["buckets"]() == {_bucket("10.0.0.5")}
 
 
 def test_create_app_exposes_pairing_next_to_field_inbox(pw, monkeypatch):
