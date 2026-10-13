@@ -68,6 +68,11 @@ async def _body_limited(request: Request, limit: int) -> bytes:
     return bytes(buf)
 
 
+async def _json_body(request: Request, limit: int = 128 * 1024) -> Any:
+    import json
+    return json.loads(await _body_limited(request, limit))
+
+
 def create_router(service: fi.FieldInboxService) -> APIRouter:
     router = APIRouter(prefix=PREFIX)
 
@@ -91,7 +96,7 @@ def create_router(service: fi.FieldInboxService) -> APIRouter:
         return await anyio.to_thread.run_sync(fn)
 
     async def create(request: Request, key: str, cem: str):
-        b = await request.json()
+        b = await _json_body(request)
         if not isinstance(b, dict):
             raise ValueError("corp invalid")
         return await run(lambda: service.create_item(key, cem, b.get("idempotency_key"), b.get("item_type"), b.get("payload"), b.get("grave_uid"), b.get("target_uid"), b.get("work_stage")))
@@ -119,7 +124,7 @@ def create_router(service: fi.FieldInboxService) -> APIRouter:
         return await run(lambda: service.accept(key, cem, request.path_params["uid"]))
 
     async def reject(request: Request, key: str, cem: str):
-        b = await request.json()
+        b = await _json_body(request)
         return await run(lambda: service.reject(key, cem, request.path_params["uid"], b.get("reason") if isinstance(b, dict) else None))
 
     async def imported(request: Request, key: str, cem: str):

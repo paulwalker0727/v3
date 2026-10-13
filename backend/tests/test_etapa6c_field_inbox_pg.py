@@ -495,6 +495,10 @@ def test_http_api_flow_security_and_no_secret_leak(fw):
     assert call("POST", f"/items/{uid}/imported", A["main"]).json()["result"]["item"]["status"] == "IMPORTED"
     assert call("GET", f"/items/{uid}/files/{fu}/url", A["main"]).status_code == 409
     assert call("GET", "/items?status=IMPORTED", A["main"]).json()["result"][0]["uid"] == uid and call("GET", "/items?status=BOGUS", A["main"]).status_code == 400
+    big = {"idempotency_key": "big-" + uuid.uuid4().hex, "item_type": "WORK", "grave_uid": "G", "payload": {"descriere": "x" * (200 * 1024)}}
+    assert call("POST", "/items", A["phone"], json=big).status_code in (400, 415)           # corp JSON limitat (128 KiB)
+    assert call("POST", f"/items/{uid}/reject", A["main"], content=b"{" + b" " * (200 * 1024) + b"}").status_code in (400, 415)
+    assert "constraint" not in "".join(seen).lower() and "cp_field_inbox" not in "".join(seen)    # fără detalii de schemă în erori
     assert call("DELETE", f"/items/{uid}", A["main"]).status_code in (404, 405)                    # fără DELETE remote
     blob = "\n".join(seen)
     for secret in (STORAGE_KEY, fw["pg"]["app"], fw["pg"]["admin"], fw["pg"]["worker"], "cimitir_cp_app", "service_role", "SUPABASE_SECRET", B["main"], B["phone"], A["main"], A["phone"]):

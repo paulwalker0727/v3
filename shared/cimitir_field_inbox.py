@@ -178,8 +178,8 @@ class FieldInboxService:
                                 f"request_hash, created_by) VALUES (?,?,?,?,?,?,?,?::jsonb,?,?,?) ON CONFLICT (organization_uid, cemetery_uid, idempotency_key) DO NOTHING "
                                 f"RETURNING {_COLS}", (str(uuid.uuid4()), a["organization_uid"], a["cemetery_uid"], item_type, work_stage, target_uid, grave_uid,
                                                       json.dumps(clean, sort_keys=True), idempotency_key, h, a["binding_uid"]))
-            except sqlite3.IntegrityError as exc:
-                raise InvalidItem(f"item respins de baza de date: {exc}") from None
+            except sqlite3.IntegrityError:
+                raise InvalidItem("item respins de baza de date") from None
             row = cur.fetchone()
             if row:
                 return {"item": _public(row), "replayed": False}
@@ -219,9 +219,9 @@ class FieldInboxService:
             try:
                 n = c.execute("INSERT INTO cp_field_inbox_attachments (cemetery_uid, organization_uid, item_uid, object_uid, created_by) VALUES (?,?,?,?,?) "
                               "ON CONFLICT (cemetery_uid, object_uid) DO NOTHING", (a["cemetery_uid"], a["organization_uid"], item_uid, file_uid, a["binding_uid"])).rowcount
-            except sqlite3.IntegrityError as exc:
+            except sqlite3.IntegrityError:
                 self._drop_unlinked(binding_key, a, c, file_uid)
-                raise InvalidTransition(f"atașare respinsă: {exc}") from None
+                raise InvalidTransition("atașare respinsă de baza de date (itemul nu mai este PENDING sau obiectul nu e READY)") from None
             if n == 0:
                 owner = c.execute("SELECT item_uid FROM cp_field_inbox_attachments WHERE cemetery_uid=? AND object_uid=?", (a["cemetery_uid"], file_uid)).fetchone()
                 if not owner or owner["item_uid"] != item_uid:
@@ -318,8 +318,8 @@ class FieldInboxService:
                 if c.in_transaction:
                     c.execute("ROLLBACK")
                 raise
-        except sqlite3.IntegrityError as exc:
-            raise InvalidTransition(f"tranziție respinsă de baza de date: {exc}") from None
+        except sqlite3.IntegrityError:
+            raise InvalidTransition("tranziție respinsă de baza de date") from None
         finally:
             c.close()
 
