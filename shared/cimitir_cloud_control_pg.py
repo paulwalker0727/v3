@@ -31,7 +31,8 @@ import cimitir_manifest as mf
 PROTECTED_PROJECT_REFS = ("txuxkjgftopznvmooexq",)
 TEST_PROJECT_REF = "nhhczdmcocbobptogvsw"
 _CTX_KEYS = {"platform": "cp.platform", "org": "cp.org", "cems": "cp.cems", "principal": "cp.principal", "binding_uid": "cp.binding_uid",
-             "key_hash": "cp.key_hash", "code_hash": "cp.code_hash", "installation": "cp.installation", "run_id": "cp.run_id"}
+             "key_hash": "cp.key_hash", "code_hash": "cp.code_hash", "installation": "cp.installation", "run_id": "cp.run_id",
+             "pair_buckets": "cp.pair_buckets"}
 _TABLES = {"bootstrap_runs": "cp_bootstrap_runs", "staging_sessions": "cp_staging_sessions", "staging_batches": "cp_staging_batches",
            "staging_rows": "cp_staging_rows", "staging_media_blobs": "cp_staging_media_blobs", "staging_media_chunks": "cp_staging_media_chunks",
            "registry_rows": "cp_registry_rows", "registry_row_data": "cp_registry_row_data", "media_objects": "cp_media_objects",
@@ -339,7 +340,7 @@ class PostgresControlPlane(cc.LocalControlPlane):
             c.close()
 
     _CODE_SQL = ("SELECT code_hash, organization_uid, cemetery_uid, created_by AS issued_by, EXTRACT(EPOCH FROM expires_at)::float8 AS expires_at, "
-                 "EXTRACT(EPOCH FROM used_at)::float8 AS used_at, used_bootstrap_id FROM device_pairing_codes WHERE code_hash=?")
+                 "EXTRACT(EPOCH FROM used_at)::float8 AS used_at, used_bootstrap_id FROM device_pairing_codes WHERE code_hash=? AND device_type='MAIN'")
 
     def _code_row(self, c, code: str, installation_uid: str, allow_used_by: Optional[str] = None):
         c.set_ctx(installation=installation_uid, code_hash=cc._h(code or ""), org=None, cems=None, platform=None)
