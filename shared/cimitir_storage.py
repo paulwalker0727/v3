@@ -35,6 +35,10 @@ class NotFound(StorageError):
     pass
 
 
+class AlreadyExists(StorageError):
+    pass
+
+
 # ------------------------------------------------------------------ utilitare
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -311,6 +315,44 @@ class SupabaseStorage(Storage):
             return True
         except NotFound:
             return False
+
+    def put_bytes(self, key: str, data: bytes, mime: str = "", upsert: bool = False) -> None:
+        """Scrie octeții; fără upsert, un obiect existent ridică AlreadyExists (409 Duplicate)."""
+        try:
+            self._req("POST", f"{self.base}/object/{self.bucket}/{self._k(key)}", key, data=data,
+                      headers={"Content-Type": mime or guess_mime(key), "x-upsert": "true" if upsert else "false"})
+        except StorageError as exc:
+            if "Duplicate" in str(exc) or "KeyAlreadyExists" in str(exc):
+                raise AlreadyExists(key) from None
+            raise
+
+    def stat(self, key: str) -> Optional[Dict[str, Any]]:
+        """{size, mime} din HEAD (None dacă lipsește)."""
+        try:
+            r = self._req("HEAD", f"{self.base}/object/authenticated/{self.bucket}/{self._k(key)}", key)
+        except NotFound:
+            return None
+        return {"size": int(r.headers.get("content-length") or -1), "mime": r.headers.get("content-type", "")}
+
+    def signed_url(self, key: str, ttl: int) -> str:
+        """URL semnat cu token scurt (fără cheia secretă în URL); valabil `ttl` secunde."""
+        resp = self._req("POST", f"{self.base}/object/sign/{self.bucket}/{self._k(key)}", key, json={"expiresIn": int(ttl)})
+        rel = resp.json().get("signedURL") or ""
+        if not rel:
+            raise StorageError("Supabase nu a întors signedURL")
+        return rel if rel.startswith("http") else self.base + rel
+
+    def list_prefix(self, prefix: str) -> list:
+        """Obiectele DIRECTE din `prefix` (un nivel): [{name, size, created_at, updated_at}]."""
+        out, offset = [], 0
+        while True:
+            page = self._req("POST", f"{self.base}/object/list/{self.bucket}", prefix, json={"prefix": _check_key(prefix).strip("/"), "limit": 100, "offset": offset}).json()
+            for o in page:
+                if o.get("id"):
+                    out.append({"name": o["name"], "size": (o.get("metadata") or {}).get("size"), "created_at": o.get("created_at"), "updated_at": o.get("updated_at")})
+            if len(page) < 100:
+                return out
+            offset += 100
 
     def auth_ok(self) -> bool:
         """True doar dacă cheia AUTENTIFICĂ (listarea bucketurilor răspunde 200). 400/401/403 = cheie/URL respinse.
