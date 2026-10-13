@@ -686,6 +686,27 @@ def test_13_no_ready_object_was_ever_deleted_by_cleanup(live):
     assert len(rows) >= 6 and bad == 0
 
 
+def test_14_017_no_cleanup_role_membership_for_admin_or_worker(live):
+    with aconn(live) as a:
+        me = a.execute("SELECT current_user").fetchone()[0]
+        member, usage = a.execute("SELECT pg_has_role(current_user,'cimitir_storage_cleanup','MEMBER'), pg_has_role(current_user,'cimitir_storage_cleanup','USAGE')").fetchone()
+        flags = a.execute("SELECT coalesce(bool_or(inherit_option OR set_option), false) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid WHERE r.rolname='cimitir_storage_cleanup' AND m.member=(SELECT oid FROM pg_roles WHERE rolname=current_user)").fetchone()[0]
+        RES["MIGRATION ADMIN INHERIT/SET ON CLEANUP ROLE"] = "NO" if not flags and not usage else "YES"
+        RES["MIGRATION ADMIN MEMBER OF CLEANUP ROLE"] = "YES(admin-only platform grant, no INHERIT/SET)" if member else "NO"
+        assert not usage and not flags, (me, member, usage, flags)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            a.execute("SET ROLE cimitir_storage_cleanup")
+        assert a.execute("SELECT count(*) FROM pg_proc WHERE proname LIKE 'cp_storage_cleanup_%' AND pg_get_userbyid(proowner)='cimitir_storage_cleanup' AND prosecdef").fetchone()[0] == 5
+        assert a.execute("SELECT rolcanlogin FROM pg_roles WHERE rolname='cimitir_storage_cleanup'").fetchone()[0] is False
+    with wconn() as w:                                                   # worker-ul: membru doar al rolului exec, nu poate deveni rolul owner
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            w.execute("SET ROLE cimitir_storage_cleanup")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            w.execute("SELECT 1 FROM cp_storage_objects LIMIT 1")
+        assert w.execute("SELECT pg_has_role(current_user,'cimitir_storage_cleanup','MEMBER')").fetchone()[0] is False
+    RES["WORKER CAN SET ROLE CLEANUP"] = "NO"
+
+
 def test_99_role_still_restricted_and_summary(live):
     c = psycopg.connect(live["app"], autocommit=True)
     assert c.execute("select rolsuper, rolbypassrls from pg_roles where rolname=current_user").fetchone() == (False, False)

@@ -627,6 +627,37 @@ def test_delete_owner_flow_and_leftover_retry(world, monkeypatch):
     assert store.delete(t["key"], t["cem"], uid)["status"] == "DELETED" and uid not in in_store(world, "A")        # reluarea șterge rămășița
 
 
+def test_017_nonsuperuser_migration_role_keeps_no_membership_on_cleanup_owner_role():
+    """Ca pe Supabase: migrațiile rulează cu un login NON-superuser (CREATEROLE, owner de bază). 016 îi cere membership tranzitoriu; 017 îl retrage."""
+    name, adm_role = "cp6b_mig_" + uuid.uuid4().hex[:8], "cp6b_mig_admin"
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        c.execute(f"DROP ROLE IF EXISTS {adm_role}")
+        c.execute(f"CREATE ROLE {adm_role} LOGIN NOSUPERUSER CREATEROLE")
+        c.execute(f'CREATE DATABASE "{name}" OWNER {adm_role}')
+    try:
+        with psycopg.connect(_dsn(name, adm_role), autocommit=True) as c:
+            for f in sorted(MIG.glob("*.sql")):
+                c.execute(f.read_text(encoding="utf-8"))
+                if f.name.startswith("016_"):
+                    assert c.execute("SELECT pg_has_role(current_user,'cimitir_storage_cleanup','MEMBER')").fetchone()[0]          # 016 a avut nevoie de membership
+            assert not c.execute("SELECT rolsuper FROM pg_roles WHERE rolname=current_user").fetchone()[0]
+            assert not c.execute("SELECT pg_has_role(current_user,'cimitir_storage_cleanup','MEMBER') OR pg_has_role(current_user,'cimitir_storage_cleanup','USAGE')").fetchone()[0]
+            assert c.execute("SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid WHERE r.rolname='cimitir_storage_cleanup' AND m.member=(SELECT oid FROM pg_roles WHERE rolname=current_user)").fetchone()[0] == 0 \
+                or not c.execute("SELECT bool_or(inherit_option OR set_option) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid WHERE r.rolname='cimitir_storage_cleanup' AND m.member=(SELECT oid FROM pg_roles WHERE rolname=current_user)").fetchone()[0]
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                c.execute("SET ROLE cimitir_storage_cleanup")
+            # nimic altceva nu s-a schimbat: ownership, EXECUTE-only, fără privilegii noi
+            assert c.execute("SELECT count(*) FROM pg_proc WHERE proname LIKE 'cp_storage_cleanup_%%' AND pg_get_userbyid(proowner)='cimitir_storage_cleanup' AND prosecdef").fetchone()[0] == 5
+            assert not c.execute("SELECT has_table_privilege('cimitir_cp_app','cp_storage_objects','DELETE')").fetchone()[0]
+            assert c.execute("SELECT rolcanlogin FROM pg_roles WHERE rolname='cimitir_storage_cleanup'").fetchone()[0] is False
+            # re-rularea 017 e idempotentă
+            c.execute((MIG / "017_revoke_cleanup_role_membership.sql").read_text(encoding="utf-8"))
+    finally:
+        with psycopg.connect(ADMIN, autocommit=True) as c:
+            c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            c.execute(f"DROP ROLE IF EXISTS {adm_role}")
+
+
 def test_migration_016_is_additive_and_015_untouched():
     import subprocess
     root = Path(__file__).resolve().parents[2]
