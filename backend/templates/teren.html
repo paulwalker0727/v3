@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Trimite din teren{% endblock %}
+{% block content %}
+<style>
+.tr{max-width:560px;margin:0 auto;padding:4px 0 40px}.tr h1{font-size:22px;margin:0 0 4px}
+.tr-card{background:#fff;border:1px solid #d9dfda;border-radius:14px;padding:14px;margin:12px 0}
+.tr-card label{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b5a2b;margin:10px 0 4px}
+.tr-card input,.tr-card select,.tr-card textarea{width:100%;padding:12px;border:1px solid #b9c4bc;border-radius:10px;font-size:16px;background:#fff}
+.tr-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.tr-tile{min-height:56px;border-radius:12px;border:1px solid #2f5d44;background:#fff;font-size:15px;font-weight:600;cursor:pointer}
+.tr-tile.on{background:#2f5d44;color:#fff}.tr-btn{width:100%;min-height:50px;border-radius:12px;border:0;background:#2f5d44;color:#fff;font-size:17px;font-weight:700;margin-top:14px;cursor:pointer}
+.tr-btn:disabled{opacity:.5}.tr-btn.alt{background:#fff;color:#2f5d44;border:1px solid #2f5d44;margin-top:8px}
+.tr-msg{border-radius:12px;padding:12px;margin:12px 0;font-weight:600}.tr-msg.ok{background:#e3f4e8;border:1px solid #2f7a4a}.tr-msg.err{background:#fbe6e6;border:1px solid #a33}
+.tr-block{background:#fff4d6;border:1px solid #c9a35a;border-radius:12px;padding:12px;margin:12px 0}.hide{display:none}.mono{font-family:ui-monospace,monospace;word-break:break-all}
+.tr-row{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #eef1ee}.tr-row span:first-child{color:#6b7a70}
+</style>
+<div class="tr" data-testid="teren-page">
+  <h1>Trimite din teren</h1>
+  <p class="muted">Elementele ajung în Field Inbox și așteaptă aprobarea operatorului din MAIN.</p>
+
+  <div class="tr-block hide" id="tr-block" data-testid="teren-blocked"></div>
+  <button class="tr-btn alt hide" id="tr-retry-session" type="button" data-testid="teren-retry-session">Reîncearcă</button>
+
+  <div class="tr-card hide" id="tr-pair" data-testid="teren-pair">
+    <label for="tr-code">Cod de asociere (din MAIN)</label>
+    <input id="tr-code" autocomplete="off" autocapitalize="characters" data-testid="teren-pair-code">
+    <label for="tr-devname">Nume telefon</label>
+    <input id="tr-devname" maxlength="60" value="Telefon" data-testid="teren-pair-name">
+    <div class="tr-msg err hide" id="tr-pair-msg" data-testid="teren-pair-error"></div>
+    <button class="tr-btn" id="tr-pair-btn" type="button" data-testid="teren-pair-btn">Asociază telefonul</button>
+  </div>
+
+  <div id="tr-main" class="hide">
+    <div class="tr-card" data-testid="teren-grave-card">
+      <div class="tr-row"><span>Cimitir</span><b id="tr-cem" data-testid="teren-cemetery"></b></div>
+      <div class="tr-row"><span>Loc selectat</span><b id="tr-cod" data-testid="teren-grave-code"></b></div>
+      <div class="tr-row"><span>grave_uid</span><b class="mono" id="tr-guid" data-testid="teren-grave-uid"></b></div>
+      <label for="tr-q">Cod loc</label>
+      <input id="tr-q" placeholder="ex. A-1-10" autocomplete="off" data-testid="teren-loc-input">
+      <button class="tr-btn alt" id="tr-find" type="button" data-testid="teren-loc-find">Caută locul</button>
+      <a class="tr-btn alt" style="display:block;text-align:center;line-height:50px;text-decoration:none" href="/admin/harta" data-testid="teren-pick-on-map">Alege pe hartă</a>
+    </div>
+
+    <div class="tr-grid" data-testid="teren-menu">
+      <button type="button" class="tr-tile" id="tile-DECEASED" data-type="DECEASED" data-testid="tile-deceased">Persoană înhumată</button>
+      <button type="button" class="tr-tile" id="tile-WORK" data-type="WORK" data-testid="tile-work">Lucrare</button>
+      <button type="button" class="tr-tile" id="tile-PERMIT" data-type="PERMIT" data-testid="tile-permit">Aviz</button>
+      <button type="button" class="tr-tile" id="tile-DOCUMENT" data-type="DOCUMENT" data-testid="tile-document">Document</button>
+      <button type="button" class="tr-tile" id="tile-GRAVE_PHOTO" data-type="GRAVE_PHOTO" data-testid="tile-grave-photo">Poză loc</button>
+      <button type="button" class="tr-tile" id="tile-WORK_PHOTO" data-type="WORK_PHOTO" data-testid="tile-work-photo">Poză lucrare</button>
+    </div>
+
+    <div class="tr-card hide" id="tr-form" data-testid="teren-form">
+      <div id="sec-DECEASED" class="hide">
+        <label>Nume *</label><input name="nume" maxlength="200" data-testid="f-nume">
+        <label>Prenume</label><input name="prenume" maxlength="200" data-testid="f-prenume">
+        <label>Data nașterii</label><input name="data_nasterii" type="date" data-testid="f-data-nasterii">
+        <label>Data decesului</label><input name="data_deces" type="date" data-testid="f-data-deces">
+        <label>Data înhumării</label><input name="data_inhumare" type="date" data-testid="f-data-inhumare">
+        <label>Sex</label><select name="sex" data-testid="f-sex"><option value=""></option><option value="M">M</option><option value="F">F</option></select>
+        <label>Observații</label><textarea name="observatii" rows="2" maxlength="2000" data-testid="f-observatii-deceased"></textarea>
+      </div>
+      <div id="sec-WORK" class="hide">
+        <label>Tip lucrare *</label><input name="descriere" list="tr-work-types" maxlength="2000" data-testid="f-tip-lucrare">
+        <datalist id="tr-work-types"><option value="Curățare"><option value="Reparație monument"><option value="Amenajare"><option value="Turnare fundație"><option value="Montare cruce"></datalist>
+        <label>Executant</label><input name="executant" maxlength="200" data-testid="f-executant">
+        <label>Data început</label><input name="data_inceput" type="date" data-testid="f-data-inceput">
+        <label>Data sfârșit</label><input name="data_sfarsit" type="date" data-testid="f-data-sfarsit">
+        <label>Observații</label><textarea name="observatii" rows="2" maxlength="2000" data-testid="f-observatii-work"></textarea>
+      </div>
+      <div id="sec-PERMIT" class="hide">
+        <label>Nr. aviz *</label><input name="nr_aviz" maxlength="200" data-testid="f-nr-aviz">
+        <label>Data aviz</label><input name="data_aviz" type="date" data-testid="f-data-aviz">
+        <label>Lucrare</label><input name="lucrare" maxlength="2000" data-testid="f-lucrare-aviz">
+        <label>Observații</label><textarea name="observatii" rows="2" maxlength="2000" data-testid="f-observatii-permit"></textarea>
+      </div>
+      <div id="sec-DOCUMENT" class="hide">
+        <label>Tip document *</label>
+        <select name="doc_type" data-testid="f-doc-type"><option value=""></option>{% for v, l in doc_types %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select>
+        <label>Descriere</label><input name="caption" maxlength="200" data-testid="f-caption-doc">
+        <label>Nr. evidență</label><input name="nr_evidenta" maxlength="200" data-testid="f-nr-evidenta">
+        <label>Fișier (PDF, JPEG, PNG) *</label><input type="file" accept="application/pdf,image/jpeg,image/png" data-testid="f-file-doc"><div class="tr-picked muted"></div>
+      </div>
+      <div id="sec-GRAVE_PHOTO" class="hide">
+        <label>Fotografie loc *</label><input type="file" accept="image/*" capture="environment" data-testid="f-file-grave-photo"><div class="tr-picked muted"></div>
+        <label>Descriere</label><input name="caption" maxlength="200" data-testid="f-caption-grave-photo">
+      </div>
+      <div id="sec-WORK_PHOTO" class="hide">
+        <label>Etapa *</label>
+        <select name="work_stage" data-testid="f-stage"><option value=""></option><option value="BEFORE">ÎNAINTE</option><option value="DURING">ÎN TIMPUL</option><option value="AFTER">DUPĂ</option></select>
+        <label>Lucrare *</label><select name="target_uid" id="f-target" data-testid="f-target"></select>
+        <label>Fotografie lucrare *</label><input type="file" accept="image/*" capture="environment" data-testid="f-file-work-photo"><div class="tr-picked muted"></div>
+        <label>Descriere</label><input name="caption" maxlength="200" data-testid="f-caption-work-photo">
+      </div>
+      <div class="tr-msg hide" id="tr-msg" role="status"></div>
+      <button class="tr-btn" id="tr-send" type="button" disabled data-testid="teren-send-btn">Trimite</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>window.TEREN_CFG = {{ cfg|tojson }};</script>
+<script src="/static/teren.js"></script>
+<script src="/static/teren_ui.js"></script>
+{% endblock %}

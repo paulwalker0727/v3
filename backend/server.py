@@ -630,6 +630,57 @@ def harta(request: Request):
     return templates.TemplateResponse(request, "harta.html", _ctx(request, user))
 
 
+_TEREN_SKIP_DOCS = ("carte_identitate", "cerere_doc")
+
+
+def _teren_cloud_url() -> str:
+    u = (os.environ.get("CIMITIR_FIELD_INBOX_URL") or "").strip().rstrip("/")
+    p = urlparse(u)
+    return u if p.scheme in ("http", "https") and p.hostname else ""
+
+
+def _teren_loc(cod_loc: str):
+    """Locul selectat pe hartă: cod + grave_uid (uid-ul local) + lucrările cu uid (țintă pentru poze lucrare). None dacă nu există."""
+    if not cim.load_loc_by_cod(cod_loc):
+        return None
+    conn = cim.get_connection()
+    try:
+        r = conn.execute(f"SELECT uid FROM locuri_de_veci WHERE cod_loc = ? AND {cim.tenant_scope()}", (cod_loc,)).fetchone()
+        avize = []
+        try:
+            for a in conn.execute(f"SELECT uid, id, nr_aviz, lucrare FROM amenajari_avize WHERE cod_loc = ? AND uid IS NOT NULL AND uid <> '' AND {cim.tenant_scope()} ORDER BY id", (cod_loc,)).fetchall():
+                label = f"{(a['lucrare'] or 'Lucrare').strip()[:40]} #{a['id']}" + (f" (aviz {a['nr_aviz']})" if a["nr_aviz"] else "")
+                avize.append({"uid": a["uid"], "label": label})
+        except Exception:  # noqa: BLE001 - lucrările nu au încă uid (nimic importat din teren)
+            avize = []
+    finally:
+        conn.close()
+    uid = (r["uid"] if r else None) or None
+    return {"cod_loc": cod_loc, "grave_uid": uid, "cemetery_uid": _active_registry_uid() or "", "avize": avize}
+
+
+@admin.get("/teren", response_class=HTMLResponse)
+def teren_page(request: Request, cod_loc: str = ""):
+    user = _require(request)
+    if not user:
+        return _redirect_login()
+    cem_label = _registry_label() or cim.get_setting("cimitir_nume") or ""
+    cfg = {"cloud_url": _teren_cloud_url(), "cemetery_uid": _active_registry_uid() or "", "cemetery_label": cem_label,
+           "loc": _teren_loc(cod_loc.strip()) if cod_loc.strip() else None}
+    doc_types = [(k, v) for k, v in attachments.DOC_TYPES.items() if k not in _TEREN_SKIP_DOCS]
+    return templates.TemplateResponse(request, "teren.html", _ctx(request, user, cfg=cfg, doc_types=doc_types), headers={"Cache-Control": "no-store"})
+
+
+@admin.get("/teren/loc/{cod_loc}")
+def teren_loc(request: Request, cod_loc: str):
+    if not _require(request):
+        raise HTTPException(status_code=401)
+    d = _teren_loc(cod_loc)
+    if not d:
+        raise HTTPException(status_code=404, detail="Locul nu există")
+    return JSONResponse(d, headers={"Cache-Control": "no-store"})
+
+
 def _build_map():
     expired = _expired_cods()
     plots = []

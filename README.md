@@ -8,4 +8,5 @@
 - Etapa 6 (desktop ONLINE + OFFLINE prin API, PostgreSQL = sursa principală): [`ETAPA6_ONLINE_OFFLINE.md`](ETAPA6_ONLINE_OFFLINE.md)
 - Etapa 7 (documente online: storage S3-compatibil/Supabase, metadate în PostgreSQL): [`ETAPA7_DOCUMENTE_ONLINE.md`](ETAPA7_DOCUMENTE_ONLINE.md)
 - Etapa 9 (scurtături Windows pentru administrator): [`tools/windows/README_ADMIN_WINDOWS.md`](tools/windows/README_ADMIN_WINDOWS.md)
+- Phone Capture v1 (pagina „Trimite din teren” din portalul telefonului asociat): [`ETAPA_PHONE_CAPTURE.md`](ETAPA_PHONE_CAPTURE.md)
 - Etapa 3 (registre locale multiple în MAIN: organizații → cimitire, izolare per registru, adoptarea instalației vechi): [`ETAPA3_REGISTRE_LOCALE.md`](ETAPA3_REGISTRE_LOCALE.md)

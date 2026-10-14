@@ -9,6 +9,7 @@
       <div class="insp-status">{% with status=loc.status %}{% include 'partials/status_badge.html' %}{% endwith %}</div>
     </div>
     <a href="/admin/loc/{{ cod }}/fisa.pdf" target="_blank" class="btn-light" data-testid="fisa-pdf-btn"><i data-lucide="file-down"></i> Fișă PDF</a>
+    <a href="/admin/teren?cod_loc={{ cod|urlencode }}" class="btn-light" data-testid="send-from-field-btn"><i data-lucide="send"></i> Trimite din teren</a>
   </div>
 
   <div class="insp-tabs">
