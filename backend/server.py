@@ -1119,7 +1119,7 @@ async def loc_aviz(request: Request, cod_loc: str):
 
 def _lucrare_fields(b: dict, current: dict) -> dict:
     """Câmpurile permise pentru lucrare; la «finalizată» se completează data, la altă stare se șterge."""
-    out = {k: str(b[k]).strip()[:500] for k in ("nr", "data", "lucrare", "observatii") if k in b}
+    out = {k: str(b[k]).strip()[:500] for k in ("nr", "data", "lucrare", "observatii", "executant", "data_inceput") if k in b}
     stare = str(b.get("stare", current.get("stare", "")) or "")
     if stare in LUCRARE_STARI:
         out["stare"] = stare

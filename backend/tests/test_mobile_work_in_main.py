@@ -40,7 +40,7 @@ rp.update_loc_details("T-10", {{}})
 dp = rp.doc_strip_aviz
 out["admin"] = {{
     "rows": [[rp.tbl_avize.item(r, c).text() for c in range(rp.tbl_avize.columnCount())] for r in range(rp.tbl_avize.rowCount())],
-    "stare": dp.lbl_stare.text(), "final": dp.lbl_final.text(), "obs": dp.lbl_obs.text(),
+    "exec": dp.lbl_exec.text(), "start": dp.lbl_start.text(), "stare": dp.lbl_stare.text(), "final": dp.lbl_final.text(), "obs": dp.lbl_obs.text(),
     "stages": {{k: sorted(base(l.toolTip()) for l in s.findChildren(QLabel) if l.toolTip()) for k, s in dp.strips.items()}},
     "other": sorted(base(l.toolTip()) for l in dp.other.findChildren(QLabel) if l.toolTip()),
 }}
@@ -58,7 +58,7 @@ for w in panel.findChildren(QWidget):
         card.setdefault(n[11:], []).extend(sorted(base(t.doc["file_path"]) for t in w.findChildren(odp._Thumb)))
         card.setdefault(n[11:] + "_title", []).extend([l.text() for l in w.findChildren(QLabel) if "(" in l.text() and ")" in l.text()][:1])
 info = {{}}
-for n in ("stare", "finalizare", "observatii"):
+for n in ("executant", "data-inceput", "stare", "finalizare", "observatii"):
     info[n] = [l.text() for w in panel.findChildren(QWidget, "aviz-" + n) for l in w.findChildren(QLabel)]
 out["operator"] = {{"stages": card, "info": info,
                     "titles": [b.text() for b in panel.findChildren(odp.QPushButton) if "Aviz" in b.text()]}}
@@ -78,9 +78,13 @@ def test_phone_work_details_and_photo_stages_visible_in_main_admin_and_operator(
     server, db, tmp = phone
     c, _ = _login(server)
     assert c.post("/admin/ui/loc/T-10/aviz", data={"lucrare": "Reparație monument", "nr": "A-7", "data": "10.03.2025",
-                                                    "stare": "in_lucru", "observatii": "ciment"}).status_code == 200
+                                                    "stare": "in_lucru", "observatii": "ciment", "executant": "SC Marmura SRL",
+                                                    "data_inceput": "01.03.2025"}).status_code == 200
     aid = db.list_avize_for_loc("T-10")[0]["id"]
     assert c.post(f"/admin/ui/aviz/{aid}/edit", data={"stare": "finalizata", "observatii": "Test observație"}).status_code == 200
+    assert (db.get_aviz(aid)["executant"], db.get_aviz(aid)["data_inceput"]) == ("SC Marmura SRL", "01.03.2025")
+    drawer = c.get("/admin/ui/loc/T-10").text
+    assert "Executant: SC Marmura SRL" in drawer and "Început: 01.03.2025" in drawer
     for dt, name in (("lucrare_inainte", "inainte.jpg"), ("lucrare_in_timpul", "in_timpul.jpg"), ("lucrare_dupa", "dupa.jpg")):
         assert _up(c, "aviz", aid, dt, JPG, name).status_code == 200
     db.update_aviz(aid, {"data_finalizare": "15.04.2025"})  # dată cunoscută (portalul pune implicit data de azi)
@@ -98,6 +102,9 @@ def test_phone_work_details_and_photo_stages_visible_in_main_admin_and_operator(
     assert a["stare"] == "Finalizată"
     assert a["obs"] == "Test observație"
     assert a["final"] == "15.04.2025"
+    assert a["exec"] == "SC Marmura SRL" and a["start"] == "01.03.2025"
+    assert any(r[2] == "Reparație monument" and r[6] == "SC Marmura SRL" and r[7] == "01.03.2025" for r in a["rows"])
+    assert any(r[2] == "Lucrare MAIN" and r[6] == "" and r[7] == "" for r in a["rows"]), "lucrările fără executant/dată rămân goale"
     assert any(r[2] == "Reparație monument" and r[4] == "Finalizată" and r[5] == "15.04.2025" for r in a["rows"])
     assert any(r[2] == "Lucrare MAIN" and r[4] == "Nespecificată" and r[5] == "" for r in a["rows"])
     assert a["stages"] == {"lucrare_inainte": ["inainte.jpg"], "lucrare_in_timpul": ["in_timpul.jpg"], "lucrare_dupa": ["dupa.jpg"]}
@@ -111,6 +118,8 @@ def test_phone_work_details_and_photo_stages_visible_in_main_admin_and_operator(
     assert o["stages"]["lucrare_inainte_title"] == ["ÎNAINTE (1)", "ÎNAINTE (0)"]
     assert o["stages"]["lucrare_in_timpul_title"] == ["ÎN TIMPUL LUCRĂRII (1)", "ÎN TIMPUL LUCRĂRII (0)"]
     assert o["stages"]["lucrare_dupa_title"] == ["DUPĂ (1)", "DUPĂ (0)"]
+    assert any("SC Marmura SRL" in t for t in o["info"]["executant"])
+    assert any("01.03.2025" in t for t in o["info"]["data-inceput"])
     assert any("Finalizată" in t for t in o["info"]["stare"])
     assert any("15.04.2025" in t for t in o["info"]["finalizare"])
     assert any("Test observație" in t for t in o["info"]["observatii"])

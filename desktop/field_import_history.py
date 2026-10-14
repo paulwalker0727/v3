@@ -34,7 +34,7 @@ _KEY_RE = re.compile(r"(cimitir\.[0-9a-fA-F-]{8,}\.\S+|sb_secret_\S+|Binding\s+\
 _KINDS = {"inhumati": "inhumat", "amenajari_avize": "aviz"}
 _PAYLOAD_COLS = {
     "inhumat": ("nume", "prenume", "data_nasterii", "data_deces", "data_inhumare", "sex", "observatii"),
-    "aviz": ("nr_aviz", "data_aviz", "lucrare", "stare", "data_finalizare", "observatii"),
+    "aviz": ("nr_aviz", "data_aviz", "lucrare", "executant", "data_inceput", "stare", "data_finalizare", "observatii"),
 }
 _LOCAL_LABELS = {"nr_aviz": "Nr. aviz", "stare": "Stare", "data_finalizare": "Data finalizare", "doc_type": "Tip document", "caption": "Descriere",
                  "nr_evidenta": "Nr. evidență"}

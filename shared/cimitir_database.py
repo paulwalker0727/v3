@@ -442,6 +442,8 @@ def init_db() -> None:
             ("amenajari_avize", "stare TEXT"),
             ("amenajari_avize", "observatii TEXT"),
             ("amenajari_avize", "data_finalizare TEXT"),
+            ("amenajari_avize", "executant TEXT"),
+            ("amenajari_avize", "data_inceput TEXT"),
             ("locuri_de_veci", "extra_data TEXT"),
             ("cereri_concesionare", "cod_urmarire TEXT"),
             ("cereri_concesionare", "sync_version INTEGER DEFAULT 0"),
@@ -1126,7 +1128,7 @@ def _aviz_dict(r) -> Dict[str, Any]:
     g = lambda c: (r[c] if c in k else "") or ""  # noqa: E731
     return {"id": r["id"], "cod_loc": r["cod_loc"], "nr": r["nr_aviz"], "data": r["data_aviz"], "lucrare": g("lucrare"),
             "stare": g("stare"), "observatii": g("observatii"), "data_finalizare": g("data_finalizare"),
-            "created_at": r["created_at"]}
+            "executant": g("executant"), "data_inceput": g("data_inceput"), "created_at": r["created_at"]}
 
 
 def get_aviz(aviz_id: int) -> Optional[Dict[str, Any]]:
@@ -1139,11 +1141,11 @@ def get_aviz(aviz_id: int) -> Optional[Dict[str, Any]]:
 
 
 _AVIZ_COLS = {"nr": "nr_aviz", "data": "data_aviz", "lucrare": "lucrare", "stare": "stare", "observatii": "observatii",
-              "data_finalizare": "data_finalizare"}
+              "data_finalizare": "data_finalizare", "executant": "executant", "data_inceput": "data_inceput"}
 
 
 def update_aviz(aviz_id: int, fields: Dict[str, Any]) -> bool:
-    """Actualizează doar câmpurile primite (nr, data, lucrare, stare, observatii, data_finalizare)."""
+    """Actualizează doar câmpurile primite (nr, data, lucrare, stare, observatii, data_finalizare, executant, data_inceput)."""
     sets = [(_AVIZ_COLS[k], v if v is not None else "") for k, v in fields.items() if k in _AVIZ_COLS]
     if not sets:
         return False
@@ -1159,12 +1161,13 @@ def update_aviz(aviz_id: int, fields: Dict[str, Any]) -> bool:
         conn.close()
 
 
-def add_aviz(cod_loc: str, nr: str, data_aviz: Optional[str], lucrare: str = "") -> Optional[int]:
+def add_aviz(cod_loc: str, nr: str, data_aviz: Optional[str], lucrare: str = "",
+             executant: Optional[str] = None, data_inceput: Optional[str] = None) -> Optional[int]:
     conn = get_connection()
     try:
         cur = conn.execute(
-            "INSERT INTO amenajari_avize (cod_loc, nr_aviz, data_aviz, lucrare) VALUES (?, ?, ?, ?)",
-            (cod_loc, nr, data_aviz, lucrare or "")
+            "INSERT INTO amenajari_avize (cod_loc, nr_aviz, data_aviz, lucrare, executant, data_inceput) VALUES (?, ?, ?, ?, ?, ?)",
+            (cod_loc, nr, data_aviz, lucrare or "", (executant or "").strip() or None, (data_inceput or "").strip() or None)
         )
         return cur.lastrowid
     except Exception as e:
