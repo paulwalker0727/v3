@@ -304,6 +304,11 @@ class CemeteryUI(QMainWindow):
         self.act_field.setToolTip("Elemente trimise de telefoanele de teren, în așteptarea aprobării")
         self.act_field.triggered.connect(self.open_field_inbox_window)
         toolbar.addAction(self.act_field)
+        act_field_history = QAction("📜 Istoric importuri teren", self)
+        act_field_history.setObjectName("act-field-import-history")
+        act_field_history.setToolTip("Istoric importuri din teren (jurnal local): finalizare cloud, reluare, deschidere în MAIN")
+        act_field_history.triggered.connect(self.open_field_import_history_window)
+        toolbar.addAction(act_field_history)
         act_field_devices = QAction("📶 Cloud / Telefoane", self)
         act_field_devices.setObjectName("act-field-devices")
         act_field_devices.setToolTip("Telefoane / Dispozitive teren: cod de pairing, telefoane asociate, revocare")
@@ -723,6 +728,19 @@ class CemeteryUI(QMainWindow):
             dlg = FieldInboxWindow(self)
         except Exception as e:
             show_message(self, "Eroare", f"Nu am putut deschide Elemente din teren: {type(e).__name__}", level="error")
+            return
+        dlg.changed.connect(self.refresh_field_badge)
+        try:
+            dlg.exec()
+        finally:
+            self.refresh_field_badge()
+
+    def open_field_import_history_window(self):
+        try:
+            from field_import_history_window import FieldImportHistoryWindow
+            dlg = FieldImportHistoryWindow(self)
+        except Exception as e:
+            show_message(self, "Eroare", f"Nu am putut deschide Istoric importuri: {type(e).__name__}", level="error")
             return
         dlg.changed.connect(self.refresh_field_badge)
         try:
