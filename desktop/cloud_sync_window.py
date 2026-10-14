@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton, QCheckBox, QPlainTextEdit, QGroupBox, QMessageBox,
 )
 
+import cloud_profiles
 import cloud_sync
 
 
@@ -43,7 +44,18 @@ class CloudSyncWindow(QDialog):
 
         self.txt_url = QLineEdit(cfg["url"])
         self.txt_url.setPlaceholderText("ex: https://server-cimitir.ro")
-        self.txt_key = QLineEdit(cfg["key"])
+        try:
+            cloud_profiles.migrate_legacy_sync_key()
+        except Exception as exc:
+            print(f"[cloud_sync_window] migrare cheie: {type(exc).__name__}")
+        cfg = cloud_sync.get_config()
+        self.txt_key = QLineEdit(cloud_profiles.MASK if cfg["key"] else "")
+        self.txt_key.setEchoMode(QLineEdit.Password)
+        self._profile = cloud_profiles.active_profile()
+        if self._profile is not None:
+            self.txt_url.setReadOnly(True)
+            self.txt_key.setReadOnly(True)
+            self.txt_url.setToolTip(f"Gestionat de profilul activ: {self._profile.name}")
         self.txt_key.setPlaceholderText("cheia MAIN din /admin/setari (forma id_cimitir.secret)")
         self.chk_auto = QCheckBox("Sincronizează automat la fiecare 5 minute")
         self.chk_auto.setChecked(cfg["auto"])
@@ -74,7 +86,8 @@ class CloudSyncWindow(QDialog):
         self.btn_test = QPushButton("Testează conexiunea")
         self.btn_sync = QPushButton("Sincronizează acum")
         self.btn_sync.setDefault(True)
-        for b in (self.btn_save, self.btn_test, self.btn_sync):
+        self.btn_profiles = QPushButton("Profile conexiune…")
+        for b in (self.btn_save, self.btn_test, self.btn_sync, self.btn_profiles):
             btns.addWidget(b)
         btns.addStretch(1)
         root.addLayout(btns)
@@ -121,6 +134,26 @@ class CloudSyncWindow(QDialog):
         self.btn_demo.clicked.connect(self._delete_demo)
         self.btn_republish.clicked.connect(self._republish)
         self.btn_conflicts.clicked.connect(self._conflicts)
+        self.btn_profiles.clicked.connect(self._profiles)
+
+    def _profiles(self):
+        from cloud_profiles_dialog import CloudProfilesDialog
+        CloudProfilesDialog(self).exec()
+        self._profile = cloud_profiles.active_profile()
+        cfg = cloud_sync.get_config()
+        self.txt_url.setText(cfg["url"])
+        self.txt_key.setText(cloud_profiles.MASK if cfg["key"] else "")
+        self.txt_url.setReadOnly(self._profile is not None)
+        self.txt_key.setReadOnly(self._profile is not None)
+        self.lbl_state.setText(self._state_text())
+
+    def _key_value(self) -> str:
+        """Cheia nouă tastată; câmpul mascat înseamnă „neschimbată” (cheia reală rămâne în SecretStore)."""
+        text = self.txt_key.text().strip()
+        return "" if text == cloud_profiles.MASK else text
+
+    def _effective_key(self) -> str:
+        return self._key_value() or cloud_sync.get_config()["key"]
 
     def _conflicts(self):
         from cloud_conflicts_window import CloudConflictsDialog
@@ -202,15 +235,20 @@ class CloudSyncWindow(QDialog):
         return text
 
     def _save(self) -> bool:
-        url, key = self.txt_url.text().strip(), self.txt_key.text().strip()
+        url, key = self.txt_url.text().strip(), self._key_value()
         if url or key:
-            errors = cloud_sync.validate_config(url, key)
+            errors = cloud_sync.validate_config(url, key or self._effective_key())
             if errors:
                 self.log.appendPlainText("Configurația NU a fost salvată: " + " ".join(errors))
                 QMessageBox.warning(self, "Configurație invalidă", "\n".join(errors))
                 return False
-        cloud_sync.save_config(self.txt_url.text(), self.txt_key.text(), self.chk_auto.isChecked(),
-                               self.chk_burials.isChecked())
+        try:
+            cloud_sync.save_config(self.txt_url.text(), key, self.chk_auto.isChecked(), self.chk_burials.isChecked())
+        except cloud_profiles.ProfileError as exc:
+            self.log.appendPlainText(f"Configurația NU a fost salvată: {exc}")
+            QMessageBox.warning(self, "SecretStore", str(exc))
+            return False
+        self.txt_key.setText(cloud_profiles.MASK if cloud_sync.get_config()["key"] else "")
         cloud_sync.ensure_tables()
         try:
             import entity_sync
@@ -222,18 +260,17 @@ class CloudSyncWindow(QDialog):
         return True
 
     def _test(self):
-        errors = cloud_sync.validate_config(self.txt_url.text(), self.txt_key.text())
+        errors = cloud_sync.validate_config(self.txt_url.text(), self._effective_key())
         if errors:
             self.log.appendPlainText("Test oprit: " + " ".join(errors))
             QMessageBox.warning(self, "Configurație invalidă", "\n".join(errors))
             return
-        ok, msg = cloud_sync.check_connection(self.txt_url.text(), self.txt_key.text())
+        ok, msg = cloud_sync.check_connection(self.txt_url.text(), self._effective_key())
         if ok:
             if not self._save():
                 return
             ok, msg2 = cloud_sync.ping()
             msg = msg if ok else msg2
-        self.log.appendPlainText(msg)
         self.log.appendPlainText(msg)
         QMessageBox.information(self, "Test conexiune" if ok else "Conexiune eșuată", msg)
 

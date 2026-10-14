@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 import requests
 
 import cimitir_auth
+import cloud_profiles
 import cimitir_public
 import cimitir_requests
 import database as db
@@ -61,10 +62,20 @@ class Rejected(Exception):
 
 
 # ------------------------------------------------------------------ configurare
+def _connection() -> Tuple[str, str]:
+    """(url, cheie): profilul activ sau setările vechi; cheia vine DOAR din SecretStore (sau din valoarea veche încă nemigrată)."""
+    try:
+        return cloud_profiles.effective_connection()
+    except Exception as exc:
+        print(f"[cloud_sync] conexiune: {type(exc).__name__}")
+        return (db.get_setting(SET_URL) or "").strip().rstrip("/"), ""
+
+
 def get_config() -> Dict[str, Any]:
+    url, key = _connection()
     return {
-        "url": (db.get_setting(SET_URL) or "").strip().rstrip("/"),
-        "key": (db.get_setting(SET_KEY) or "").strip(),
+        "url": url,
+        "key": key,
         "auto": (db.get_setting(SET_AUTO) or "0") == "1",
         "burials": (db.get_setting(SET_BURIALS) or "0") == "1",
         "last": db.get_setting(SET_LAST) or "",
@@ -73,12 +84,16 @@ def get_config() -> Dict[str, Any]:
 
 
 def save_config(url: str, key: str, auto: bool, publish_burials: Optional[bool] = None) -> None:
-    db.set_setting(SET_URL, (url or "").strip().rstrip("/"))
-    db.set_setting(SET_KEY, (key or "").strip())
+    managed = cloud_profiles.active_profile() is not None
+    if not managed:
+        db.set_setting(SET_URL, (url or "").strip().rstrip("/"))
+        if (key or "").strip():
+            cloud_profiles.save_legacy_key(key)  # SecretStore; niciodată plaintext în SQLite
     db.set_setting(SET_AUTO, "1" if auto else "0")
     if publish_burials is not None:
         db.set_setting(SET_BURIALS, "1" if publish_burials else "0")
-    if url and key:
+    cfg = get_config()
+    if cfg["url"] and cfg["key"]:
         try:
             import entity_sync
             entity_sync.ensure_tracking(force=True)

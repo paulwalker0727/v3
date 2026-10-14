@@ -34,7 +34,8 @@ def _port() -> int:
 def _env(data: Path, **extra) -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("CIMITIR_") and k not in ("JWT_SECRET", "PORT")}
     env.update(CIMITIR_DATA_DIR=str(data), CIMITIR_ENV_FILE=str(data.parent / "nu.env"), CIMITIR_LOG_DIR=str(data.parent / "logs"),
-               PYTHONUNBUFFERED="1", QT_QPA_PLATFORM="offscreen", CIMITIR_IGNORE_PROJECT_ENV="1")
+               PYTHONUNBUFFERED="1", QT_QPA_PLATFORM="offscreen", CIMITIR_IGNORE_PROJECT_ENV="1",
+               **{"CIMITIR_SECRET_STORE": "test-encrypted", "CIMITIR_ALLOW_TEST_SECRETSTORE": "1", "CIMITIR_TEST_SECRET_KEY": "rAR-xhkir67T-0hgHU_d6gxHdQt7zqO9zPP-nl-r7yw="})
     env.update(extra)
     return env
 

@@ -32,7 +32,8 @@ def _free_port() -> int:
 
 def _env(data_dir: Path, **extra) -> dict:
     env = {k: v for k, v in os.environ.items() if k not in ("CIMITIR_DATA_DIR", "JWT_SECRET", "CIMITIR_MODE")}
-    env.update(CIMITIR_DATA_DIR=str(data_dir), CIMITIR_ENV_FILE=str(data_dir.parent / "nu.env"), PYTHONUNBUFFERED="1", CIMITIR_JOBS="0")
+    env.update(CIMITIR_DATA_DIR=str(data_dir), CIMITIR_ENV_FILE=str(data_dir.parent / "nu.env"), PYTHONUNBUFFERED="1", CIMITIR_JOBS="0",
+               **{"CIMITIR_SECRET_STORE": "test-encrypted", "CIMITIR_ALLOW_TEST_SECRETSTORE": "1", "CIMITIR_TEST_SECRET_KEY": "rAR-xhkir67T-0hgHU_d6gxHdQt7zqO9zPP-nl-r7yw="})
     env.update(extra)
     return env
 

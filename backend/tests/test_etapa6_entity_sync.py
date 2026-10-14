@@ -72,7 +72,7 @@ def client(name: str, key: str, code: str, url: str = SERVER) -> dict:
         cloud_sync.save_config({url!r}, {key!r}, False, False)
         out = {{}}
     """) + textwrap.dedent(code) + "\nprint('RESULT=' + json.dumps(out, default=str))\n"
-    env = {**os.environ, "CIMITIR_DATA_DIR": data_dir, "CIMITIR_MODE": "local", "CIMITIR_DB_ENGINE": "sqlite",
+    env = {**os.environ, "CIMITIR_SECRET_STORE": "test-encrypted", "CIMITIR_ALLOW_TEST_SECRETSTORE": "1", "CIMITIR_TEST_SECRET_KEY": "rAR-xhkir67T-0hgHU_d6gxHdQt7zqO9zPP-nl-r7yw=", "CIMITIR_DATA_DIR": data_dir, "CIMITIR_MODE": "local", "CIMITIR_DB_ENGINE": "sqlite",
            "PYTHONPATH": str(ROOT / "shared")}
     env.pop("DATABASE_URL", None)
     p = subprocess.run([PY, "-c", script], capture_output=True, text=True, env=env, timeout=180, cwd=ROOT / "desktop")

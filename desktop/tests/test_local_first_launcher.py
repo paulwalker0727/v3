@@ -174,7 +174,7 @@ def test_main_works_offline_with_cloud_configured_but_unreachable(data_env):
         print(json.dumps({{"ok": report["ok"], "seconds": dt, "local": db.get_setting("proba_locala"),
                           "pending": cs.pending_count(), "err": bool(db.get_setting(cs.SET_LAST_ERROR))}}))
     """)
-    proc = subprocess.run([sys.executable, "-c", script], env=os.environ.copy(), capture_output=True, text=True, timeout=120)
+    proc = subprocess.run([sys.executable, "-c", script], env={**os.environ, "CIMITIR_SECRET_STORE": "test-encrypted", "CIMITIR_ALLOW_TEST_SECRETSTORE": "1", "CIMITIR_TEST_SECRET_KEY": "rAR-xhkir67T-0hgHU_d6gxHdQt7zqO9zPP-nl-r7yw="}, capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0, proc.stderr[-800:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["ok"] is False and out["local"] == "ok" and out["err"] is True and out["seconds"] < 60
