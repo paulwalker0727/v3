@@ -6,13 +6,14 @@ from typing import Any, Callable
 
 from PySide6.QtCore import QThread, Signal
 
+import field_import
 import field_inbox_client as fic
 
 log = logging.getLogger("cimitir.field_worker")
 
 
 def error_text(exc: BaseException) -> str:
-    if isinstance(exc, fic.FieldCloudError):
+    if isinstance(exc, (fic.FieldCloudError, field_import.FieldImportError)):
         return str(exc)
     log.warning("eroare Field Inbox: %s", type(exc).__name__)
     return fic.UNAVAILABLE

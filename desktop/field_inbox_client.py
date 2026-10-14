@@ -2,8 +2,8 @@
 
 MAIN -> HTTPS API (`/api/v1/field-inbox`, `/api/v1/phone-pairing`) cu `Authorization: Binding <cheie>`; cheia vine din profilul Cloud activ
 (SecretStore, vezi cloud_profiles.py) și nu apare în UI, loguri, excepții sau răspunsuri. Mesajele de eroare sunt texte fixe (nu se afișează
-mesajul serverului). Nu există metodă pentru `imported` și nici ștergere: UI-ul poate doar PENDING -> ACCEPTED | REJECTED.
-URL-urile semnate se folosesc o singură dată, în memorie, fără header de autentificare, și nu se salvează.
+mesajul serverului). Nu există ștergere remote. UI-ul face PENDING -> ACCEPTED | REJECTED; `mark_imported` (ACCEPTED -> IMPORTED) este apelat DOAR de
+field_import.py, după commit-ul local. URL-urile semnate se folosesc o singură dată, în memorie, fără header de autentificare, și nu se salvează.
 """
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ ITEM_TYPES = ("DECEASED", "WORK", "PERMIT", "DOCUMENT", "GRAVE_PHOTO", "WORK_PHO
 STATUSES = ("PENDING", "ACCEPTED", "REJECTED", "IMPORTED")
 WORK_STAGES = ("BEFORE", "DURING", "AFTER")
 UI_TRANSITIONS = {"PENDING": ("ACCEPTED", "REJECTED")}
+IMPORT_TRANSITIONS = ("ACCEPTED", "IMPORTED")
 DEFAULT_REJECT_REASON = "Respins de operator"
 MAX_REASON = 500
 TIMEOUT = 15
@@ -49,7 +50,7 @@ _ERROR_TEXT = {
     "UNAUTHENTICATED": "Cheia de legătură MAIN este invalidă sau revocată. Verifică profilul Cloud activ.",
     "FORBIDDEN": "Operația cere un dispozitiv MAIN.", "SCOPE_MISMATCH": "Elementul nu există (sau aparține altui cimitir).",
     "INVALID_TRANSITION": "Tranziție invalidă: starea elementului s-a schimbat sau nu permite această operație.",
-    "ITEM_INVALID": "Cerere invalidă.", "NOT_READY": "Fișierul nu este disponibil pentru descărcare.", "RATE_LIMITED": "Prea multe încercări; reîncearcă mai târziu.",
+    "ITEM_INVALID": "Cerere invalidă.", "DOWNLOAD_REJECTED": "Descărcarea fișierului a fost refuzată.", "NOT_READY": "Fișierul nu este disponibil pentru descărcare.", "RATE_LIMITED": "Prea multe încercări; reîncearcă mai târziu.",
     "TOO_MANY_OPEN_CODES": "Prea multe coduri active; așteaptă expirarea sau folosirea lor.", "REQUEST_INVALID": "Cerere invalidă.",
     "STORAGE_UNAVAILABLE": UNAVAILABLE, "INTERNAL": "Eroare internă a serverului.",
 }
@@ -169,6 +170,21 @@ class FieldCloudClient:
             raise ApiError("PREVIEW_REJECTED")
         return data, mime
 
+    def download_signed(self, url: str) -> bytes:
+        """Descarcă un URL semnat (fără autentificare, fără redirect); URL-ul nu apare în excepții/loguri. Mărimea/SHA-256/tipul se verifică în apelant."""
+        if not url or cloud_sync.validate_url(_origin(url)):
+            raise ApiError("DOWNLOAD_REJECTED")
+        try:
+            resp = self._http.request("GET", url, headers={}, timeout=self._timeout, allow_redirects=False)
+        except requests.RequestException:
+            raise CloudUnavailable() from None
+        if resp.status_code >= 500 or resp.status_code in (301, 302, 303, 307, 308):
+            raise CloudUnavailable()
+        data = resp.content if resp.status_code == 200 else b""
+        if not data or len(data) > MAX_PREVIEW_BYTES:
+            raise ApiError("DOWNLOAD_REJECTED")
+        return data
+
     def accept(self, item_uid: str, current_status: Optional[str] = None) -> Dict[str, Any]:
         _guard(current_status, "ACCEPTED")
         return self._call("POST", f"{INBOX}/items/{item_uid}/accept")
@@ -177,6 +193,12 @@ class FieldCloudClient:
         _guard(current_status, "REJECTED")
         reason = (reason or "").strip()[:MAX_REASON] or DEFAULT_REJECT_REASON
         return self._call("POST", f"{INBOX}/items/{item_uid}/reject", body={"reason": reason})
+
+    def mark_imported(self, item_uid: str, current_status: Optional[str] = None) -> Dict[str, Any]:
+        """ACCEPTED -> IMPORTED (serverul tratează repetarea ca replay). Doar după commit-ul local; vezi field_import.py."""
+        if current_status is not None and current_status not in IMPORT_TRANSITIONS:
+            raise InvalidTransition(f"Tranziția {current_status} -> IMPORTED nu este permisă.")
+        return self._call("POST", f"{INBOX}/items/{item_uid}/imported")
 
     # ------------------------------------------------------------------ Phone Pairing
     def issue_pairing_code(self, ttl: int = 600) -> Dict[str, Any]:

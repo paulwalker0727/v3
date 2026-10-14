@@ -412,7 +412,10 @@ def test_invalid_transitions_blocked_client_and_server(env):
             c.accept(uid, st)
         with pytest.raises(fic.InvalidTransition):
             c.reject(uid, "x", st)
-    assert not hasattr(c, "mark_imported") and not hasattr(c, "imported") and fic.UI_TRANSITIONS == {"PENDING": ("ACCEPTED", "REJECTED")}
+    assert not hasattr(c, "imported") and fic.UI_TRANSITIONS == {"PENDING": ("ACCEPTED", "REJECTED")}
+    for st in ("PENDING", "REJECTED"):
+        with pytest.raises(fic.InvalidTransition):
+            c.mark_imported(acc, st)           # IMPORTED se cere doar din ACCEPTED, și doar de field_import după commit-ul local
     assert env.http.calls == [] or all("/accept" not in x["url"] and "/reject" not in x["url"] for x in env.http.calls)
     # stare veche în UI: serverul decide -> INVALID_TRANSITION, fără a modifica itemul
     with pytest.raises(fic.InvalidTransition) as e:
