@@ -1,10 +1,11 @@
 """field_inbox_window.py — „Elemente din teren" (Field Inbox) în MAIN: listă, filtre, previzualizare, Acceptă / Respinge.
 
 Doar HTTPS spre API (field_inbox_client); cererile rulează în thread (field_worker), UI-ul nu se blochează. Cloud nedisponibil = mesaj, fără crash.
-ACCEPTED = aprobat pentru import local ulterior (importul în SQLite nu face parte din această etapă).
+ACCEPTED = aprobat în cloud; „Importă în MAIN” (field_import.py) îl scrie în registrul SQLite activ, apoi îl marchează IMPORTED. Doar la acțiunea operatorului.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
@@ -15,9 +16,11 @@ from PySide6.QtWidgets import (
 )
 
 import access_session
+import field_import
 import field_inbox_client as fic
 from field_worker import run_task
 
+log = logging.getLogger("cimitir.field_inbox_window")
 COLUMNS = ("Tip", "Cimitir", "Loc / grave_uid", "Data", "Dispozitiv / telefon", "Status")
 KEYS = ("type", "cemetery", "place", "date", "device", "status")
 
@@ -97,14 +100,20 @@ class FieldInboxWindow(QDialog):
         self.btn_accept.setObjectName("field_accept")
         self.btn_reject = QPushButton("Respinge")
         self.btn_reject.setObjectName("field_reject")
+        self.btn_accept_import = QPushButton("Acceptă și importă")
+        self.btn_accept_import.setObjectName("field_accept_import")
+        self.btn_import = QPushButton("Importă în MAIN")
+        self.btn_import.setObjectName("field_import")
         btns.addStretch(1)
+        btns.addWidget(self.btn_import)
+        btns.addWidget(self.btn_accept_import)
         btns.addWidget(self.btn_accept)
         btns.addWidget(self.btn_reject)
         rl.addLayout(btns)
         split.addWidget(right)
         split.setSizes([650, 450])
         root.addWidget(split, 1)
-        note = QLabel("„Acceptă” = aprobat pentru import local ulterior (nu modifică încă registrul local).")
+        note = QLabel("„Acceptă” = aprobat în cloud (nu modifică registrul local). „Importă în MAIN” scrie în registrul local activ, cu confirmare, apoi marchează IMPORTED.")
         note.setStyleSheet("color: #94a3b8; font-size: 11px;")
         root.addWidget(note)
         self._set_review_enabled(False)
@@ -116,6 +125,8 @@ class FieldInboxWindow(QDialog):
         self.lst_files.currentRowChanged.connect(self._on_file)
         self.btn_accept.clicked.connect(self._accept)
         self.btn_reject.clicked.connect(self._reject)
+        self.btn_accept_import.clicked.connect(lambda: self._import(True))
+        self.btn_import.clicked.connect(lambda: self._import(False))
         self.reload()
 
     # ------------------------------------------------------------------ stare
@@ -126,9 +137,11 @@ class FieldInboxWindow(QDialog):
         self.lbl_state.setText(msg)
         self.btn_config.setVisible(not_configured)
 
-    def _set_review_enabled(self, on: bool) -> None:
+    def _set_review_enabled(self, on: bool, status: str = "") -> None:
         self.btn_accept.setEnabled(on)
         self.btn_reject.setEnabled(on)
+        self.btn_accept_import.setEnabled(on)
+        self.btn_import.setEnabled(status == "ACCEPTED")
 
     def _configure(self) -> None:
         from cloud_profiles_dialog import CloudProfilesDialog
@@ -148,6 +161,10 @@ class FieldInboxWindow(QDialog):
                 devices = fic.phone_names(client.list_phones())
             except fic.FieldCloudError:
                 devices = {}
+            try:
+                field_import.finalize_pending(client)       # doar statusul cloud al importurilor deja comise local; nu importă nimic nou
+            except Exception as exc:  # noqa: BLE001
+                log.debug("finalizare cloud amânată (%s)", type(exc).__name__)
             return items, devices
 
         def ok(res):
@@ -208,7 +225,7 @@ class FieldInboxWindow(QDialog):
         for f in pv["files"]:
             self.lst_files.addItem(QListWidgetItem(f"{f['filename']} ({f['mime']})"))
         self.lst_files.blockSignals(False)
-        self._set_review_enabled(pv["can_review"])
+        self._set_review_enabled(pv["can_review"], item["status"])
         if pv["files"]:
             self.lst_files.setCurrentRow(0)
         else:
@@ -276,6 +293,37 @@ class FieldInboxWindow(QDialog):
             self.reload()
 
         run_task(self, lambda: call(self._factory(), item), ok, fail)
+
+    def _import(self, accept_first: bool) -> None:
+        item = self._detail
+        want = "PENDING" if accept_first else "ACCEPTED"
+        if item is None or item["status"] != want or not self._can_review():
+            return
+        pv = field_import.preview(item, local_cemetery_name())
+        if not pv["can_import"]:
+            QMessageBox.warning(self, "Importă în MAIN", field_import.preview_text(pv))
+            return
+        title = "Acceptă și importă" if accept_first else "Importă în MAIN"
+        if QMessageBox.question(self, title, field_import.preview_text(pv) + "\n\nConfirmi importul în registrul local activ?") != QMessageBox.Yes:
+            return
+        self._set_review_enabled(False)
+        uid = item["uid"]
+
+        def ok(res):
+            self.lbl_state.setText(res.message)
+            if not res.cloud_final:
+                QMessageBox.information(self, "Field Inbox", res.message)
+            self.changed.emit()
+            if res.cloud_final:
+                self.cmb_status.setCurrentIndex(fic.STATUSES.index("IMPORTED"))
+            self.reload()
+
+        def fail(msg, nc):
+            self._fail(msg, nc)
+            QMessageBox.warning(self, "Field Inbox", msg)
+            self.reload()
+
+        run_task(self, lambda: (field_import.accept_and_import if accept_first else field_import.import_item)(self._factory(), uid), ok, fail)
 
     def _accept(self) -> None:
         self._review(lambda c, it: c.accept(it["uid"], it["status"]))
