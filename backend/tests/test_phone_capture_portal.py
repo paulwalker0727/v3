@@ -101,3 +101,26 @@ def test_cloud_not_configured_gives_empty_url(phone, monkeypatch):
     _s, c, _d = phone
     monkeypatch.delenv("CIMITIR_FIELD_INBOX_URL")
     assert '"cloud_url": ""' in c.get("/admin/teren").text
+
+
+def test_back_to_map_link_present_and_targets_harta(phone):
+    _s, c, _d = phone
+    h = c.get("/admin/teren?cod_loc=T-10").text
+    assert 'data-testid="teren-back-to-map"' in h and 'href="/admin/harta"' in h
+    assert h.index('data-testid="teren-back-to-map"') < h.index('data-testid="teren-grave-card"')
+
+
+def test_map_open_query_param_reopens_drawer_for_the_same_loc(phone):
+    _s, c, _d = phone
+    h = c.get("/admin/harta?open=T-10").text
+    assert 'openDrawer("T-10")' in h
+    assert 'data-testid="map-page"' in h
+    h2 = c.get("/admin/harta").text
+    assert "openDrawer(" not in h2
+
+
+def test_map_open_query_param_is_json_escaped_against_injection(phone):
+    _s, c, _d = phone
+    h = c.get("/admin/harta?open=%22%3B%3C%2Fscript%3E%3Cimg").text
+    assert "<script>initMap();" in h
+    assert "<img" not in h.split('setTimeout(function () { openDrawer(', 1)[1].split(");", 1)[0]

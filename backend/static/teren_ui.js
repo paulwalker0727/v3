@@ -21,6 +21,8 @@
     $('tr-cem').textContent = CFG.cemetery_label || '—';
     $('tr-cod').textContent = l ? l.cod_loc : 'neales';
     $('tr-guid').textContent = l && l.grave_uid ? l.grave_uid : (l ? 'lipsă (loc fără cod unic)' : '—');
+    var back = $('tr-back-map');
+    if (back) { back.href = l ? '/admin/harta?open=' + encodeURIComponent(l.cod_loc) : '/admin/harta'; }
     var sel = $('f-target');
     sel.innerHTML = '';
     var opts = (l ? l.avize : []).concat(state.sent.filter(function (s) { return l && s.cod_loc === l.cod_loc; }));

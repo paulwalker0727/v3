@@ -129,6 +129,31 @@ def test_pairing_wrong_code_rejected(world):
     assert out["pair"]["ok"] is False and out["storage"] == []
 
 
+# ------------------------------------------------------------------ grave_uid: preselecție din hartă, imun la falsificare
+def test_tap_grave_on_map_sends_the_resolved_grave_uid(world):
+    """Harta -> drawer -> „Trimite din teren" transmite portalului doar cod_loc; grave_uid vine din server (_teren_loc),
+    niciodată din URL/telefon. Aici simulăm exact grave_uid-ul pe care portalul l-ar fi rezolvat pentru locul ales pe hartă."""
+    it = sent(world, run(world, "send", req=_cap(world, GRAVE, REQS["DECEASED"])))
+    assert it["grave_uid"] == GRAVE
+
+
+def test_tampered_grave_uid_is_accepted_by_cloud_but_blocked_at_local_import(world, env, loc):
+    """Cloud-ul Field Inbox nu are registru de locuri (limitare documentată în ETAPA_PHONE_CAPTURE.md): dacă cineva ocolește
+    teren_ui.js (devtools) și trimite un grave_uid diferit de cel rezolvat de portal pentru locul selectat, cloud-ul nu îl
+    poate respinge — dar importul local (singurul loc unde există registrul de locuri) îl blochează MISSING_GRAVE și nu
+    scrie nimic în MAIN. Fără migration, fără endpoint nou: comportamentul existent e suficient și verificat aici."""
+    tampered = str(uuid.uuid4())
+    assert tampered != loc.uid
+    out = run(world, "send", req=_cap(world, tampered, REQS["DECEASED"]))
+    it = sent(world, out)
+    assert it["grave_uid"] == tampered
+    main_uid = env.inbox.add_item("DECEASED", status="ACCEPTED", payload=it["payload"], grave=tampered)
+    with pytest.raises(fim.ImportBlocked) as e:
+        fim.import_item(client(env), main_uid)
+    assert e.value.code == "MISSING_GRAVE"
+    assert rows("SELECT * FROM inhumati") == []
+
+
 # ------------------------------------------------------------------ trimitere pe tipuri
 def sent(world, out):
     assert out["result"]["ok"] is True and out["result"]["message"] == "Trimis în Field Inbox"
@@ -151,7 +176,7 @@ def test_deceased_without_any_date_has_no_date_keys(world):
 
 def test_work_with_executant_and_data_inceput(world):
     it = sent(world, run(world, "send", req=REQS["WORK"]))
-    assert it["item_type"] == "WORK" and it["payload"] == {"descriere": "Reparație monument", "executant": "SC Marmura", "data_inceput": "01.05.2026", "observatii": "ok"}
+    assert it["item_type"] == "WORK" and it["grave_uid"] == GRAVE and it["payload"] == {"descriere": "Reparație monument", "executant": "SC Marmura", "data_inceput": "01.05.2026", "observatii": "ok"}
 
 
 def test_work_without_optional_fields_has_none(world):
@@ -178,7 +203,7 @@ def test_document_pdf_jpeg_png_go_through_field_inbox_storage(world, name, mime)
 def test_grave_photo(world):
     out = run(world, "send", req=REQS["GRAVE_PHOTO"])
     it = sent(world, out)
-    assert it["item_type"] == "GRAVE_PHOTO" and it["work_stage"] is None and len(world.inbox.files[it["uid"]]) == 1
+    assert it["item_type"] == "GRAVE_PHOTO" and it["grave_uid"] == GRAVE and it["work_stage"] is None and len(world.inbox.files[it["uid"]]) == 1
     assert posts(out, "/files")[0]["headers"]["X-File-Name"] == "IMG_1.jpg"
 
 

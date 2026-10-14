@@ -623,11 +623,11 @@ def dashboard(request: Request):
 
 
 @admin.get("/harta", response_class=HTMLResponse)
-def harta(request: Request):
+def harta(request: Request, open: str = ""):
     user = _require(request)
     if not user:
         return _redirect_login()
-    return templates.TemplateResponse(request, "harta.html", _ctx(request, user))
+    return templates.TemplateResponse(request, "harta.html", _ctx(request, user, open_cod=open.strip()))
 
 
 _TEREN_SKIP_DOCS = ("carte_identitate", "cerere_doc")

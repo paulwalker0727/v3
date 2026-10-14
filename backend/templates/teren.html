@@ -12,8 +12,11 @@
 .tr-msg{border-radius:12px;padding:12px;margin:12px 0;font-weight:600}.tr-msg.ok{background:#e3f4e8;border:1px solid #2f7a4a}.tr-msg.err{background:#fbe6e6;border:1px solid #a33}
 .tr-block{background:#fff4d6;border:1px solid #c9a35a;border-radius:12px;padding:12px;margin:12px 0}.hide{display:none}.mono{font-family:ui-monospace,monospace;word-break:break-all}
 .tr-row{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #eef1ee}.tr-row span:first-child{color:#6b7a70}
+.tr-topnav{margin:0 0 10px}.tr-back{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:6px 10px;margin-left:-10px;border-radius:10px;color:#2f5d44;font-weight:700;font-size:14px;text-decoration:none}
+.tr-back:active{background:#eef3ef}
 </style>
 <div class="tr" data-testid="teren-page">
+  <div class="tr-topnav"><a href="/admin/harta" id="tr-back-map" class="tr-back" data-testid="teren-back-to-map"><i data-lucide="arrow-left"></i> Înapoi la hartă</a></div>
   <h1>Trimite din teren</h1>
   <p class="muted">Elementele ajung în Field Inbox și așteaptă aprobarea operatorului din MAIN.</p>
 

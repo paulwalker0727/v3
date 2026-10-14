@@ -26,5 +26,5 @@
 </div>
 {% endblock %}
 {% block extra_js %}
-<script>initMap();</script>
+<script>initMap();{% if open_cod %} setTimeout(function () { openDrawer({{ open_cod|tojson }}); }, 0);{% endif %}</script>
 {% endblock %}
