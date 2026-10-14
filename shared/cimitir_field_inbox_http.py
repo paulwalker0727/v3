@@ -5,6 +5,7 @@ Clientul (telefon / MAIN) nu primește niciodată parole PostgreSQL, SUPABASE_SE
 
   POST /api/v1/field-inbox/items                                   {idempotency_key, item_type, payload, grave_uid?, target_uid?, work_stage?}
   POST /api/v1/field-inbox/items/{uid}/files                       corp = octeții fișierului; Content-Type = PDF/JPEG/PNG; X-File-Uid, X-File-Name, [X-File-Sha256]
+  GET  /api/v1/field-inbox/me                                      -> {cemetery_uid, device_type} al legăturii (telefonul își verifică cimitirul)
   GET  /api/v1/field-inbox/items?status=&item_type=&limit=&offset=
   GET  /api/v1/field-inbox/items/{uid}
   GET  /api/v1/field-inbox/items/{uid}/files/{file_uid}/url?ttl=    (MAIN, sau telefonul pentru itemurile proprii PENDING)
@@ -15,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import os
 from typing import Any, Callable, Optional
 
 import anyio
@@ -130,6 +132,11 @@ def create_router(service: fi.FieldInboxService) -> APIRouter:
     async def imported(request: Request, key: str, cem: str):
         return await run(lambda: service.mark_imported(key, cem, request.path_params["uid"]))
 
+    async def me(request: Request, key: str, cem: str):
+        a = await run(lambda: service.authenticate(key))
+        return {"cemetery_uid": a["cemetery_uid"], "device_type": a["device_type"]}
+
+    route("GET", "/me", me)
     route("POST", "/items", create, lambda r: 200 if r["replayed"] else 201)
     route("POST", "/items/{uid}/files", upload, lambda r: 200 if r["replayed"] else 201)
     route("GET", "/items", lst)
@@ -141,9 +148,27 @@ def create_router(service: fi.FieldInboxService) -> APIRouter:
     return router
 
 
-def create_app(service: Optional[fi.FieldInboxService] = None) -> FastAPI:
+ENV_CORS = "CIMITIR_FIELD_INBOX_CORS_ORIGINS"
+_CORS_HEADERS = ["Authorization", "Content-Type", "X-File-Uid", "X-File-Name", "X-File-Sha256"]
+
+
+def cors_origins(raw: Optional[str] = None) -> list:
+    """Originile portalului telefonului (listă explicită, separată prin virgulă); `*` și valorile fără schemă sunt ignorate."""
+    raw = os.environ.get(ENV_CORS, "") if raw is None else raw
+    out = []
+    for o in (x.strip().rstrip("/") for x in raw.split(",")):
+        if o and o != "*" and o.startswith(("http://", "https://")):
+            out.append(o)
+    return out
+
+
+def create_app(service: Optional[fi.FieldInboxService] = None, origins: Optional[list] = None) -> FastAPI:
     """Aplicația cloud Field Inbox; fără `service` îl construiește din mediu (CIMITIR_CP_DATABASE_URL, SUPABASE_*)."""
     app = FastAPI(title="Cimitir Field Inbox", docs_url=None, redoc_url=None, openapi_url=None)
+    allowed = cors_origins() if origins is None else origins
+    if allowed:
+        from starlette.middleware.cors import CORSMiddleware
+        app.add_middleware(CORSMiddleware, allow_origins=allowed, allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=_CORS_HEADERS, max_age=600)
     import cimitir_phone_pairing as pp
     import cimitir_phone_pairing_http as pph
     service = service or fi.build_service_from_env()
