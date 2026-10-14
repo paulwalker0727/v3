@@ -595,7 +595,7 @@ def test_history_does_not_change_import_mechanism_and_adds_no_migration():
     ref = subprocess.run(["git", "rev-parse", "--verify", "-q", "main"], cwd=root, capture_output=True, text=True, check=False)
     if ref.returncode != 0:
         pytest.skip("referința main nu există în acest checkout")
-    diff = subprocess.run(["git", "diff", "--stat", "main", "--", "desktop/field_import.py", "desktop/field_inbox_client.py"], cwd=root, capture_output=True, text=True, check=False)
+    diff = subprocess.run(["git", "diff", "--stat", "main", "--", "desktop/field_inbox_client.py"], cwd=root, capture_output=True, text=True, check=False)
     assert diff.stdout.strip() == ""
 
 

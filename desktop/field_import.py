@@ -331,12 +331,10 @@ def plan_item(conn, item: Dict[str, Any]) -> Plan:
         else:
             p.entity_table, p.doc_entity = "amenajari_avize", ("aviz", "")
             if t == "WORK":
-                obs = _s(payload.get("observatii"))
-                if _s(payload.get("executant")):
-                    obs = (obs + "\n" if obs else "") + f"Executant: {_s(payload.get('executant'))}"
                 fin = _s(payload.get("data_sfarsit"))
-                p.entity_row = {"cod_loc": p.grave["cod_loc"], "nr_aviz": "", "data_aviz": _s(payload.get("data_inceput")), "lucrare": _s(payload.get("descriere")),
-                                "stare": "finalizata" if fin else "", "observatii": obs, "data_finalizare": fin}
+                p.entity_row = {"cod_loc": p.grave["cod_loc"], "nr_aviz": "", "data_aviz": "", "lucrare": _s(payload.get("descriere")),
+                                "stare": "finalizata" if fin else "", "observatii": _s(payload.get("observatii")), "data_finalizare": fin,
+                                "executant": _s(payload.get("executant")), "data_inceput": _s(payload.get("data_inceput"))}
                 p.destination = f"Amenajări / lucrări — loc {p.grave['cod_loc']}"
             else:
                 p.entity_row = {"cod_loc": p.grave["cod_loc"], "nr_aviz": _s(payload.get("nr_aviz")), "data_aviz": _s(payload.get("data_aviz")),

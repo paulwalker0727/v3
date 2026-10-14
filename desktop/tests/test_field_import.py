@@ -118,8 +118,8 @@ def test_import_work_maps_all_supported_fields(env, loc):
     r = rows("SELECT * FROM amenajari_avize WHERE uid=?", uid)
     assert len(r) == 1
     r = r[0]
-    assert (r["cod_loc"], r["lucrare"], r["data_aviz"], r["data_finalizare"], r["stare"], r["nr_aviz"]) == ("G-12", "Placare", "01.05.2026", "09.05.2026", "finalizata", "")
-    assert "ok" in r["observatii"] and "Executant: SC Marmura" in r["observatii"]
+    assert (r["cod_loc"], r["lucrare"], r["data_aviz"], r["data_finalizare"], r["stare"], r["nr_aviz"]) == ("G-12", "Placare", "", "09.05.2026", "finalizata", "")
+    assert (r["executant"], r["data_inceput"], r["observatii"]) == ("SC Marmura", "01.05.2026", "ok")
     assert env.inbox.items[uid]["status"] == "IMPORTED"
 
 
@@ -127,7 +127,7 @@ def test_import_work_without_end_date_has_no_invented_state(env, loc):
     uid = add(env, loc, "WORK", payload={"descriere": "Curățare"})
     fim.import_item(client(env), uid)
     r = rows("SELECT * FROM amenajari_avize WHERE uid=?", uid)[0]
-    assert r["stare"] == "" and r["data_finalizare"] == "" and r["data_aviz"] == ""
+    assert r["stare"] == "" and r["data_finalizare"] == "" and r["data_aviz"] == "" and r["executant"] == "" and r["data_inceput"] == ""
 
 
 def test_import_permit_maps_to_existing_aviz_model(env, loc):

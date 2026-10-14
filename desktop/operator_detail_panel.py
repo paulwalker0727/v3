@@ -544,7 +544,9 @@ class OperatorDetailPanel(QWidget):
         sub.add(self._info_row("Nr. aviz", str(av.get("nr", "") or "")))
         sub.add(self._info_row("Data aviz", str(av.get("data", "") or "")))
         sub.add(self._info_row("Lucrare", str(av.get("lucrare", "") or "")))
-        for name, label, value in (("stare", "Stare", wd.stare_label(av)),
+        for name, label, value in (("executant", "Executant", str(av.get("executant", "") or "")),
+                                   ("data-inceput", "Data început", str(av.get("data_inceput", "") or "")),
+                                   ("stare", "Stare", wd.stare_label(av)),
                                    ("finalizare", "Data finalizării", wd.finalizare_label(av)),
                                    ("observatii", "Observații", str(av.get("observatii", "") or ""))):
             row = self._info_row(label, value)
@@ -591,7 +593,8 @@ class OperatorDetailPanel(QWidget):
         res = dlg.get_result()
         if not res:
             return
-        aid = db.add_aviz(cod_loc, res.get("nr", ""), res.get("data", ""), res.get("lucrare", ""))
+        aid = db.add_aviz(cod_loc, res.get("nr", ""), res.get("data", ""), res.get("lucrare", ""),
+                          res.get("executant", ""), res.get("data_inceput", ""))
         if aid and res.get("photo"):
             db.add_document("aviz", aid, "foto_lucrare", res["photo"], caption=res.get("lucrare", ""))
         self.show_loc(cod_loc)

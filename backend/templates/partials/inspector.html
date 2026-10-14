@@ -144,6 +144,8 @@
           <div><label>Nr. aviz</label><input name="nr" data-testid="lucrare-nr" /></div>
           <div><label>Data</label><input name="data" value="{{ today }}" data-testid="lucrare-data" /></div>
           {% if d.lucrari_extended %}
+          <div><label>Executant</label><input name="executant" data-testid="lucrare-executant" /></div>
+          <div><label>Data început</label><input name="data_inceput" data-testid="lucrare-data-inceput" /></div>
           <div class="col2"><label>Stare</label><select name="stare" data-testid="lucrare-stare">{% for k,v in d.stari.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></div>
           <div class="col2"><label>Observații</label><textarea name="observatii" rows="2" data-testid="lucrare-observatii"></textarea></div>
           {% endif %}
@@ -155,6 +157,8 @@
         <div class="li-row">
           <div><div class="strong">{{ x.lucrare or 'Lucrare' }}</div>
             <div class="muted-xs">Aviz {{ x.nr or '—' }} · {{ x.data or '' }}{% if x.data_finalizare %} · finalizată {{ x.data_finalizare }}{% endif %}</div>
+            {% if x.executant %}<div class="muted-xs" data-testid="lucrare-executant-{{ x.id }}">Executant: {{ x.executant }}</div>{% endif %}
+            {% if x.data_inceput %}<div class="muted-xs" data-testid="lucrare-data-inceput-{{ x.id }}">Început: {{ x.data_inceput }}</div>{% endif %}
             {% if x.observatii %}<div class="muted-xs">{{ x.observatii }}</div>{% endif %}</div>
           {% if d.lucrari_extended %}<span class="stare-badge stare-{{ x.stare or 'planificata' }}" data-testid="lucrare-stare-{{ x.id }}">{{ d.stari.get(x.stare or 'planificata', x.stare) }}</span>{% endif %}
         </div>
@@ -176,6 +180,8 @@
             <div><label>Nr. aviz</label><input name="nr" value="{{ x.nr or '' }}" /></div>
             <div><label>Data</label><input name="data" value="{{ x.data or '' }}" /></div>
             {% if d.lucrari_extended %}
+            <div><label>Executant</label><input name="executant" value="{{ x.executant or '' }}" data-testid="edit-lucrare-{{ x.id }}-executant" /></div>
+            <div><label>Data început</label><input name="data_inceput" value="{{ x.data_inceput or '' }}" data-testid="edit-lucrare-{{ x.id }}-data-inceput" /></div>
             <div class="col2"><label>Stare</label><select name="stare" data-testid="edit-lucrare-{{ x.id }}-stare">{% for k,v in d.stari.items() %}<option value="{{ k }}" {{ 'selected' if (x.stare or 'planificata') == k }}>{{ v }}</option>{% endfor %}</select></div>
             <div class="col2"><label>Observații</label><textarea name="observatii" rows="2" data-testid="edit-lucrare-{{ x.id }}-observatii">{{ x.observatii }}</textarea></div>
             {% endif %}

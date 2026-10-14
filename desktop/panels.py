@@ -235,6 +235,13 @@ class AddAvizDialog(QDialog):
 
         # numele lucrării
         self.txt_lucrare = QLineEdit()
+        self.txt_executant = QLineEdit()
+        self.date_inceput = QDateEdit()
+        self.date_inceput.setDisplayFormat("dd.MM.yyyy")
+        self.date_inceput.setCalendarPopup(True)
+        self.date_inceput.setMinimumDate(QDate(1900, 1, 1))
+        self.date_inceput.setSpecialValueText("—")
+        self.date_inceput.setDate(self.date_inceput.minimumDate())
 
         # selectare fotografie pentru aviz
         photo_row = QHBoxLayout()
@@ -246,6 +253,8 @@ class AddAvizDialog(QDialog):
         form.addRow("Număr aviz:", self.txt_nr)
         form.addRow("Data aviz:", self.date_aviz)
         form.addRow("Lucrare efectuată:", self.txt_lucrare)
+        form.addRow("Executant:", self.txt_executant)
+        form.addRow("Data început:", self.date_inceput)
         form.addRow("Fotografie aviz:", photo_row)
 
         layout.addLayout(form)
@@ -275,6 +284,10 @@ class AddAvizDialog(QDialog):
                 if qd.isValid():
                     self.date_aviz.setDate(qd)
             self.txt_lucrare.setText(str(existing.get("lucrare", "") or ""))
+            self.txt_executant.setText(str(existing.get("executant", "") or ""))
+            qi = QDate.fromString(str(existing.get("data_inceput", "") or ""), "dd.MM.yyyy")
+            if qi.isValid():
+                self.date_inceput.setDate(qi)
             p = existing.get("photo", "") or existing.get("photo_path", "")
             if p:
                 self._photo_path = p
@@ -294,7 +307,9 @@ class AddAvizDialog(QDialog):
         if not nr:
             show_message(self, "Eroare", "Completați numărul avizului.", level="warning")
             return
-        self._result = {"nr": nr, "data": d, "lucrare": lucrare, "photo": self._photo_path}
+        start = "" if self.date_inceput.date() == self.date_inceput.minimumDate() else self.date_inceput.date().toString("dd.MM.yyyy")
+        self._result = {"nr": nr, "data": d, "lucrare": lucrare, "photo": self._photo_path,
+                        "executant": self.txt_executant.text().strip(), "data_inceput": start}
         self.accept()
 
     def get_result(self) -> Optional[Dict]:
@@ -563,6 +578,10 @@ class AvizDocsPanel(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(6)
         form = QFormLayout()
+        self.lbl_exec = QLabel("—")
+        self.lbl_exec.setObjectName("aviz-executant")
+        self.lbl_start = QLabel("—")
+        self.lbl_start.setObjectName("aviz-data-inceput")
         self.lbl_stare = QLabel("—")
         self.lbl_stare.setObjectName("aviz-stare")
         self.lbl_final = QLabel("—")
@@ -571,6 +590,8 @@ class AvizDocsPanel(QWidget):
         self.lbl_obs.setObjectName("aviz-observatii")
         self.lbl_obs.setWordWrap(True)
         self.lbl_obs.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        form.addRow("Executant:", self.lbl_exec)
+        form.addRow("Data început:", self.lbl_start)
         form.addRow("Stare:", self.lbl_stare)
         form.addRow("Data finalizării:", self.lbl_final)
         form.addRow("Observații:", self.lbl_obs)
@@ -594,11 +615,13 @@ class AvizDocsPanel(QWidget):
             except Exception:
                 av = None
         if av:
+            self.lbl_exec.setText(str(av.get("executant") or "") or "—")
+            self.lbl_start.setText(str(av.get("data_inceput") or "") or "—")
             self.lbl_stare.setText(wd.stare_label(av))
             self.lbl_final.setText(wd.finalizare_label(av) or "—")
             self.lbl_obs.setText(str(av.get("observatii") or "") or "—")
         else:
-            for lbl in (self.lbl_stare, self.lbl_final, self.lbl_obs):
+            for lbl in (self.lbl_exec, self.lbl_start, self.lbl_stare, self.lbl_final, self.lbl_obs):
                 lbl.setText("—")
         for st in list(self.strips.values()) + [self.other]:
             st.set_entity(entity_type, entity_id, st.doc_type)
@@ -1022,8 +1045,8 @@ class RightPanel(QWidget):
         v.addLayout(top)
 
         # tabel avize: Număr | Data | Lucrare | Fotografie
-        self.tbl_avize = QTableWidget(0, 6)
-        self.tbl_avize.setHorizontalHeaderLabels(["Număr aviz", "Data aviz", "Lucrare", "Fotografie", "Stare", "Finalizată la"])
+        self.tbl_avize = QTableWidget(0, 8)
+        self.tbl_avize.setHorizontalHeaderLabels(["Număr aviz", "Data aviz", "Lucrare", "Fotografie", "Stare", "Finalizată la", "Executant", "Data început"])
         header = self.tbl_avize.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -1031,6 +1054,8 @@ class RightPanel(QWidget):
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)
         self.tbl_avize.setMaximumHeight(190)
         self.tbl_avize.setSelectionBehavior(QTableWidget.SelectRows)
         self.tbl_avize.setSelectionMode(QTableWidget.SingleSelection)
@@ -1540,6 +1565,8 @@ class RightPanel(QWidget):
             self.tbl_avize.setItem(r, 3, photo_item)
             self.tbl_avize.setItem(r, 4, QTableWidgetItem(wd.stare_label(a)))
             self.tbl_avize.setItem(r, 5, QTableWidgetItem(wd.finalizare_label(a)))
+            self.tbl_avize.setItem(r, 6, QTableWidgetItem(str(a.get("executant") or "")))
+            self.tbl_avize.setItem(r, 7, QTableWidgetItem(str(a.get("data_inceput") or "")))
         # update remove button state
         self.btn_remove_aviz.setEnabled(self._editing_enabled and self.tbl_avize.rowCount() > 0)
 
@@ -1556,7 +1583,8 @@ class RightPanel(QWidget):
         # persistăm în DB
         try:
             aid = db.add_aviz(self.current_cod_loc, res.get("nr", ""),
-                              res.get("data", ""), res.get("lucrare", ""))
+                              res.get("data", ""), res.get("lucrare", ""),
+                              res.get("executant", ""), res.get("data_inceput", ""))
         except Exception as e:
             show_message(self, "Eroare", f"Nu am putut salva avizul: {e}", level="error")
             return
