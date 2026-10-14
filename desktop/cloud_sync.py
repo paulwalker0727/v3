@@ -116,6 +116,7 @@ def url_is_secure(url: str) -> bool:
 
 
 _KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]{32,}$")
+_BINDING_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{32,}$")
 
 
 def validate_url(url: str) -> str:
@@ -142,7 +143,7 @@ def validate_key(key: str) -> str:
         return "Completează cheia de sincronizare."
     if re.search(r"\s", key) or key[0] in "'\"" or key[-1] in "'\"":
         return "Cheia conține spații sau ghilimele; copiaz-o exact, fără ele."
-    if not _KEY_RE.match(key):
+    if not (_KEY_RE.match(key) or _BINDING_KEY_RE.match(key)):
         return "Cheia nu are forma corectă (<id_cimitir>.<secret>). Generează „cheie MAIN” din /admin/setari de pe server."
     return ""
 

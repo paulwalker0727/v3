@@ -128,6 +128,15 @@ class CemeteryUI(QMainWindow):
         except Exception:
             self._auto_sync = None
 
+        # Field Inbox: verificare non-blocantă la pornire și periodică (fără Cloud, MAIN pornește normal)
+        self._field_busy = False
+        self._field_last = None
+        self._field_timer = QTimer(self)
+        self._field_timer.setInterval(60000)
+        self._field_timer.timeout.connect(lambda: self.refresh_field_badge(announce=True))
+        self._field_timer.start()
+        QTimer.singleShot(1500, lambda: self.refresh_field_badge(announce=True))
+
         # încărcare inițială (defensiv)
         fn = getattr(self.actions, "load_saved_map", None)
         if callable(fn):
@@ -288,6 +297,18 @@ class CemeteryUI(QMainWindow):
         act_cloud.setToolTip("Trimite harta în portalul public și adu cererile online din cloud")
         act_cloud.triggered.connect(self.open_cloud_sync_window)
         toolbar.addAction(act_cloud)
+
+        # ---- Elemente din teren (Field Inbox) + telefoane de teren, peste profilul Cloud activ ----
+        self.act_field = QAction("📱 Elemente din teren", self)
+        self.act_field.setObjectName("act-field-inbox")
+        self.act_field.setToolTip("Elemente trimise de telefoanele de teren, în așteptarea aprobării")
+        self.act_field.triggered.connect(self.open_field_inbox_window)
+        toolbar.addAction(self.act_field)
+        act_field_devices = QAction("📶 Cloud / Telefoane", self)
+        act_field_devices.setObjectName("act-field-devices")
+        act_field_devices.setToolTip("Telefoane / Dispozitive teren: cod de pairing, telefoane asociate, revocare")
+        act_field_devices.triggered.connect(self.open_field_devices_window)
+        toolbar.addAction(act_field_devices)
         act_backup = QAction("💾 Copii de rezervă", self)
         act_backup.setObjectName("act-backup")
         act_backup.setToolTip("Copie zilnică automată a bazei și restaurare dintr-un clic")
@@ -664,6 +685,59 @@ class CemeteryUI(QMainWindow):
                 )
             except Exception:
                 pass
+
+    def refresh_field_badge(self, announce: bool = False):
+        """Numără itemurile PENDING din Field Inbox (thread separat); orice eșec = „Cloud indisponibil”, fără blocare."""
+        if getattr(self, "_field_busy", False) or getattr(self, "act_field", None) is None:
+            return
+        self._field_busy = True
+        try:
+            import field_inbox_client as fic
+            from field_worker import run_task
+        except Exception:
+            self._field_busy = False
+            return
+
+        def done():
+            self._field_busy = False
+
+        def ok(res):
+            done()
+            n, more = res
+            self.act_field.setText(fic.toolbar_label(n, more))
+            self.act_field.setToolTip(fic.new_items_message(n, more) if n else "Nu sunt elemente noi din teren")
+            if announce and n and (self._field_last is None or n > self._field_last):
+                self.statusBar().showMessage("📱 " + fic.new_items_message(n, more), 15000)
+            self._field_last = n
+
+        def fail(msg, not_configured):
+            done()
+            self.act_field.setText("📱 Elemente din teren")
+            self.act_field.setToolTip(fic.NOT_CONFIGURED if not_configured else fic.UNAVAILABLE)
+
+        run_task(self, lambda: fic.connect()[0].count_pending(), ok, fail)
+
+    def open_field_inbox_window(self):
+        try:
+            from field_inbox_window import FieldInboxWindow
+            dlg = FieldInboxWindow(self)
+        except Exception as e:
+            show_message(self, "Eroare", f"Nu am putut deschide Elemente din teren: {type(e).__name__}", level="error")
+            return
+        dlg.changed.connect(self.refresh_field_badge)
+        try:
+            dlg.exec()
+        finally:
+            self.refresh_field_badge()
+
+    def open_field_devices_window(self):
+        try:
+            from field_devices_window import FieldDevicesDialog
+            dlg = FieldDevicesDialog(self)
+        except Exception as e:
+            show_message(self, "Eroare", f"Nu am putut deschide Telefoane teren: {type(e).__name__}", level="error")
+            return
+        dlg.exec()
 
     def open_cereri_online_window(self):
         try:
