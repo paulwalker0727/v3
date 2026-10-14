@@ -1,10 +1,18 @@
 /* Trimite din teren — legarea paginii (DOM) de TerenCapture. Fără loguri, fără persistență în afară de cheia legăturii (în teren.js). */
 (function () {
   'use strict';
-  var T = window.TerenCapture, CFG = window.TEREN_CFG || {};
+  var T = window.TerenCapture;
   function $(id) { return document.getElementById(id); }
-  var client = new T.Client(CFG.cloud_url, window.localStorage, window.fetch.bind(window), { cemetery: CFG.cemetery_uid });
-  var state = { type: '', loc: CFG.loc || null, ready: false, sent: [] };
+  function readCfg() {
+    if (window.TEREN_CFG) { return window.TEREN_CFG; }
+    var el = $('teren-cfg');
+    try { return el ? JSON.parse(el.textContent) : {}; } catch (e) { return {}; }
+  }
+  var CFG = readCfg();
+  var GRAVE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var base = CFG.standalone ? window.location.origin : CFG.cloud_url;
+  var client = new T.Client(base, window.localStorage, window.fetch.bind(window), { cemetery: CFG.cemetery_uid });
+  var state = { type: '', loc: CFG.loc || null, ready: false, sent: [], cem: '' };
 
   function show(el, on) { el.classList.toggle('hide', !on); }
   function msg(kind, text, ref) {
@@ -18,7 +26,7 @@
 
   function renderLoc() {
     var l = state.loc;
-    $('tr-cem').textContent = CFG.cemetery_label || '—';
+    $('tr-cem').textContent = CFG.cemetery_label || state.cem || '—';
     $('tr-cod').textContent = l ? l.cod_loc : 'neales';
     $('tr-guid').textContent = l && l.grave_uid ? l.grave_uid : (l ? 'lipsă (loc fără cod unic)' : '—');
     var back = $('tr-back-map');
@@ -33,6 +41,7 @@
 
   function setState(s) {
     state.ready = s.state === 'ready';
+    if (state.ready) { state.cem = s.cemetery_uid || ''; renderLoc(); }
     var blocked = !state.ready;
     show($('tr-pair'), s.state === 'unpaired' || s.state === 'revoked');
     show($('tr-main'), state.ready);
@@ -112,11 +121,18 @@
 
   function lookup() {
     var cod = $('tr-q').value.trim();
+    if (CFG.standalone) { return pickStandalone(cod, $('tr-gid').value.trim()); }
     if (!cod) { return; }
     fetch('/admin/teren/loc/' + encodeURIComponent(cod), { credentials: 'same-origin', headers: { 'X-Requested-With': 'fetch' } }).then(function (r) {
       if (!r.ok) { throw new Error('nf'); }
       return r.json();
     }).then(function (l) { state.loc = l; renderLoc(); clearMsg(); }, function () { state.loc = null; renderLoc(); msg('err', 'Locul nu există în registrul activ.'); });
+  }
+
+  function pickStandalone(cod, gid) {
+    if (!GRAVE_RE.test(gid)) { state.loc = null; renderLoc(); msg('err', 'grave_uid invalid (format UUID).'); return; }
+    state.loc = { cod_loc: cod || gid.slice(0, 8), grave_uid: gid.toLowerCase(), avize: CFG.loc && CFG.loc.avize ? CFG.loc.avize : [] };
+    renderLoc(); clearMsg();
   }
 
   function init() {

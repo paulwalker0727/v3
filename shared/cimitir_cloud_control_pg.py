@@ -30,6 +30,7 @@ import cimitir_manifest as mf
 
 PROTECTED_PROJECT_REFS = ("txuxkjgftopznvmooexq",)
 TEST_PROJECT_REF = "nhhczdmcocbobptogvsw"
+CLOUD_REF_ENV = "CIMITIR_CLOUD_PROJECT_REF"      # deploy cloud: singurul proiect Supabase (neprotejat) acceptat de serverul public
 _CTX_KEYS = {"platform": "cp.platform", "org": "cp.org", "cems": "cp.cems", "principal": "cp.principal", "binding_uid": "cp.binding_uid",
              "key_hash": "cp.key_hash", "code_hash": "cp.code_hash", "installation": "cp.installation", "run_id": "cp.run_id",
              "pair_buckets": "cp.pair_buckets"}
@@ -173,8 +174,10 @@ def _guard(url: Optional[str]) -> None:
         if ref in url:
             raise RuntimeError("proiectul de producție este blocat permanent pentru planul de control")
     if "supabase.com" in url or "supabase.co" in url:
-        m = re.search(r"//[^:@/]+\.([a-z]{20})(?::|@)", url)
+        m = re.search(r"//[^:@/]+\.([a-z]{20})(?::|@)", url) or re.search(r"//[^/@]*@db\.([a-z]{20})\.supabase\.co", url)
         ref = m.group(1) if m else ""
+        if ref and ref == os.environ.get(CLOUD_REF_ENV, ""):
+            return
         if os.environ.get("CIMITIR_LIVE_TESTS") != "1" or os.environ.get("CIMITIR_TEST_PROJECT_REF") != TEST_PROJECT_REF or ref != TEST_PROJECT_REF:
             raise RuntimeError("conexiune Supabase refuzată: CIMITIR_LIVE_TESTS=1 și CIMITIR_TEST_PROJECT_REF=<ref TEST> obligatorii, iar ref-ul trebuie să coincidă")
 

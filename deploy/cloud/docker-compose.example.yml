@@ -1,0 +1,34 @@
+# Exemplu: aplicația cloud + Caddy (HTTPS automat Let's Encrypt). Copiază ca docker-compose.yml lângă .env (din .env.example).
+# Rulează din rădăcina repo-ului:  docker compose -f deploy/cloud/docker-compose.example.yml --env-file .env up -d --build
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    env_file: ../../.env
+    restart: unless-stopped
+    expose: ["8080"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [edge]
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["80:80", "443:443"]
+    environment:
+      CIMITIR_DOMAIN: ${CIMITIR_DOMAIN:?setează CIMITIR_DOMAIN (ex. field.exemplu.ro)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+networks:
+  edge:
+    ipam:
+      config: [{ subnet: 172.28.0.0/24 }]
+volumes:
+  caddy_data:
+  caddy_config:

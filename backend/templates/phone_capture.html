@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#1b382b">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Trimite din teren</title>
+  <link rel="stylesheet" href="/static/teren.css">
+</head>
+<body class="tr-standalone">
+<div class="tr" data-testid="teren-page">
+  <h1>Trimite din teren</h1>
+  <p class="muted">Elementele ajung în Field Inbox și așteaptă aprobarea operatorului din MAIN.</p>
+
+  {% include "partials/teren_capture.html" %}
+</div>
+<script type="application/json" id="teren-cfg">{{ cfg|tojson }}</script>
+<script src="/static/teren.js"></script>
+<script src="/static/teren_ui.js"></script>
+</body>
+</html>
