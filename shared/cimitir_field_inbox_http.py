@@ -162,7 +162,7 @@ def cors_origins(raw: Optional[str] = None) -> list:
     return out
 
 
-def create_app(service: Optional[fi.FieldInboxService] = None, origins: Optional[list] = None) -> FastAPI:
+def create_app(service: Optional[fi.FieldInboxService] = None, origins: Optional[list] = None, pairing: Any = None) -> FastAPI:
     """Aplicația cloud Field Inbox; fără `service` îl construiește din mediu (CIMITIR_CP_DATABASE_URL, SUPABASE_*)."""
     app = FastAPI(title="Cimitir Field Inbox", docs_url=None, redoc_url=None, openapi_url=None)
     allowed = cors_origins() if origins is None else origins
@@ -173,7 +173,7 @@ def create_app(service: Optional[fi.FieldInboxService] = None, origins: Optional
     import cimitir_phone_pairing_http as pph
     service = service or fi.build_service_from_env()
     app.include_router(create_router(service))
-    app.include_router(pph.create_router(pp.PhonePairingService(service)))
+    app.include_router(pph.create_router(pairing or pp.PhonePairingService(service)))
 
     @app.get(wire.API + "/field-inbox-health")
     def health():

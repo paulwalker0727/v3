@@ -1,0 +1,15 @@
+# Reverse proxy HTTPS (Caddy). Caddy NU are încredere în X-Forwarded-For primit de la client și îl rescrie cu IP-ul real al conexiunii.
+{$CIMITIR_DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	request_body {
+		max_size 26MB
+	}
+	reverse_proxy app:8080 {
+		health_uri /healthz
+		health_interval 30s
+	}
+}
