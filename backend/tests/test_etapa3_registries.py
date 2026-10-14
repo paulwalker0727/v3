@@ -164,9 +164,11 @@ def test_sqlite_media_cache_isolation_same_codes_same_photo_names(env):
     assert foreign.exists(), "fișierul din alt registru nu poate fi șters"
 
 
-def test_outbox_and_settings_isolation(env):
+def test_outbox_and_settings_isolation(env, monkeypatch):
     reg, db = env.reg, env.db
-    for m in ("database", "cloud_sync"):
+    for k, v in ({"CIMITIR_SECRET_STORE": "test-encrypted", "CIMITIR_ALLOW_TEST_SECRETSTORE": "1", "CIMITIR_TEST_SECRET_KEY": "rAR-xhkir67T-0hgHU_d6gxHdQt7zqO9zPP-nl-r7yw="}).items():
+        monkeypatch.setenv(k, v)
+    for m in ("database", "cloud_sync", "cloud_profiles"):
         sys.modules.pop(m, None)
     sys.path.insert(0, str(DESKTOP))
     try:

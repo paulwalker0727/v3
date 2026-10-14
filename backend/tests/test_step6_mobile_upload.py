@@ -116,7 +116,7 @@ def main_client(name: str, key: str, code: str, url: str = SERVER) -> dict:
         out = {{}}
         def sha(p): return hashlib.sha256(open(p, 'rb').read()).hexdigest()
     """) + textwrap.dedent(code) + "\nprint('RESULT=' + json.dumps(out, default=str))\n"
-    env = {**os.environ, "CIMITIR_DATA_DIR": data_dir, "CIMITIR_MODE": "local", "CIMITIR_DB_ENGINE": "sqlite", "PYTHONPATH": str(ROOT / "shared")}
+    env = {**os.environ, "CIMITIR_SECRET_STORE": "test-encrypted", "CIMITIR_ALLOW_TEST_SECRETSTORE": "1", "CIMITIR_TEST_SECRET_KEY": "rAR-xhkir67T-0hgHU_d6gxHdQt7zqO9zPP-nl-r7yw=", "CIMITIR_DATA_DIR": data_dir, "CIMITIR_MODE": "local", "CIMITIR_DB_ENGINE": "sqlite", "PYTHONPATH": str(ROOT / "shared")}
     env.pop("DATABASE_URL", None)
     p = subprocess.run([PY, "-c", script], capture_output=True, text=True, env=env, timeout=240, cwd=ROOT / "desktop")
     assert p.returncode == 0, p.stdout[-1500:] + p.stderr[-2500:]

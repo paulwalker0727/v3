@@ -114,6 +114,11 @@ class AutoSync(QObject):
                 (getattr(self, "_ew", None) is not None and self._ew.isRunning()):
             return
         try:
+            import cloud_profiles
+            cloud_profiles.migrate_legacy_sync_key()
+        except Exception as exc:
+            print(f"[cloud_sync_auto] migrare cheie: {type(exc).__name__}")
+        try:
             cfg = cloud_sync.get_config()
         except Exception:
             return
