@@ -33,7 +33,7 @@ TEST_PROJECT_REF = "nhhczdmcocbobptogvsw"
 CLOUD_REF_ENV = "CIMITIR_CLOUD_PROJECT_REF"      # deploy cloud: singurul proiect Supabase (neprotejat) acceptat de serverul public
 _CTX_KEYS = {"platform": "cp.platform", "org": "cp.org", "cems": "cp.cems", "principal": "cp.principal", "binding_uid": "cp.binding_uid",
              "key_hash": "cp.key_hash", "code_hash": "cp.code_hash", "installation": "cp.installation", "run_id": "cp.run_id",
-             "pair_buckets": "cp.pair_buckets"}
+             "pair_buckets": "cp.pair_buckets", "device_type": "cp.device_type"}
 _TABLES = {"bootstrap_runs": "cp_bootstrap_runs", "staging_sessions": "cp_staging_sessions", "staging_batches": "cp_staging_batches",
            "staging_rows": "cp_staging_rows", "staging_media_blobs": "cp_staging_media_blobs", "staging_media_chunks": "cp_staging_media_chunks",
            "registry_rows": "cp_registry_rows", "registry_row_data": "cp_registry_row_data", "media_objects": "cp_media_objects",

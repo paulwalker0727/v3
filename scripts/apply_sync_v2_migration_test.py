@@ -1,4 +1,5 @@
-"""Aplică 022_sync_v2.sql EXCLUSIV pe proiectul Supabase TEST, cu verificări înainte și după. Aditiv, idempotent, fără ștergeri de date.
+"""Aplică 022_sync_v2.sql EXCLUSIV pe proiectul Supabase TEST, cu verificări înainte și după. Drepturi minime (coloane explicite), backup al stării anterioare pentru rollback verificabil, fără ștergeri de date.
+Rollback: backend/cimitir/pg_rollbacks/022_sync_v2_ROLLBACK.sql (restaurează exact starea anterioară; refuză dacă amprenta nu coincide).
 
 URL-ul administrativ se citește DOAR din variabila de mediu CIMITIR_CP_ADMIN_DATABASE_URL (nu se afișează, nu se loghează, nu se salvează).
   --check-only : doar verificările de dinainte (nu modifică nimic)
@@ -58,11 +59,29 @@ def postcheck(c, before: dict) -> list:
         if c.execute("SELECT to_regclass(%s)", (t,)).fetchone()[0] is None:
             errs.append(f"tabela {t} nu a fost creată")
     for t in LIVE:
-        for p in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+        for p in ("SELECT", "DELETE"):
             if not c.execute("SELECT has_table_privilege('cimitir_cp_app', %s, %s)", (t, p)).fetchone()[0]:
                 errs.append(f"cimitir_cp_app fără {p} pe {t}")
+        for p in ("INSERT", "UPDATE"):
+            if c.execute("SELECT has_table_privilege('cimitir_cp_app', %s, %s)", (t, p)).fetchone()[0]:
+                errs.append(f"cimitir_cp_app are {p} la nivel de TABEL pe {t} (trebuie doar pe coloane)")
+        for col in ("id", "version", "change_seq", "modified_at"):
+            for p in ("INSERT", "UPDATE"):
+                if c.execute("SELECT has_column_privilege('cimitir_cp_app', %s, %s, %s)", (t, col, p)).fetchone()[0]:
+                    errs.append(f"cimitir_cp_app are {p} pe {t}.{col} (interzis)")
+        for col in ("uid", "organization_uid", "cemetery_uid"):
+            if c.execute("SELECT has_column_privilege('cimitir_cp_app', %s, %s, 'UPDATE')", (t, col)).fetchone()[0]:
+                errs.append(f"cimitir_cp_app poate modifica {t}.{col} (interzis)")
         if not c.execute("SELECT relrowsecurity FROM pg_class WHERE oid=%s::regclass", (t,)).fetchone()[0]:
             errs.append(f"RLS dezactivat pe {t}")
+    if not c.execute("SELECT count(*) FROM sync_v2_migration_backup WHERE batch='pre-022' AND kind='fingerprint'").fetchone()[0]:
+        errs.append("backup-ul stării anterioare (rollback) lipsește")
+    for t in ("sync_tombstones",):
+        for p in ("INSERT", "UPDATE", "DELETE"):
+            if c.execute("SELECT has_table_privilege('cimitir_cp_app', %s, %s)", (t, p)).fetchone()[0]:
+                errs.append(f"cimitir_cp_app are {p} pe {t} (interzis)")
+    if c.execute("SELECT has_table_privilege('cimitir_cp_app', 'sync_v2_migration_backup', 'SELECT')").fetchone()[0]:
+        errs.append("cimitir_cp_app vede sync_v2_migration_backup")
     if c.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname='cimitir_cp_app'").fetchone()[0]:
         errs.append("cimitir_cp_app are BYPASSRLS (interzis)")
     return errs

@@ -25,9 +25,50 @@ _ERR = {401: "Cheia de legătură MAIN este invalidă sau revocată.", 403: "Ope
         404: "Elementul nu există în acest cimitir.", 429: "Prea multe cereri; reîncearcă mai târziu."}
 
 
+SET_REG_URL = "cloud_url"                 # scrise de pairing-ul/bootstrap-ul MAIN (cimitir_bootstrap.BINDING_SETTINGS)
+SET_REG_REF = "cloud_secret_ref"          # numele secretului din SecretStore (DPAPI) care conține cheia MAIN Binding; valoarea NU stă în SQLite
+
+
+def _secret_store():
+    import cimitir_secretstore as ss
+    return ss.default_store()
+
+
+def _binding_key_from_registry() -> str:
+    """Cheia MAIN Binding de la pairing (registrul local indică doar numele secretului; valoarea o dă SecretStore). '' dacă nu există/nu e lizibilă."""
+    ref = (db.get_setting(SET_REG_REF) or "").strip()
+    if not ref:
+        return ""
+    try:
+        key = (_secret_store().get(ref) or "").strip()
+    except Exception:  # noqa: BLE001  (SecretStore indisponibil: nu se expune nimic)
+        return ""
+    return key if BINDING_RE.match(key) else ""
+
+
+def connection() -> tuple:
+    """(url, cheie Binding, sursă). Cheia: 1) legătura MAIN din registrul local (SecretStore), 2) cheia profilului Cloud activ dacă are forma Binding.
+    URL-ul: profilul Cloud activ, altfel cloud_url din registrul local. Cheia nu apare în loguri/excepții."""
+    cfg = cs.get_config()
+    url = (cfg["url"] or db.get_setting(SET_REG_URL) or "").strip().rstrip("/")
+    key = _binding_key_from_registry()
+    if key:
+        return url, key, "registry"
+    if cfg["key"] and BINDING_RE.match(cfg["key"]):
+        return url, cfg["key"], "profile"
+    return url, "", ""
+
+
 def is_binding(key: Optional[str] = None) -> bool:
-    key = cs.get_config()["key"] if key is None else key
-    return bool(key and BINDING_RE.match(key))
+    if key is not None:
+        return bool(key and BINDING_RE.match(key))
+    url, k, _src = connection()
+    return bool(url and k)
+
+
+def configured_source() -> str:
+    """'registry' | 'profile' | '' — pentru afișare în UI/diagnostic (fără valoarea cheii)."""
+    return connection()[2]
 
 
 class _Resp:
@@ -40,13 +81,15 @@ class _Resp:
 
 def request(method: str, op: str, **kwargs) -> _Resp:
     """`op`: 'push' | 'pull' | 'status' | ... Aceleași excepții ca `cloud_sync._request` (RetryLater: rețea/5xx; Rejected: 4xx)."""
-    cfg = cs.get_config()
-    if not cs.url_is_secure(cfg["url"]):
+    url, key, _src = connection()
+    if not key:
+        raise cs.Rejected(0, "Nu există cheie MAIN Binding (pairing neefectuat sau SecretStore indisponibil).")
+    if not cs.url_is_secure(url):
         raise cs.Rejected(0, "Adresa serverului trebuie să fie HTTPS.")
     kwargs.setdefault("timeout", cs.TIMEOUT)
     try:
-        resp = requests.request(method, f"{cfg['url']}{API}/{op.lstrip('/')}",
-                                headers={"Authorization": f"Binding {cfg['key']}", "X-Sync-Client": cs.client_id()}, **kwargs)
+        resp = requests.request(method, f"{url}{API}/{op.lstrip('/')}",
+                                headers={"Authorization": f"Binding {key}", "X-Sync-Client": cs.client_id()}, **kwargs)
     except requests.RequestException as exc:
         cs._mark_online(False)
         raise cs.RetryLater(f"Fără conexiune la server ({type(exc).__name__})")
@@ -65,9 +108,9 @@ def request(method: str, op: str, **kwargs) -> _Resp:
 
 def _reset_cursors_if_scope_changed() -> None:
     """Alt server/cimitir față de ultima sincronizare: cursoarele de descărcare pornesc de la zero (rândurile locale nu se șterg)."""
-    cfg = cs.get_config()
-    parts = cfg["key"].split(".")
-    scope = f"{cfg['url']}|{parts[1] if len(parts) == 3 else ''}"
+    url, key, _src = connection()
+    parts = key.split(".")
+    scope = f"{url}|{parts[1] if len(parts) == 3 else ''}"
     if (db.get_setting(SET_SCOPE) or "") != scope:
         import entity_sync
         for e in ents.ORDER:
@@ -81,9 +124,11 @@ def run() -> Dict[str, Any]:
     report: Dict[str, Any] = {"ok": False, "state": "error", "lines": [], "cereri_noi": 0, "pushed": 0, "applied": 0, "conflicts": 0, "errors": 0,
                               "retry": 0, "pulled": 0, "pending": 0, "started": datetime.now().isoformat(timespec="seconds")}
     try:
-        if not cs.is_configured() or not is_binding():
+        if not is_binding():
             report["lines"].append("Sincronizarea nu este configurată (profil Cloud cu cheie MAIN).")
             return report
+        db.set_setting(entity_sync.SET_ENABLED, "1")
+        entity_sync.set_capable(True)          # Sync v2 este singurul transport în acest mod (nu depinde de „ping" legacy)
         entity_sync.ensure_tracking()
         _reset_cursors_if_scope_changed()
         status = request("GET", "status").json()

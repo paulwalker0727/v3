@@ -75,6 +75,7 @@ class SyncV2Service:
         a = self.inbox.authenticate(binding_key)
         if a.get("device_type") not in ("MAIN", "MOBILE"):
             raise cc.PermissionDenied("dispozitiv neacceptat")
+        self.cp._t.ctx["device_type"] = a["device_type"]    # RLS: ștergerea în registre este permisă doar pentru MAIN
         return a
 
     def _need_main(self, a: Dict[str, Any]) -> None:

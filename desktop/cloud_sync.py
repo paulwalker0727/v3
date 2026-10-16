@@ -105,7 +105,13 @@ def save_config(url: str, key: str, auto: bool, publish_burials: Optional[bool] 
 
 def is_configured() -> bool:
     cfg = get_config()
-    return bool(cfg["url"] and cfg["key"])
+    if cfg["url"] and cfg["key"]:
+        return True
+    try:
+        import sync_v2
+        return sync_v2.is_binding()     # cheia MAIN Binding din legătura (pairing) salvată în SecretStore
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def url_is_secure(url: str) -> bool:
@@ -221,8 +227,14 @@ def _mark_online(flag: bool) -> None:
         pass
 
 
+_BINDING_SHAPE = re.compile(r"^[A-Za-z0-9_-]{1,64}\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.")
+
+
 def _request(method: str, path: str, **kwargs) -> requests.Response:
     cfg = get_config()
+    import sync_v2
+    if _BINDING_SHAPE.match(cfg["key"] or "") or sync_v2.is_binding():
+        raise Rejected(0, "Cheia MAIN Binding se folosește doar cu API-ul /api/v1/sync-v2, nu cu rutele vechi /api/sync.")
     if not url_is_secure(cfg["url"]):
         raise Rejected(0, "Adresa serverului trebuie să fie HTTPS.")
     kwargs.setdefault("timeout", TIMEOUT)

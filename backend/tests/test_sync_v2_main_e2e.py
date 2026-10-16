@@ -73,14 +73,21 @@ def world(fw):
         pass
 
 
-def main_run(w, code: str) -> dict:
+def _cfg(w, registry: bool) -> str:
+    return ""
+
+
+def main_run(w, code: str, registry: bool = False) -> dict:
     """Rulează cod în procesul MAIN (propriul SQLite). Ultima linie RESULT=<json>."""
+    CLASSIC_CFG = f"cloud_sync.save_config({w['url']!r}, {w['T']['A']['main']!r}, False, False)"
+    REG_CFG = (f"import cimitir_secretstore as _ss; _ref='cimitir/cloud/binding/pilot'; _ss.default_store().set(_ref, {w['T']['A']['main']!r}); "
+               f"db.set_setting('cloud_url', {w['url']!r}); db.set_setting('cloud_secret_ref', _ref)")
     script = textwrap.dedent(f"""
         import json, sys
         sys.path.insert(0, {str(ROOT / 'desktop')!r})
         import database as db, cloud_sync, entity_sync, sync_v2
         db.init_db()
-        cloud_sync.save_config({w['url']!r}, {w['T']['A']['main']!r}, False, False)
+        {REG_CFG if registry else CLASSIC_CFG}
         out = {{}}
         def q(sql, args=()):
             c = db.get_connection()
@@ -271,3 +278,24 @@ def test_verify_script_reports_real_relations(world):
     assert p.returncode == 0, p.stdout + p.stderr
     assert "SC-1: poligon 5 puncte · concesionari: Ionescu Maria · înhumați:" in p.stdout and "relații complete" in p.stdout
     assert w["T"]["A"]["phone"] not in p.stdout
+
+
+def test_main_uses_pilot_binding_key_from_secretstore_without_manual_setup(world):
+    """Cheia MAIN Binding de la pairing (SecretStore + cloud_secret_ref din registrul local) este folosită automat: fără profil/legacy key configurate manual."""
+    w = world
+    out = main_run(w, ADD.replace("rep = cloud_sync.sync_all()", "out['src'] = sync_v2.configured_source(); rep = cloud_sync.sync_all()"), registry=True)
+    assert out["src"] == "registry" and out["rep"]["ok"] and out["rep"]["applied"] == 2, out
+    assert mobile_grave(w, out["loc_uid"])["burials"][0]["nume"] == "Popescu"
+    # cheia nu apare în SQLite (doar referința) și Binding nu pleacă niciodată spre rutele legacy /api/sync
+    chk = main_run(w, """
+import sqlite3
+rows = q("SELECT key, value FROM settings")
+out["leak"] = [r["key"] for r in rows if "cimitir." in str(r["value"]) and r["key"] != "cloud_secret_ref" and len(str(r["value"]).split(".")) == 3]
+try:
+    cloud_sync._request("GET", "/ping")
+    out["legacy"] = "sent"
+except cloud_sync.Rejected as e:
+    out["legacy"] = "blocked"
+""", registry=True)
+    assert chk["leak"] == []
+    assert chk["legacy"] == "blocked"
