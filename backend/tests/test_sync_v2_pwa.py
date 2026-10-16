@@ -194,6 +194,7 @@ def test_pwa_full_forms_offline_mirror_roles_and_privacy(web):
         txt = page.inner_text("#sheet-body")
         assert "Contract C-2026/7" in txt and "150.5 lei" in txt and "CH-1" in txt and "Istoric modificări" in txt and not UUID_RE.search(txt)
         assert "Georgescu Maria" in txt and "0722000111" in txt
+        page.screenshot(path="/tmp/pwa_grave.png")
         page.click("[data-testid=sheet-close]")
         # --- OFFLINE: copia locală autorizată (căutare, fișă, liste), modificare în coadă cu indicator
         ctx.set_offline(True)
@@ -268,4 +269,33 @@ def test_pwa_repairing_to_other_cemetery_purges_mirror_and_quarantines_queue(web
         q = page.evaluate("""() => new Promise((res) => { const r = indexedDB.open('cimitir-mobile-v2'); r.onsuccess = () => {
             const tx = r.result.transaction('kv'); const g = tx.objectStore('kv').get('outbox_quarantine'); g.onsuccess = () => res(g.result ? g.result.length : 0); }; })""")
         assert q == 1 and _rows(w, "SELECT 1 FROM plati") == []                              # operația veche nu a ajuns în alt cimitir
+        b.close()
+
+
+def test_pwa_map_colors_pinch_zoom_and_tap_opens_grave(web):
+    w = web
+    phone = w["T"]["A"]["phone"]
+    with pw.sync_playwright() as p:
+        b = p.chromium.launch()
+        ctx = b.new_context(viewport={"width": 390, "height": 844}, service_workers="block")
+        page = ctx.new_page()
+        page.goto(f"{w['url']}/mobile/")
+        _seed_phone(page, phone)
+        page.click(".bottom-nav [data-view=map]")
+        page.wait_for_selector("svg#cem-map polygon.plot")
+        assert page.get_attribute("polygon.plot", "fill") == "#9f5a52"                      # ocupat (are înhumat)
+        assert "Rezervat" in page.inner_text("[data-testid=map-legend]")
+        vb0 = [float(x) for x in page.get_attribute("#cem-map", "viewBox").split()]
+        page.evaluate("""() => { const s = document.getElementById('cem-map'); const r = s.getBoundingClientRect();
+            const ev = (t, id, x, y) => s.dispatchEvent(new PointerEvent(t, {pointerId: id, clientX: x, clientY: y, bubbles: true, pointerType: 'touch'}));
+            ev('pointerdown', 1, r.x + 100, r.y + 200); ev('pointerdown', 2, r.x + 140, r.y + 200);
+            for (let i = 0; i < 6; i++) { ev('pointermove', 1, r.x + 100 - i * 8, r.y + 200); ev('pointermove', 2, r.x + 140 + i * 8, r.y + 200); }
+            ev('pointerup', 1, 0, 0); ev('pointerup', 2, 0, 0); }""")
+        vb1 = [float(x) for x in page.get_attribute("#cem-map", "viewBox").split()]
+        assert vb1[2] < vb0[2]                                                              # pinch-out a mărit harta
+        page.evaluate("""() => { const s = document.getElementById('cem-map'), pl = document.querySelector('polygon.plot');
+            s.dispatchEvent(new PointerEvent('pointerdown', {pointerId: 9, clientX: 50, clientY: 50, bubbles: true})); s.dispatchEvent(new PointerEvent('pointerup', {pointerId: 9, bubbles: true}));
+            pl.dispatchEvent(new MouseEvent('click', {bubbles: true})); }""")
+        page.wait_for_selector("[data-testid=sheet-close]")
+        assert "PWA-1" in page.inner_text("#sheet-body") and not UUID_RE.search(page.inner_text("#sheet-body"))
         b.close()

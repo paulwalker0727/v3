@@ -27,7 +27,12 @@ def pre022():
     name = "m022_" + uuid.uuid4().hex[:8]
     with psycopg.connect(ADMIN, autocommit=True) as c:
         c.execute(f'CREATE DATABASE "{name}"')
+    with psycopg.connect(ADMIN, autocommit=True) as c:
+        for r in ("anon", "authenticated"):
+            c.execute(f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='{r}') THEN CREATE ROLE {r} NOLOGIN; END IF; END $$")
     with psycopg.connect(_dsn(name), autocommit=True) as c:
+        c.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated")     # simulează Supabase
+        c.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated")
         for f in sorted(MIG.glob("*.sql")):
             if not f.name.startswith("022"):
                 c.execute(f.read_text(encoding="utf-8"))
@@ -95,6 +100,9 @@ def test_migration_least_privilege_idempotent_and_data_preserved(pre022):
         assert not P("SELECT rolbypassrls FROM pg_roles WHERE rolname='cimitir_cp_app'")
         assert not P("SELECT has_table_privilege('cimitir_cp_app','sync_v2_migration_backup','SELECT')")
         assert not P("SELECT has_table_privilege('cimitir_cp_app','sync_v2_ops','DELETE')")
+        for role in ("anon", "authenticated"):                         # nimic expus prin API-ul public Supabase
+            for t in ("sync_v2_ops", "sync_v2_conflicts", "sync_v2_permissions", "sync_v2_runs", "sync_v2_migration_backup"):
+                assert not P("SELECT has_table_privilege(%s, %s, 'SELECT')", role, t), (role, t)
 
     # comportament real cu rolul runtime: tenant, trigger-e SECURITY DEFINER, DELETE doar MAIN
     ctx = lambda cc, dev: cc.execute("SELECT set_config('cp.org',%s,false), set_config('cp.cems',%s,false), set_config('cp.device_type',%s,false)", (org, cem, dev))  # noqa: E731

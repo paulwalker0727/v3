@@ -80,6 +80,11 @@ def postcheck(c, before: dict) -> list:
         for p in ("INSERT", "UPDATE", "DELETE"):
             if c.execute("SELECT has_table_privilege('cimitir_cp_app', %s, %s)", (t, p)).fetchone()[0]:
                 errs.append(f"cimitir_cp_app are {p} pe {t} (interzis)")
+    for role in ("anon", "authenticated"):
+        if c.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (role,)).fetchone():
+            for t in NEW + ("sync_v2_migration_backup",):
+                if c.execute("SELECT has_table_privilege(%s, %s, 'SELECT')", (role, t)).fetchone()[0]:
+                    errs.append(f"{role} are acces la {t} (expus prin API-ul public)")
     if c.execute("SELECT has_table_privilege('cimitir_cp_app', 'sync_v2_migration_backup', 'SELECT')").fetchone()[0]:
         errs.append("cimitir_cp_app vede sync_v2_migration_backup")
     if c.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname='cimitir_cp_app'").fetchone()[0]:

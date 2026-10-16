@@ -177,6 +177,18 @@ BEGIN
         EXECUTE format('REVOKE ALL ON %I FROM cimitir_cp_app', t);
     END LOOP;
 END $$;
+-- Supabase acordă implicit drepturi pe tabele noi rolurilor anon/authenticated (PostgREST): le retragem explicit și activăm RLS fără politici pentru backup.
+ALTER TABLE sync_v2_migration_backup ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r text;
+BEGIN
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+            EXECUTE format('REVOKE ALL ON sync_v2_ops, sync_v2_conflicts, sync_v2_permissions, sync_v2_runs, sync_v2_migration_backup FROM %I', r);
+            EXECUTE format('REVOKE ALL ON SEQUENCE sync_v2_conflicts_id_seq, sync_v2_runs_id_seq, sync_v2_migration_backup_id_seq FROM %I', r);
+        END IF;
+    END LOOP;
+END $$;
 GRANT SELECT, INSERT ON sync_v2_ops, sync_v2_runs TO cimitir_cp_app;
 GRANT SELECT, INSERT ON sync_v2_conflicts TO cimitir_cp_app;
 GRANT UPDATE (reason, resolution, resolved_at) ON sync_v2_conflicts TO cimitir_cp_app;
