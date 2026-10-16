@@ -20,11 +20,13 @@ from urllib.parse import urlparse
 
 import anyio
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 import cimitir_cloud_wire as wire
 import cimitir_field_inbox_http as fih
 import cimitir_phone_pairing_http as pph
+import cimitir_mobile_http as mih
+import cimitir_mobile_registry as mir
 
 log = logging.getLogger("cimitir.cloud_app")
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +38,7 @@ _CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _STATIC = {"teren.js": "application/javascript", "teren_ui.js": "application/javascript", "teren.css": "text/css"}
+_MOBILE_STATIC = {"mobile_app.js": "application/javascript", "mobile_app.css": "text/css", "mobile-icon-192.png": "image/png", "mobile-icon-512.png": "image/png"}
 _SKIP_DOCS = ("carte_identitate", "cerere_doc")
 _DB_TIMEOUT = 3
 
@@ -96,6 +99,7 @@ def create_app(service: Any = None, origins: Optional[list] = None, pairing: Any
     import cimitir_field_inbox as fi
     service = service or fi.build_service_from_env()
     app = fih.create_app(service, origins, pairing)
+    app.include_router(mih.create_router(mir.MobileRegistryService(service)))
     jenv = _template()
     sys.path.insert(0, str(BACKEND))
     import attachments
@@ -124,6 +128,32 @@ def create_app(service: Any = None, origins: Optional[list] = None, pairing: Any
         if name not in _STATIC:
             return Response(status_code=404)
         return FileResponse(BACKEND / "static" / name, media_type=_STATIC[name], headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/mobile", include_in_schema=False)
+    def mobile_redirect():
+        return RedirectResponse("/mobile/", status_code=307, headers=_NO_STORE)
+
+    @app.get("/mobile/", include_in_schema=False)
+    def mobile_page():
+        html = jenv.get_template("mobile_app.html").render()
+        return HTMLResponse(html, headers={**_NO_STORE, "Content-Security-Policy": _CSP, "X-Frame-Options": "DENY"})
+
+    @app.get("/mobile/manifest.webmanifest", include_in_schema=False)
+    def mobile_manifest():
+        return FileResponse(BACKEND / "static" / "mobile_manifest.webmanifest", media_type="application/manifest+json",
+                            headers={"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/mobile/sw.js", include_in_schema=False)
+    def mobile_sw():
+        return FileResponse(BACKEND / "static" / "mobile_sw.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/mobile/", "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/mobile-assets/{name}", include_in_schema=False)
+    def mobile_static(name: str):
+        if name not in _MOBILE_STATIC:
+            return Response(status_code=404)
+        return FileResponse(BACKEND / "static" / name, media_type=_MOBILE_STATIC[name],
+                            headers={"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff"})
 
     return app
 
