@@ -60,7 +60,11 @@ def create_router(service: mr.MobileRegistryService) -> APIRouter:
     async def grave(request: Request, key: str):
         return await run(lambda: service.grave_detail(key, request.path_params["uid"]))
 
+    async def data_status(_request: Request, key: str):
+        return await run(lambda: service.data_status(key))
+
     route("/bootstrap", bootstrap)
+    route("/data-status", data_status)
     route("/summary", summary)
     route("/search", search)
     route("/map", map_data)

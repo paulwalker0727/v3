@@ -175,19 +175,61 @@ class MobileRegistryService:
         finally:
             c.close()
 
+    def data_status(self, binding_key: str) -> Dict[str, Any]:
+        """Diagnostic READ-ONLY, limitat de binding/RLS. Returnează doar numărători, fără date personale sau UUID-uri.
+
+        Importul bootstrap din CP și registrul live (Sync v1) sunt două zone DISTINCTE în schema actuală.
+        Un telefon asociat poate vedea zero locuri chiar dacă cp_registry_row_data are date: este nevoie de
+        materializare explicită către registrele live, nu de re-pairing sau de copierea brută a SQLite-ului.
+        """
+        a = self._auth(binding_key)
+        c = self.cp._c()
+        try:
+            scope = (a["organization_uid"], a["cemetery_uid"])
+            live = {}
+            for table, label in (("locuri_de_veci", "graves"), ("concesionari", "concessionaires"),
+                                 ("contracte", "contracts"), ("inhumati", "burials"), ("plati", "payments"),
+                                 ("amenajari_avize", "permits"), ("sectoare", "sectors")):
+                r = c.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE organization_uid=? AND cemetery_uid=?", scope).fetchone()
+                live[label] = int(r["n"] or 0)
+            # JSONB points e deja validat în momentul sincronizării. Aici verificăm dacă există poligoane reale.
+            r = c.execute("SELECT COUNT(*) AS n FROM locuri_de_veci "
+                          "WHERE organization_uid=? AND cemetery_uid=? AND jsonb_array_length(points)>=3", scope).fetchone()
+            live["drawn_graves"] = int(r["n"] or 0)
+            staged = {}
+            for r in c.execute("SELECT entity, COUNT(*) AS n FROM cp_registry_row_data "
+                               "WHERE organization_uid=? AND cemetery_uid=? GROUP BY entity", scope).fetchall():
+                staged[_text(r["entity"])] = int(r["n"] or 0)
+            imported = sum(staged.values())
+            if live["graves"] == 0:
+                state = "imported_not_materialized" if imported else "empty_live_registry"
+            elif live["drawn_graves"] == 0:
+                state = "no_drawn_geometry"
+            else:
+                state = "live_data_available"
+            return {"state": state, "live": live, "bootstrap_rows": imported, "bootstrap_by_entity": staged}
+        finally:
+            c.close()
+
     def grave_detail(self, binding_key: str, grave_uid: str) -> Dict[str, Any]:
         self._auth(binding_key)
+        # MAIN creează atât UID-uri hex32 (SQLite randomblob), cât și UUID-uri canonice cu cratime.
+        # Nu normalizăm obligatoriu la UUID36: în PostgreSQL coloana UID este TEXT și trebuie păstrată exact.
         try:
-            grave_uid = str(uuid.UUID(str(grave_uid)))
+            parsed = uuid.UUID(str(grave_uid))
         except (ValueError, TypeError, AttributeError):
             raise cc.ScopeError("loc inexistent") from None
+        candidates = tuple(dict.fromkeys((str(grave_uid), parsed.hex, str(parsed))))
+        placeholders = ",".join("?" for _ in candidates)
         c = self.cp._c()
         try:
             g = c.execute(
                 "SELECT uid,cod_loc,points,sector,parcela,rand,numar,capacitate,disponibilitate,tip,stare,categorie,suprafata,nr_vechi,numar_cf,"
-                "ocupat,observatii,are_inhumari FROM locuri_de_veci WHERE uid=?", (grave_uid,)).fetchone()
+                f"ocupat,observatii,are_inhumari FROM locuri_de_veci WHERE uid IN ({placeholders}) "
+                "ORDER BY CASE WHEN uid=? THEN 0 ELSE 1 END LIMIT 1", (*candidates, str(grave_uid))).fetchone()
             if not g:
                 raise cc.ScopeError("loc inexistent")
+            grave_uid = g["uid"]  # Referințele pentru contracte/plăți/înhumați folosesc exact UID-ul stocat.
             grave = _row(g)
             grave["points"] = _json(grave.get("points"), [])
             grave["occupied"] = bool(grave.pop("ocupat", 0) or grave.get("are_inhumari"))
@@ -204,6 +246,9 @@ class MobileRegistryService:
                 "SELECT p.uid,p.suma,p.data_plata,p.tip,p.chitanta_nr,p.observatii FROM plati p "
                 "WHERE p.cod_loc=? OR p.contract_id IN (SELECT id FROM contracte WHERE id_loc=(SELECT id FROM locuri_de_veci WHERE uid=?)) "
                 "ORDER BY p.id DESC", (grave["cod_loc"], grave_uid)).fetchall()]
-            return {"grave": grave, "contracts": contracts, "burials": burials, "payments": payments}
+            permits = [_row(r) for r in c.execute(
+                "SELECT uid,nr_aviz,data_aviz,lucrare FROM amenajari_avize WHERE cod_loc=? ORDER BY id DESC",
+                (grave["cod_loc"],)).fetchall()]
+            return {"grave": grave, "contracts": contracts, "burials": burials, "payments": payments, "permits": permits}
         finally:
             c.close()
