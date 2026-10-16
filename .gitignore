@@ -113,3 +113,7 @@ registries/
 registry_catalog.sqlite*
 legacy_adopted_*/
 backend/pg:env
+licenta.lic
+*.bak
+*.pyc
+.pytest_cache/
