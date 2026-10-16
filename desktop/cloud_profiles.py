@@ -610,55 +610,79 @@ def _test_api(p: Profile, rep: TestReport, store, http) -> None:
     if err:
         rep.add("API reachable", "FAIL", err)
         return
+
     key = _read_ref(p.sync_key_ref, store)
     base = p.api_base_url.rstrip("/")
+
     try:
-        health = http.get(f"{base}/api/health", timeout=TIMEOUT)
+        health = http.get(f"{base}/api/v1/health", timeout=TIMEOUT)
     except requests.RequestException as exc:
-        rep.add("API reachable", "FAIL", f"serverul nu răspunde ({type(exc).__name__})")
+        rep.add("API reachable", "FAIL", f"serverul nu r?spunde ({type(exc).__name__})")
         return
+
     if health.status_code != 200:
-        rep.add("API reachable", "FAIL", f"/api/health a răspuns {health.status_code}")
+        rep.add("API reachable", "FAIL", f"/api/v1/health a r?spuns {health.status_code}")
         return
+
+    try:
+        hj = health.json()
+    except ValueError:
+        rep.add("API reachable", "FAIL", "r?spuns invalid la /api/v1/health")
+        return
+
+    if not hj.get("ok"):
+        rep.add("API reachable", "FAIL", "backend-ul cloud nu este ready")
+        return
+
     rep.add("API reachable", "OK", base)
+
     if not key:
-        rep.add("Tenant/device binding", "FAIL", "cheia de sincronizare lipsește din profil")
+        rep.add("Tenant/device binding", "FAIL", "cheia de sincronizare lipse?te din profil")
         rep.add("Cemetery binding", "SKIP", "")
         return
-    if cloud_sync.validate_key(key):
-        rep.add("Tenant/device binding", "FAIL", "cheia de sincronizare are formă invalidă")
-        return
-    headers = {"X-Sync-Key": key, "X-Sync-Client": cloud_sync.client_id()}
+
+    headers = {"Authorization": f"Binding {key}"}
+
     try:
-        resp = http.get(f"{base}/api/sync/connection-info", headers=headers, timeout=TIMEOUT)
-        if resp.status_code == 404:
-            resp = http.get(f"{base}/api/sync/ping", headers=headers, timeout=TIMEOUT)
+        resp = http.get(f"{base}/api/v1/field-inbox/me", headers=headers, timeout=TIMEOUT)
     except requests.RequestException as exc:
-        rep.add("Tenant/device binding", "FAIL", f"fără conexiune ({type(exc).__name__})")
+        rep.add("Tenant/device binding", "FAIL", f"f?r? conexiune ({type(exc).__name__})")
         return
+
     if resp.status_code == 401:
-        rep.add("Tenant/device binding", "FAIL", "cheie de sincronizare invalidă (401)")
+        rep.add("Tenant/device binding", "FAIL", "cheie de sincronizare invalid? (401)")
         return
     if resp.status_code == 429:
-        rep.add("Tenant/device binding", "FAIL", "prea multe încercări (429)")
+        rep.add("Tenant/device binding", "FAIL", "prea multe ?ncerc?ri (429)")
         return
     if resp.status_code >= 400:
         rep.add("Tenant/device binding", "FAIL", f"serverul a refuzat ({resp.status_code})")
         return
+
     try:
-        info = resp.json()
+        body = resp.json()
+        info = body.get("result", {}) if isinstance(body, dict) else {}
     except ValueError:
-        rep.add("Tenant/device binding", "FAIL", "răspuns invalid")
+        rep.add("Tenant/device binding", "FAIL", "r?spuns invalid")
         return
-    rep.add("Tenant/device binding", "OK", "cheia și dispozitivul sunt acceptate")
-    server_cem = str(info.get("cemetery") or info.get("cemetery_id") or "")
-    bound = (db.get_setting("cloud_bound_cemetery") or "")
-    if server_cem and not key.startswith(f"{server_cem}."):
-        rep.add("Cemetery binding", "FAIL", "cheia aparține altui cimitir decât cel al serverului")
-    elif server_cem and bound and bound != server_cem:
-        rep.add("Cemetery binding", "FAIL", "serverul aparține altui cimitir decât cel legat de acest MAIN")
+
+    server_cem = str(info.get("cemetery_uid") or "")
+    device_type = str(info.get("device_type") or "")
+
+    if device_type and device_type != "MAIN":
+        rep.add("Tenant/device binding", "FAIL", f"cheia apar?ine unui dispozitiv {device_type}, nu MAIN")
+        return
+
+    rep.add("Tenant/device binding", "OK", "cheia MAIN este acceptat?")
+
+    bound = db.get_setting("cloud_bound_cemetery") or ""
+
+    if not server_cem:
+        rep.add("Cemetery binding", "FAIL", "serverul nu a returnat cemetery_uid")
+    elif bound and bound != server_cem:
+        rep.add("Cemetery binding", "FAIL", "MAIN este legat local de alt cimitir")
     else:
-        rep.add("Cemetery binding", "OK", "cimitir legat corect" if bound else "cimitir valid (încă nelegat local)")
+        rep.add("Cemetery binding", "OK", f"cimitir valid: {server_cem}")
 
 
 def _test_advanced(p: Profile, rep: TestReport, store, pg_connect, storage_factory) -> None:
