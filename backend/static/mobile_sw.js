@@ -1,9 +1,10 @@
-const CACHE = 'cimitir-mobile-shell-v2';
+const CACHE = 'cimitir-mobile-shell-v3';
 const SHELL = [
   '/mobile/',
   '/mobile/manifest.webmanifest',
   '/mobile-assets/mobile_app.css',
   '/mobile-assets/mobile_app.js',
+  '/mobile-assets/mobile_offline.js',
   '/mobile-assets/mobile-icon-192.png',
   '/mobile-assets/mobile-icon-512.png'
 ];

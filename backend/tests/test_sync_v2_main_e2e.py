@@ -299,3 +299,40 @@ except cloud_sync.Rejected as e:
 """, registry=True)
     assert chk["leak"] == []
     assert chk["legacy"] == "blocked"
+
+
+def test_payments_permits_delete_sync_and_phone_repair_lose_nothing(world):
+    from test_etapa6c_field_inbox_pg import seed_binding
+    w = world
+    out = main_run(w, SCENARIO + """
+cid = q("SELECT id FROM contracte WHERE numar_contract='C-100'")[0]["id"]
+q("INSERT INTO plati (cod_loc, suma, data_plata, tip, chitanta_nr, contract_id) VALUES (?,?,?,?,?,?)", ("SC-1", 250.0, "2026-03-02", "taxă concesiune", "R-77", cid))
+q("INSERT INTO amenajari_avize (cod_loc, nr_aviz, data_aviz, lucrare) VALUES (?,?,?,?)", ("SC-1", "AV-5", "2026-03-03", "bordură"))
+rep = cloud_sync.sync_all()
+out["rep2"] = {k: rep.get(k) for k in ("ok", "applied", "pending")}
+""")
+    assert out["rep2"] == {"ok": True, "applied": 2, "pending": 0}, out
+    d = mobile_grave(w, out["loc_uid"])
+    assert [(p["suma"], p["chitanta_nr"]) for p in d["payments"]] == [(250.0, "R-77")] and [x["nr_aviz"] for x in d["permits"]] == ["AV-5"]
+    # MAIN șterge un înhumat (anulare) și plata -> ștergerile ajung în cloud ca tombstone; restul datelor rămân intacte
+    dele = main_run(w, """
+q("DELETE FROM inhumati WHERE prenume='Ana'")
+q("DELETE FROM plati WHERE chitanta_nr='R-77'")
+rep = cloud_sync.sync_all()
+out["rep"] = {k: rep.get(k) for k in ("ok", "applied", "pending", "errors")}
+""")
+    assert dele["rep"]["ok"] and dele["rep"]["pending"] == 0 and dele["rep"]["errors"] == 0, dele
+    assert pg(w, "SELECT count(*) FROM inhumati")[0][0] == 1 and pg(w, "SELECT count(*) FROM plati")[0][0] == 0
+    assert pg(w, "SELECT count(*) FROM sync_tombstones WHERE entity IN ('inhumati','plati')")[0][0] == 2
+    assert pg(w, "SELECT count(*) FROM locuri_de_veci")[0][0] == 1 and pg(w, "SELECT count(*) FROM contracte")[0][0] == 1 and pg(w, "SELECT count(*) FROM concesionari")[0][0] == 1
+    # telefon nou/reîmperecheat (alt binding, același cimitir): descarcă totul de la zero, fără pierderi
+    t = w["T"]["A"]
+    new_key, _b = seed_binding(w["pg"], t["org"], t["cem"], "MOBILE")
+    for ent, expect in (("locuri_de_veci", 1), ("concesionari", 1), ("contracte", 1), ("inhumati", 1), ("amenajari_avize", 1)):
+        ch = requests.get(f"{w['url']}/api/v1/sync-v2/pull?entity={ent}&since=0", headers=H(new_key), timeout=10).json()["result"]["changes"]
+        assert len([c for c in ch if not c["deleted"]]) == expect, ent
+    ch = requests.get(f"{w['url']}/api/v1/sync-v2/pull?entity=inhumati&since=0", headers=H(new_key), timeout=10).json()["result"]["changes"]
+    assert any(c["deleted"] for c in ch)        # ștergerea ajunge și la un dispozitiv nou/vechi, controlat prin tombstone
+    # MAIN se reface din cloud (SQLite nou, aceeași legătură): primește tot, nimic nu se pierde și nu se dublează
+    again = main_run(w, "rep = cloud_sync.sync_all(); out['rep'] = {k: rep.get(k) for k in ('ok','applied','pending')}; out['n'] = q('SELECT (SELECT count(*) FROM inhumati) AS i, (SELECT count(*) FROM locuri_de_veci) AS l')[0]")
+    assert again["rep"]["ok"] and again["n"] == {"i": 1, "l": 1}

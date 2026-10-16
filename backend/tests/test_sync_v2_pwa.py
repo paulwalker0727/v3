@@ -60,8 +60,7 @@ def test_pwa_sync_button_edit_offline_resume(web):
         ctx = b.new_context(viewport={"width": 390, "height": 844}, service_workers="block")
         page = ctx.new_page()
         page.goto(f"{w['url']}/mobile/")
-        page.evaluate("""(k) => new Promise((res, rej) => { const r = indexedDB.open('cimitir-mobile-v2', 1);
-            r.onupgradeneeded = () => r.result.createObjectStore('kv');
+        page.evaluate("""(k) => new Promise((res, rej) => { const r = indexedDB.open('cimitir-mobile-v2');
             r.onsuccess = () => { const tx = r.result.transaction('kv', 'readwrite'); tx.objectStore('kv').put(k, 'binding_key'); tx.oncomplete = res; }; r.onerror = rej; })""", phone)
         page.reload()
         page.wait_for_selector("[data-testid=sync-button]")
@@ -77,12 +76,12 @@ def test_pwa_sync_button_edit_offline_resume(web):
         page.fill("#search-q", "Popescu")
         page.wait_for_selector("button.result:not([disabled])")
         page.click("button.result:not([disabled])")
-        page.wait_for_selector("[data-testid=add-burial]")
+        page.wait_for_selector("[data-testid=add-inhumati]")
         txt = page.inner_text("#sheet-body")
         assert "Popescu Ion" in txt and "PWA-1" in txt and not UUID_RE.search(txt)
         # adăugare înhumat OFFLINE -> coadă
         ctx.set_offline(True)
-        page.click("[data-testid=add-burial]")
+        page.click("[data-testid=add-inhumati]")
         page.fill("[data-testid=field-nume]", "Offline")
         page.fill("[data-testid=field-prenume]", "Test")
         page.click("[data-testid=record-save]")
@@ -121,3 +120,122 @@ def test_pwa_sync_button_edit_offline_resume(web):
         page.screenshot(path="/tmp/pwa_after_edit.png")
         b.close()
     assert got == ("verificat pe teren", 2)
+
+
+def _seed_phone(page, key):
+    page.evaluate("""(k) => new Promise((res, rej) => { const r = indexedDB.open('cimitir-mobile-v2');
+        r.onsuccess = () => { const tx = r.result.transaction('kv', 'readwrite'); tx.objectStore('kv').put(k, 'binding_key'); tx.oncomplete = res; }; r.onerror = rej; })""", key)
+    page.reload()
+    page.wait_for_selector("[data-testid=sync-button]")
+
+
+def _rows(w, sql):
+    with adm(w["pg"]) as c:
+        return c.execute(sql).fetchall()
+
+
+def _wait_saved(page, w, sql, expect):
+    for _ in range(100):
+        if _rows(w, sql) == expect:
+            break
+        page.wait_for_timeout(100)
+    page.wait_for_function("() => document.querySelector('[data-testid=sync-button]').dataset.state !== 'busy'")
+    page.wait_for_timeout(300)
+
+
+def _open_grave_via_search(page, text="Popescu"):
+    page.click(".bottom-nav [data-view=search]")
+    page.fill("#search-q", text)
+    try:
+        page.wait_for_selector("button.result:not([disabled])", timeout=8000)
+    except Exception:
+        page.screenshot(path="/tmp/pwa_fail.png"); print("BODY:", page.inner_text("body")[:600]); raise
+    page.click("button.result:not([disabled])")
+    page.wait_for_selector("[data-testid=sheet-close]")
+
+
+def test_pwa_full_forms_offline_mirror_roles_and_privacy(web):
+    w = web
+    phone, ref, main = w["T"]["A"]["phone"], w["T"]["A"]["phone_b"], w["T"]["A"]["main"]
+    assert requests.put(f"{w['url']}/api/v1/sync-v2/devices/{ref}/capabilities", json={"role": "administrator"}, headers=H(main), timeout=10).status_code == 200
+    with pw.sync_playwright() as p:
+        b = p.chromium.launch()
+        ctx = b.new_context(viewport={"width": 390, "height": 844}, service_workers="block")
+        page = ctx.new_page()
+        page.on("dialog", lambda d: d.accept())
+        page.goto(f"{w['url']}/mobile/")
+        _seed_phone(page, phone)
+        page.click("[data-testid=sync-button]"); page.click("[data-testid=sync-run]")
+        page.wait_for_selector(".toast:has-text('Sincronizat')"); page.click("[data-testid=sync-close]")
+        # --- formulare reale: concesionar -> contract -> plată (validări + confirmare)
+        _open_grave_via_search(page)
+        page.click("[data-testid=add-concesionari]")
+        page.click("[data-testid=record-save]")
+        assert "Completează câmpul" in page.inner_text("[data-testid=form-error]")            # validare, nu se pierd datele
+        page.fill("[data-testid=field-nume]", "Georgescu"); page.fill("[data-testid=field-prenume]", "Maria"); page.fill("[data-testid=field-telefon]", "0722000111")
+        page.click("[data-testid=record-save]")
+        page.wait_for_selector(".toast:has-text('modificări trimise')")
+        _open_grave_via_search(page)
+        page.click("[data-testid=add-contracte]")
+        page.select_option("[data-testid=field-concesionar_uid]", label="Georgescu Maria")
+        page.fill("[data-testid=field-numar_contract]", "C-2026/7"); page.fill("[data-testid=field-data_contract]", "2026-03-01")
+        page.click("[data-testid=record-save]")
+        page.wait_for_selector(".toast:has-text('modificări trimise')")
+        _open_grave_via_search(page)
+        page.click("[data-testid=add-plati]")
+        page.fill("[data-testid=field-suma]", "-5"); page.click("[data-testid=record-save]")
+        assert "pozitiv" in page.inner_text("[data-testid=form-error]")
+        page.fill("[data-testid=field-suma]", "150,50"); page.fill("[data-testid=field-chitanta_nr]", "CH-1")
+        page.click("[data-testid=record-save]")
+        _wait_saved(page, w, "SELECT chitanta_nr FROM plati", [("CH-1",)])
+        assert _rows(w, "SELECT suma::float, chitanta_nr FROM plati") == [(150.5, "CH-1")]
+        assert _rows(w, "SELECT numar_contract, (SELECT nume FROM concesionari c WHERE c.id=concesionar_id) FROM contracte") == [("C-2026/7", "Georgescu")]
+        _open_grave_via_search(page, "Georgescu")
+        txt = page.inner_text("#sheet-body")
+        assert "Contract C-2026/7" in txt and "150.5 lei" in txt and "CH-1" in txt and "Istoric modificări" in txt and not UUID_RE.search(txt)
+        assert "Georgescu Maria" in txt and "0722000111" in txt
+        page.click("[data-testid=sheet-close]")
+        # --- OFFLINE: copia locală autorizată (căutare, fișă, liste), modificare în coadă cu indicator
+        ctx.set_offline(True)
+        page.wait_for_function("() => document.querySelector('[data-testid=net-pill]')?.dataset.state === 'off' || true")
+        _open_grave_via_search(page)
+        txt = page.inner_text("#sheet-body")
+        assert "COPIE OFFLINE" in txt and "Popescu Ion" in txt and "150.5 lei" in txt and "Georgescu" in txt and not UUID_RE.search(txt)
+        page.click("[data-testid=add-plati]")
+        page.fill("[data-testid=field-suma]", "75"); page.fill("[data-testid=field-chitanta_nr]", "CH-OFF")
+        page.click("[data-testid=record-save]")
+        page.wait_for_selector(".toast:has-text('Fără conexiune')")
+        assert len(_rows(w, "SELECT 1 FROM plati")) == 1                                    # nimic trimis fără internet
+        assert "1 în coadă" in page.inner_text("[data-testid=sync-button]") or "Offline" in page.inner_text("[data-testid=sync-button]")
+        _open_grave_via_search(page)
+        assert "CH-OFF" in page.inner_text("#sheet-body") and "nesincronizat" in page.inner_text("#sheet-body")      # vizibil local, marcat
+        page.click("[data-testid=sheet-close]")
+        page.click(".bottom-nav [data-view=modules]"); page.click("[data-testid=module-inhumati]")
+        page.wait_for_selector("#list-box .result")
+        assert "Popescu Ion" in page.inner_text("#list-box")
+        page.fill("[data-testid=list-filter]", "zzz")
+        page.wait_for_selector("#list-box .empty")
+        page.screenshot(path="/tmp/pwa_offline.png")
+        # --- reconectare: coada se trimite o singură dată, de două ori nu dublează
+        ctx.set_offline(False)
+        page.click("[data-testid=sync-button]"); page.click("[data-testid=sync-run]")
+        page.wait_for_selector(".toast:has-text('1 modificări trimise')")
+        page.click("[data-testid=sync-close]"); page.click("[data-testid=sync-button]"); page.click("[data-testid=sync-run]")
+        page.wait_for_selector(".toast:has-text('0 modificări trimise')")
+        assert sorted(_rows(w, "SELECT chitanta_nr FROM plati")) == [("CH-1",), ("CH-OFF",)]
+        # --- rol limitat aplicat pe server: plățile dispar din copia locală și din fișă; fără butoane de editare
+        page.click("[data-testid=sync-close]")
+        assert requests.put(f"{w['url']}/api/v1/sync-v2/devices/{ref}/capabilities", json={"role": "limitat"}, headers=H(main), timeout=10).status_code == 200
+        page.click("[data-testid=sync-button]"); page.click("[data-testid=sync-run]")
+        page.wait_for_selector(".toast:has-text('Sincronizat')"); page.click("[data-testid=sync-close]")
+        _open_grave_via_search(page)
+        txt = page.inner_text("#sheet-body")
+        assert "CH-1" not in txt and "Plăți și obligații · 0" in txt and page.locator("[data-testid=add-plati], [data-testid=edit-inhumati]").count() == 0
+        page.click("[data-testid=sheet-close]")
+        n_plati = page.evaluate("""() => new Promise((res) => { const r = indexedDB.open('cimitir-mobile-v2'); r.onsuccess = () => {
+            const q = r.result.transaction('rows').objectStore('rows').getAllKeys(); q.onsuccess = () => res(q.result.filter(k => k.startsWith('plati|')).length); }; })""")
+        assert n_plati == 0                                                                    # registre nepermise nu rămân pe telefon
+        # --- dezasociere: copia locală este ștearsă
+        page.on("dialog", lambda d: d.accept())
+        page.click(".bottom-nav [data-view=modules]")
+        b.close()

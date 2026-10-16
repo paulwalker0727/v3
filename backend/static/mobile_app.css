@@ -22,3 +22,8 @@
 .sync-btn[data-state=busy]{opacity:.7}
 .edit-btn{border:1px solid var(--line);background:#fff;color:var(--green);border-radius:11px;padding:10px 14px;font-weight:700;margin:8px 0}
 .edit-btn.small{padding:5px 9px;font-size:11px;margin:0 0 0 6px}
+
+.net-pill{font-size:11px;font-weight:700;border-radius:999px;padding:5px 9px;margin-right:8px;background:#e7f0eb;color:#245742;white-space:nowrap}
+.net-pill[data-state=off]{background:#eef0f2;color:#4a545c}
+.field{display:grid;gap:5px;margin:0 0 12px}.field label{font-size:12px;font-weight:700;color:var(--muted)}
+.field input,.field select,.field textarea{width:100%;padding:12px;border:1px solid var(--line);border-radius:12px;font-size:16px;background:#fff}
