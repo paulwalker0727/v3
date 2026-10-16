@@ -239,3 +239,33 @@ def test_pwa_full_forms_offline_mirror_roles_and_privacy(web):
         page.on("dialog", lambda d: d.accept())
         page.click(".bottom-nav [data-view=modules]")
         b.close()
+
+
+def test_pwa_repairing_to_other_cemetery_purges_mirror_and_quarantines_queue(web):
+    w = web
+    a_phone, ref, main = w["T"]["A"]["phone"], w["T"]["A"]["phone_b"], w["T"]["A"]["main"]
+    b_phone = w["T"]["B"]["phone"]
+    requests.put(f"{w['url']}/api/v1/sync-v2/devices/{ref}/capabilities", json={"role": "operator"}, headers=H(main), timeout=10)
+    with pw.sync_playwright() as p:
+        b = p.chromium.launch()
+        ctx = b.new_context(viewport={"width": 390, "height": 844}, service_workers="block")
+        page = ctx.new_page()
+        page.on("dialog", lambda d: d.accept())
+        page.goto(f"{w['url']}/mobile/")
+        _seed_phone(page, a_phone)
+        page.click("[data-testid=sync-button]"); page.click("[data-testid=sync-run]")
+        page.wait_for_selector(".toast:has-text('Sincronizat')"); page.click("[data-testid=sync-close]")
+        count = "() => new Promise((res) => { const r = indexedDB.open('cimitir-mobile-v2'); r.onsuccess = () => { const q = r.result.transaction('rows').objectStore('rows').count(); q.onsuccess = () => res(q.result); }; })"
+        assert page.evaluate(count) >= 2
+        ctx.route("**/api/v1/sync-v2/push", lambda r: r.abort())                           # coada rămâne nesincronizată
+        _open_grave_via_search(page)
+        page.click("[data-testid=add-plati]"); page.fill("[data-testid=field-suma]", "10"); page.click("[data-testid=record-save]")
+        page.wait_for_selector(".toast:has-text('Fără conexiune')")
+        ctx.unroute("**/api/v1/sync-v2/push")
+        _seed_phone(page, b_phone)                                                           # reasociere la ALT cimitir
+        page.wait_for_function(f"({count})().then(n => n === 0)") if False else page.wait_for_timeout(1500)
+        assert page.evaluate(count) == 0                                                     # datele cimitirului A nu rămân pe telefon
+        q = page.evaluate("""() => new Promise((res) => { const r = indexedDB.open('cimitir-mobile-v2'); r.onsuccess = () => {
+            const tx = r.result.transaction('kv'); const g = tx.objectStore('kv').get('outbox_quarantine'); g.onsuccess = () => res(g.result ? g.result.length : 0); }; })""")
+        assert q == 1 and _rows(w, "SELECT 1 FROM plati") == []                              # operația veche nu a ajuns în alt cimitir
+        b.close()

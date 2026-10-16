@@ -313,7 +313,11 @@ out["rep2"] = {k: rep.get(k) for k in ("ok", "applied", "pending")}
 """)
     assert out["rep2"] == {"ok": True, "applied": 2, "pending": 0}, out
     d = mobile_grave(w, out["loc_uid"])
-    assert [(p["suma"], p["chitanta_nr"]) for p in d["payments"]] == [(250.0, "R-77")] and [x["nr_aviz"] for x in d["permits"]] == ["AV-5"]
+    assert d["payments"] == [] and [x["nr_aviz"] for x in d["permits"]] == ["AV-5"]
+    assert requests.get(f"{w['url']}/api/v1/sync-v2/pull?entity=plati", headers=H(w["T"]["A"]["phone"]), timeout=10).status_code == 403   # implicit „limitat": fără plăți
+    assert requests.put(f"{w['url']}/api/v1/sync-v2/devices/{w['T']['A']['phone_b']}/capabilities", json={"role": "operator"}, headers=H(w["T"]["A"]["main"]), timeout=10).status_code == 200
+    d = mobile_grave(w, out["loc_uid"])
+    assert [(p["suma"], p["chitanta_nr"]) for p in d["payments"]] == [(250.0, "R-77")]
     # MAIN șterge un înhumat (anulare) și plata -> ștergerile ajung în cloud ca tombstone; restul datelor rămân intacte
     dele = main_run(w, """
 q("DELETE FROM inhumati WHERE prenume='Ana'")
@@ -354,3 +358,16 @@ out["lines2"] = rep2["lines"]
     assert [s["points"] for s in m["sectors"]] == [[[0, 0], [100, 0], [100, 100], [0, 100]]] or len(m["sectors"]) == 1
     deny = requests.put(f"{w['url']}/api/v1/sync-v2/sectors", json={"sectors": [{"id": "X", "points": [[0, 0], [1, 1], [2, 2]]}]}, headers=H(phone), timeout=10)
     assert deny.status_code == 403 and pg(w, "SELECT count(*) FROM sectoare")[0][0] == 1                # telefonul nu scrie sectoare
+
+
+def test_main_assigns_role_to_phone_via_sync_v2_module(world):
+    w = world
+    ref = w["T"]["A"]["phone_b"]
+    out = main_run(w, f"""
+info = sync_v2.list_devices()
+out["roles"] = sorted(info["roles"])
+out["res"] = sync_v2.set_device_role({ref!r}, "operator")
+out["after"] = [d["role"] for d in sync_v2.list_devices()["devices"] if d["ref"] == {ref!r}]
+""")
+    assert out["roles"] == ["administrator", "limitat", "operator", "preot_paroh"]
+    assert out["res"]["role"] == "operator" and out["after"] == ["operator"] and "plati" in out["res"]["editable"] and "contracte" not in out["res"]["editable"]

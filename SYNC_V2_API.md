@@ -41,3 +41,18 @@ curl -s -X POST -H "Authorization: Binding $KMAIN" -H "Content-Type: application
 - **Conflict (MAIN câștigă):** MAIN cu `base_version` depășit → se aplică, starea suprascrisă rămâne în jurnal (`main_wins`, recuperabilă cu `restore_previous`). Mobile cu bază depășită → `conflict` (`version_mismatch`), nu se aplică.
 - **Mobile:** scrie doar registrele bifate din MAIN; `delete` interzis (`delete_not_allowed`). Un înhumat adăugat de pe telefon marchează locul `are_inhumari`.
 - Fiecare operațiune → `sync_v2_ops`; fiecare cerere push/pull → `sync_v2_runs`; conflictele → `sync_v2_conflicts`.
+
+## Adăugiri (sesiunea „Mobile V2 — sincronizare completă")
+
+| Rută | Metodă | Cine | Ce face |
+|---|---|---|---|
+| `/roles` | GET | orice dispozitiv autentificat | capabilitățile și șabloanele de rol (administrator, preot_paroh, operator, limitat) |
+| `/devices/{ref}/capabilities` | PUT | doar MAIN | `{"role": "operator"}` sau `{"capabilities": ["view_map", ...]}` (rol „personalizat"). Se aplică **pe server** la `pull`/`row`/`history`/`push` și în `/mobile/*` (căutare, hartă, fișă, numărători) |
+| `/history?entity=locuri_de_veci&uid=…` | GET | dispozitiv cu drept de citire | evenimente (cine/când/ce tip) pentru rând și, la loc, pentru înhumații/contractele/plățile lui; fără date personale în clar |
+| `/sectors` | PUT | doar MAIN | `{"sectors":[{"id":"A","points":[[x,y],…],"color":"#…"}]}` — upsert pe (cimitir, id); nu șterge nimic |
+| `status` | GET | — | acum include `role`, `capabilities` și doar registrele `entities` citibile |
+
+**Capabilități**: `view_map, read_registers, read_finance, edit_graves, register_burials, manage_contracts, register_payments, upload_documents, request_permits, approve_requests, manage_users, export_print`.
+**Implicit** (telefon asociat, fără rol): șablonul **limitat** = hartă + evidențe, **fără plăți**, fără scriere (hotărât după auditul de securitate SEC-001; înainte citea tot). `upload_documents`, `approve_requests`, `manage_users`, `export_print` sunt păstrate în model dar nu au încă funcții asociate pe telefon (vezi `STATUS_IMPLEMENTARE.md`).
+**Citire/scriere pe registre**: `plati` ← `read_finance` / `register_payments`; `contracte`+`concesionari` ← `read_registers` / `manage_contracts`; `inhumati` ← `register_burials`; `locuri_de_veci` ← `view_map|read_registers` / `edit_graves`; `amenajari_avize` ← `read_registers` / `request_permits`.
+**DELETE în registre**: permis de RLS doar dacă dispozitivul este MAIN (`cp.device_type`, setat de server din binding).

@@ -117,3 +117,5 @@ licenta.lic
 *.bak
 *.pyc
 .pytest_cache/
+.patch_backups/
+.patch_applied/

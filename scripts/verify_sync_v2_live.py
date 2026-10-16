@@ -48,7 +48,11 @@ def main() -> int:
     st = call(url, key, "/api/v1/sync-v2/status")
     print("Telefon autentificat. Registre editabile de pe telefon:", ", ".join(st["editable"]) or "(niciunul — doar citire)")
     print("Conflicte deschise (ale acestui telefon):", st["open_conflicts"])
-    data = {e: pull_all(url, key, e) for e in ENTITIES}
+    readable = st.get("entities") or list(ENTITIES)
+    for e in ENTITIES:
+        if e not in readable:
+            print(f"  {e:16s} (fără drept de citire pentru acest telefon — rol: {st.get('role') or 'implicit limitat'})")
+    data = {e: (pull_all(url, key, e) if e in readable else []) for e in ENTITIES}
     for e in ENTITIES:
         print(f"  {e:16s} {len(data[e])}")
     locs = {r["uid"]: r["data"] for r in data["locuri_de_veci"]}

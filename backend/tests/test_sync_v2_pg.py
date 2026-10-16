@@ -311,3 +311,18 @@ def test_mobile_reads_still_work_before_migration_022(sx):
     finally:
         with adm(sx["pg"]) as c:
             c.execute("ALTER TABLE sync_v2_permissions_hidden RENAME TO sync_v2_permissions")
+
+
+def test_unassigned_phone_defaults_to_limited_read_no_payments(sx):
+    """SEC: telefon asociat dar fără rol = „limitat" (hartă + evidențe), fără plăți; MAIN îi poate acorda drepturi explicit."""
+    key, loc, ben, inh = seed_main_data(sx)
+    phone, ref = sx["T"]["A"]["phone"], sx["T"]["A"]["phone_b"]
+    pay = hx()
+    push(sx, key, [op("plati", pay, {"suma": 10, "data_plata": "2026-01-01", "contract_uid": None, "cod_loc": "A-1"})])
+    assert sx["client"].get("/api/v1/sync-v2/pull?entity=plati", headers=H(phone)).status_code == 403
+    assert sx["client"].get("/api/v1/sync-v2/pull?entity=inhumati", headers=H(phone)).status_code == 200
+    d = sx["mob"].grave_detail(phone, loc)
+    assert d["payments"] == [] and sx["mob"].summary(phone)["payments"] == 0 and sx["mob"].summary(phone)["burials"] >= 1
+    assert sx["mob"].data_status(phone)["live"]["payments"] == 0
+    put_caps(sx, key, ref, role="operator")
+    assert sx["client"].get("/api/v1/sync-v2/pull?entity=plati", headers=H(phone)).status_code == 200

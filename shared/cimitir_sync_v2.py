@@ -86,7 +86,8 @@ def _db_value(kind: str, value: Any) -> Any:
 
 
 def caps_of(c, a: Dict[str, Any]) -> Optional[set]:
-    """None = fără rol atribuit (compatibil: citire totală, scriere după registrele bifate). MAIN are mereu toate capabilitățile."""
+    """MAIN: toate capabilitățile. Telefon fără rol atribuit: implicit „limitat" (hartă + evidențe, FĂRĂ plăți) — nu mai citește tot.
+    None = tabela de permisiuni nu există (022 neaplicată): doar comportamentul read-only vechi (Etapa 020)."""
     if a["device_type"] == "MAIN":
         return set(CAPS)
     try:
@@ -95,7 +96,7 @@ def caps_of(c, a: Dict[str, Any]) -> Optional[set]:
         if "sync_v2_permissions" in str(exc):      # migrarea 022 încă neaplicată: Mobile v2 read-only (etapa 020) continuă să funcționeze
             return None
         raise
-    return {r["entity"][len(CAP_PREFIX):] for r in rows if r["can_edit"]} if rows else None
+    return {r["entity"][len(CAP_PREFIX):] for r in rows if r["can_edit"]} if rows else set(ROLE_PRESETS["limitat"]["caps"])
 
 
 def readable_entities(c, a: Dict[str, Any]) -> List[str]:
@@ -272,7 +273,7 @@ class SyncV2Service:
             again = c.execute("SELECT response FROM sync_v2_ops WHERE cemetery_uid=CAST(? AS uuid) AND op_id=?", (a["cemetery_uid"], op["op_id"])).fetchone()
             if again is not None:
                 return {**_loads(again["response"], {}), "duplicate": True}
-            return {"op_id": op["op_id"], "status": "rejected", "reason": "date_invalide", "entity": op["entity"], "uid": op["uid"], "detail": str(exc)[:120]}
+            return {"op_id": op["op_id"], "status": "rejected", "reason": "date_invalide", "entity": op["entity"], "uid": op["uid"]}
         except psycopg.errors.DataError:
             return {"op_id": op["op_id"], "status": "rejected", "reason": "date_invalide", "entity": op["entity"], "uid": op["uid"]}
         except psycopg.Error as exc:

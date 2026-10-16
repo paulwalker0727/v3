@@ -45,6 +45,9 @@ async function loadApp(){
     state.summary=await api(`${API}/mobile/summary`);
     state.dataStatus=await api(`${API}/mobile/data-status`).catch(()=>null);
     await kvSet('bootstrap_cache',state.bootstrap); await kvSet('summary_cache',state.summary);
+    const scope=JSON.stringify(state.bootstrap.cemetery||{});const prev=await kvGet('mirror_scope');
+    if(prev&&prev!==scope){const ob=await outbox();if(ob.length){const q=(await kvGet('outbox_quarantine'))||[];await kvSet('outbox_quarantine',q.concat(ob));await kvSet('outbox',[]);toast('Dispozitivul a fost asociat altui cimitir: modificările nesincronizate de la cel vechi au fost puse deoparte, nu trimise.');}await mirrorClear();}
+    await kvSet('mirror_scope',scope);
     await loadSyncInfo();
     shell();renderView();
     if((await outbox()).some(o=>o.state==='pending'))syncNow();else refreshMirror();

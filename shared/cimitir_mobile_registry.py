@@ -142,9 +142,10 @@ class MobileRegistryService:
             c.close()
 
     def summary(self, binding_key: str) -> Dict[str, Any]:
-        self._auth(binding_key)
+        a = self._auth(binding_key)
         c = self.cp._c()
         try:
+            vis = sv.readable_entities(c, a)
             def count(table: str) -> int:
                 return int(c.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"])
 
@@ -154,11 +155,11 @@ class MobileRegistryService:
                 "FROM locuri_de_veci"
             ).fetchone()
             return {
-                "graves": count("locuri_de_veci"),
-                "concessionaires": count("concesionari"),
-                "burials": count("inhumati"),
-                "contracts": count("contracte"),
-                "payments": count("plati"),
+                "graves": count("locuri_de_veci") if "locuri_de_veci" in vis else 0,
+                "concessionaires": count("concesionari") if "concesionari" in vis else 0,
+                "burials": count("inhumati") if "inhumati" in vis else 0,
+                "contracts": count("contracte") if "contracte" in vis else 0,
+                "payments": count("plati") if "plati" in vis else 0,
                 "occupied": int(row["occupied"] or 0),
                 "available": int(row["available"] or 0),
             }
@@ -252,10 +253,13 @@ class MobileRegistryService:
         c = self.cp._c()
         try:
             scope = (a["organization_uid"], a["cemetery_uid"])
-            live = {}
+            live, vis = {}, sv.readable_entities(c, a)
             for table, label in (("locuri_de_veci", "graves"), ("concesionari", "concessionaires"),
                                  ("contracte", "contracts"), ("inhumati", "burials"), ("plati", "payments"),
                                  ("amenajari_avize", "permits"), ("sectoare", "sectors")):
+                if table != "sectoare" and table not in vis:
+                    live[label] = 0
+                    continue
                 r = c.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE organization_uid=? AND cemetery_uid=?", scope).fetchone()
                 live[label] = int(r["n"] or 0)
             # JSONB points e deja validat în momentul sincronizării. Aici verificăm dacă există poligoane reale.

@@ -51,6 +51,8 @@ def patch_files(patch: bytes) -> List[str]:
     for m in re.finditer(rb"^diff --git a/(.+?) b/(.+?)$", patch, re.M):
         for g in (m.group(1), m.group(2)):
             s = g.decode("utf-8", "replace").strip('"')
+            if s.startswith(("/", "\\")) or ".." in Path(s).parts or ":" in s.split("/")[0]:
+                raise ValueError(f"Cale nepermisă în patch: {s}")
             if s not in paths:
                 paths.append(s)
     return paths
@@ -91,6 +93,11 @@ def verify(repo: Path, patch: bytes, branch: str, base: Optional[str]) -> Tuple[
 
 def install(repo: Path, patch_path: Path, branch: str, base: Optional[str], dry_run: bool = False) -> int:
     patch = patch_path.read_bytes()
+    try:
+        patch_files(patch)
+    except ValueError as exc:
+        print(f"OPRIT — {exc}")
+        return 2
     pid = hashlib.sha256(patch).hexdigest()[:16]
     if not patch.strip():
         print("EȘEC: patch gol.")

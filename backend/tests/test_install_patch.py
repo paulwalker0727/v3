@@ -72,3 +72,11 @@ def test_rollback_refuses_if_file_changed_after_install(world):
     (repo / "a.py").write_text("changed after\n")
     rb = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(repo), "--rollback"], capture_output=True, text=True)
     assert rb.returncode == 2 and (repo / "a.py").read_text() == "changed after\n"
+
+
+def test_patch_with_path_traversal_is_refused(world, tmp_path):
+    bad = tmp_path / "bad.patch"
+    bad.write_text("diff --git a/../evil.txt b/../evil.txt\nnew file mode 100644\n--- /dev/null\n+++ b/../evil.txt\n@@ -0,0 +1 @@\n+x\n")
+    w = {**world, "patch": bad}
+    r = run(w)
+    assert r.returncode == 2 and "Cale nepermisă" in r.stdout and not (tmp_path / "evil.txt").exists()

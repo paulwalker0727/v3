@@ -118,7 +118,14 @@ def url_is_secure(url: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme == "https":
         return True
-    return parsed.scheme == "http" and (parsed.hostname in _LOCAL_HOSTS or (db.get_setting(SET_INSECURE) or "") == "1")
+    if parsed.scheme != "http":
+        return False
+    if parsed.hostname in _LOCAL_HOSTS:
+        return True
+    if (db.get_setting(SET_INSECURE) or "") != "1":
+        return False
+    import sync_v2
+    return not sync_v2.is_binding()      # cheia MAIN Binding nu circulă niciodată necriptat (nici cu opțiunea „http permis")
 
 
 _KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]{32,}$")
