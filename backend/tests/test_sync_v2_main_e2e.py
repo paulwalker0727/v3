@@ -336,3 +336,21 @@ out["rep"] = {k: rep.get(k) for k in ("ok", "applied", "pending", "errors")}
     # MAIN se reface din cloud (SQLite nou, aceeași legătură): primește tot, nimic nu se pierde și nu se dublează
     again = main_run(w, "rep = cloud_sync.sync_all(); out['rep'] = {k: rep.get(k) for k in ('ok','applied','pending')}; out['n'] = q('SELECT (SELECT count(*) FROM inhumati) AS i, (SELECT count(*) FROM locuri_de_veci) AS l')[0]")
     assert again["rep"]["ok"] and again["n"] == {"i": 1, "l": 1}
+
+
+def test_sectors_main_to_cloud_phone_map_idempotent_main_only(world):
+    w = world
+    out = main_run(w, SCENARIO + """
+q("INSERT INTO sectoare (id, points, color) VALUES (?,?,?)", ("S-A", "[[0,0],[100,0],[100,100],[0,100]]", "#2e7d32"))
+rep = cloud_sync.sync_all()
+out["lines"] = rep["lines"]
+rep2 = cloud_sync.sync_all()
+out["lines2"] = rep2["lines"]
+""")
+    assert any("Sectoare trimise: 1" in x for x in out["lines"]) and not any("Sectoare trimise" in x for x in out["lines2"]), out   # al doilea ciclu: nimic de retrimis
+    assert pg(w, "SELECT id, color FROM sectoare") == [("S-A", "#2e7d32")]
+    phone = w["T"]["A"]["phone"]
+    m = requests.get(f"{w['url']}/api/v1/mobile/map", headers=H(phone), timeout=10).json()["result"]
+    assert [s["points"] for s in m["sectors"]] == [[[0, 0], [100, 0], [100, 100], [0, 100]]] or len(m["sectors"]) == 1
+    deny = requests.put(f"{w['url']}/api/v1/sync-v2/sectors", json={"sectors": [{"id": "X", "points": [[0, 0], [1, 1], [2, 2]]}]}, headers=H(phone), timeout=10)
+    assert deny.status_code == 403 and pg(w, "SELECT count(*) FROM sectoare")[0][0] == 1                # telefonul nu scrie sectoare

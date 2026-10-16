@@ -6,6 +6,7 @@ Cheia vine din profilul Cloud activ (SecretStore); nu apare în loguri/excepții
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -118,6 +119,36 @@ def _reset_cursors_if_scope_changed() -> None:
         db.set_setting(SET_SCOPE, scope)
 
 
+SET_SECTORS_HASH = "sync_v2_sectors_hash"
+
+
+def _push_sectors() -> int:
+    """Sectoarele MAIN (eticheta + poligon + culoare) -> cloud, doar dacă s-au schimbat de la ultima trimitere reușită."""
+    conn = db.get_connection()
+    try:
+        rows = conn.execute("SELECT id, points, color FROM sectoare ORDER BY id").fetchall()
+    except Exception:  # noqa: BLE001  (tabel lipsă într-o bază veche)
+        rows = []
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            pts = json.loads(r["points"] or "[]")
+        except ValueError:
+            continue
+        if isinstance(pts, list) and len(pts) >= 3:
+            out.append({"id": r["id"], "points": pts, "color": r["color"] or ""})
+    if not out:
+        return 0
+    digest = hashlib.sha256(json.dumps(out, sort_keys=True).encode()).hexdigest()
+    if db.get_setting(SET_SECTORS_HASH) == digest:
+        return 0
+    request("PUT", "sectors", json={"sectors": out})
+    db.set_setting(SET_SECTORS_HASH, digest)
+    return len(out)
+
+
 def run() -> Dict[str, Any]:
     """Un ciclu „Sincronizează": descarcă (adoptă modificările telefoanelor) -> trimite outbox-ul -> descarcă din nou. Nu ridică excepții."""
     import entity_sync
@@ -135,6 +166,12 @@ def run() -> Dict[str, Any]:
         if status.get("device_type") != "MAIN":
             report["lines"].append("Cheia configurată nu aparține unui dispozitiv MAIN.")
             return report
+        try:
+            n_sec = _push_sectors()
+            if n_sec:
+                report["lines"].append(f"Sectoare trimise: {n_sec}.")
+        except (cs.RetryLater, cs.Rejected) as exc:
+            report["lines"].append(f"Sectoarele nu au putut fi trimise acum: {getattr(exc, 'detail', exc)}")
         ok_pull, msg, n1 = entity_sync.pull_entities()
         report["lines"].append(msg)
         ok_push, lines, counts = entity_sync.flush_entities()
@@ -178,6 +215,11 @@ def last_report() -> Dict[str, Any]:
 # ------------------------------------------------------------------ telefoane / permisiuni / conflicte / jurnal (administrare din MAIN)
 def list_devices() -> Dict[str, Any]:
     return request("GET", "devices").json()
+
+
+def set_device_role(ref: str, role: str) -> Dict[str, Any]:
+    """Aplică un șablon de rol (administrator, preot_paroh, operator, limitat) — capabilitățile se impun pe server."""
+    return request("PUT", f"devices/{ref}/capabilities", json={"role": role}).json()
 
 
 def set_device_entities(ref: str, entities: List[str]) -> List[str]:

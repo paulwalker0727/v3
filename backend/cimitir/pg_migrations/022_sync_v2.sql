@@ -234,3 +234,22 @@ BEGIN
         EXECUTE format('CREATE POLICY sync_v2_delete ON %I FOR DELETE TO cimitir_cp_app USING (organization_uid = cp_org() AND cp_cem_ok(cemetery_uid) AND cp_device_is_main())', t);
     END LOOP;
 END $$;
+
+-- sectoare: MAIN -> cloud (upsert pe (cimitir, id); fără DELETE; id = eticheta sectorului, fără uid/version în acest registru)
+DO $$
+BEGIN
+    IF to_regclass('sectoare') IS NOT NULL THEN
+        REVOKE INSERT, UPDATE, DELETE ON sectoare FROM cimitir_cp_app;
+        GRANT SELECT ON sectoare TO cimitir_cp_app;
+        GRANT INSERT (id, organization_uid, cemetery_uid, points, color) ON sectoare TO cimitir_cp_app;
+        GRANT UPDATE (points, color) ON sectoare TO cimitir_cp_app;
+        ALTER TABLE sectoare ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS mobile_cp_read ON sectoare;
+        CREATE POLICY mobile_cp_read ON sectoare FOR SELECT TO cimitir_cp_app USING (organization_uid = cp_org() AND cp_cem_ok(cemetery_uid));
+        DROP POLICY IF EXISTS sync_v2_insert ON sectoare;
+        CREATE POLICY sync_v2_insert ON sectoare FOR INSERT TO cimitir_cp_app WITH CHECK (organization_uid = cp_org() AND cp_cem_ok(cemetery_uid) AND cp_device_is_main());
+        DROP POLICY IF EXISTS sync_v2_update ON sectoare;
+        CREATE POLICY sync_v2_update ON sectoare FOR UPDATE TO cimitir_cp_app USING (organization_uid = cp_org() AND cp_cem_ok(cemetery_uid) AND cp_device_is_main())
+            WITH CHECK (organization_uid = cp_org() AND cp_cem_ok(cemetery_uid) AND cp_device_is_main());
+    END IF;
+END $$;

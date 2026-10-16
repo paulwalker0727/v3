@@ -81,6 +81,10 @@ def create_router(service: sv.SyncV2Service) -> APIRouter:
         body = json.loads(await fih._body_limited(r, 4096))
         return await run(lambda: service.set_capabilities(key, r.path_params["ref"], body.get("role"), body.get("capabilities")))
 
+    async def sectors(r: Request, key):
+        body = json.loads(await fih._body_limited(r, 2_000_000))
+        return await run(lambda: service.put_sectors(key, body.get("sectors")))
+
     async def runs(r: Request, key):
         return await run(lambda: service.runs(key, qint(r, "limit", 50)))
 
@@ -95,5 +99,6 @@ def create_router(service: sv.SyncV2Service) -> APIRouter:
     add("/history", ["GET"], history)
     add("/roles", ["GET"], roles)
     add("/devices/{ref}/capabilities", ["PUT"], capabilities)
+    add("/sectors", ["PUT"], sectors)
     add("/runs", ["GET"], runs)
     return router

@@ -91,6 +91,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-ref", required=True, help="ref-ul proiectului TEST (20 litere)")
     ap.add_argument("--check-only", action="store_true")
+    ap.add_argument("--rollback", action="store_true", help="restaurează starea de dinainte de 022 (verificată prin amprentă; refuză dacă nu coincide)")
     args = ap.parse_args()
     url = os.environ.get("CIMITIR_CP_ADMIN_DATABASE_URL", "")
     if not url:
@@ -103,6 +104,16 @@ def main() -> int:
         print("URL-ul nu corespunde proiectului TEST indicat.")
         return 2
     import psycopg
+    if args.rollback:
+        with psycopg.connect(url, connect_timeout=15, autocommit=True) as c:
+            try:
+                c.execute((ROOT / "backend" / "cimitir" / "pg_rollbacks" / "022_sync_v2_ROLLBACK.sql").read_text(encoding="utf-8"))
+            except Exception as exc:  # noqa: BLE001
+                c.execute("ROLLBACK")
+                print(f"ROLLBACK 022 REFUZAT/EȘUAT (nimic modificat): {type(exc).__name__}: {str(exc).splitlines()[0][:300]}")
+                return 1
+        print("Rollback 022 verificat prin amprentă: starea anterioară restaurată.")
+        return 0
     with psycopg.connect(url, connect_timeout=15, autocommit=False) as c:
         errs = precheck(c)
         if errs:

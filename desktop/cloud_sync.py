@@ -336,6 +336,15 @@ def _bind_cemetery(server_cemetery_id: str) -> None:
 def ping() -> Tuple[bool, str]:
     if not is_configured():
         return False, "Adresa serverului sau cheia de sincronizare lipsesc."
+    import sync_v2
+    if sync_v2.is_binding():
+        try:
+            st = sync_v2.request("GET", "status").json()["result"]
+        except RetryLater as exc:
+            return False, str(exc)
+        except Rejected as exc:
+            return False, "Cheie MAIN Binding invalidă sau revocată (401)." if exc.status == 401 else f"Refuzat: {exc.detail}"
+        return True, f"Conexiune reușită (Sync v2)."
     try:
         info = _request("GET", "/ping").json()
         _bind_cemetery(info["cemetery_id"])

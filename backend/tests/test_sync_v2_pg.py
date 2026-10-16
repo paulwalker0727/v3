@@ -296,3 +296,18 @@ def test_concurrent_same_request_never_duplicates(sx):
     assert {r["status"] for r in results} <= {"applied"} and len(results) == 8
     assert sum(1 for r in results if not r.get("duplicate")) >= 1
     assert count(sx, "sync_v2_ops", "op_id=%s", (opid,)) == 1
+
+
+def test_mobile_reads_still_work_before_migration_022(sx):
+    """Înainte de aprobarea 022 (tabela de permisiuni lipsește) harta/căutarea/fișa read-only rămân funcționale."""
+    key, loc, ben, inh = seed_main_data(sx)
+    phone = sx["T"]["A"]["phone"]
+    with adm(sx["pg"]) as c:
+        c.execute("ALTER TABLE sync_v2_permissions RENAME TO sync_v2_permissions_hidden")
+    try:
+        assert sx["mob"].map_data(phone)["plots"]
+        assert sx["mob"].search(phone, "Popescu")["burials"]
+        assert len(sx["mob"].grave_detail(phone, loc)["burials"]) == 1
+    finally:
+        with adm(sx["pg"]) as c:
+            c.execute("ALTER TABLE sync_v2_permissions_hidden RENAME TO sync_v2_permissions")

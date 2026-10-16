@@ -89,7 +89,12 @@ def caps_of(c, a: Dict[str, Any]) -> Optional[set]:
     """None = fără rol atribuit (compatibil: citire totală, scriere după registrele bifate). MAIN are mereu toate capabilitățile."""
     if a["device_type"] == "MAIN":
         return set(CAPS)
-    rows = c.execute("SELECT entity, can_edit FROM sync_v2_permissions WHERE binding_uid=CAST(? AS uuid) AND entity LIKE 'cap:%'", (a["binding_uid"],)).fetchall()
+    try:
+        rows = c.execute("SELECT entity, can_edit FROM sync_v2_permissions WHERE binding_uid=CAST(? AS uuid) AND entity LIKE 'cap:%'", (a["binding_uid"],)).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        if "sync_v2_permissions" in str(exc):      # migrarea 022 încă neaplicată: Mobile v2 read-only (etapa 020) continuă să funcționeze
+            return None
+        raise
     return {r["entity"][len(CAP_PREFIX):] for r in rows if r["can_edit"]} if rows else None
 
 
@@ -489,6 +494,34 @@ class SyncV2Service:
                 c.execute("ROLLBACK")
                 raise
             return {"editable": [e for e in ents.ORDER if e in entities]}
+        finally:
+            c.close()
+
+    def put_sectors(self, binding_key: str, sectors: Any) -> Dict[str, Any]:
+        """MAIN -> cloud: sectoarele (poligon + culoare) după eticheta lor. Upsert pe (cimitir, id); nu șterge nimic."""
+        a = self._auth(binding_key)
+        self._need_main(a)
+        if not isinstance(sectors, list) or len(sectors) > 500:
+            raise ValueError("lista de sectoare invalidă")
+        clean = []
+        for x in sectors:
+            sid = str((x or {}).get("id") or "").strip()[:80]
+            pts = (x or {}).get("points")
+            if not sid or not isinstance(pts, list) or len(json.dumps(pts)) > 200_000:
+                raise ValueError("sector invalid")
+            clean.append((sid, json.dumps(pts), str((x or {}).get("color") or "")[:40] or None))
+        c = self.cp._c()
+        try:
+            c.execute("BEGIN")
+            try:
+                for sid, pts, color in clean:
+                    c.execute("INSERT INTO sectoare (id, organization_uid, cemetery_uid, points, color) VALUES (?, CAST(? AS uuid), CAST(? AS uuid), CAST(? AS jsonb), ?) "
+                              "ON CONFLICT (cemetery_uid, id) DO UPDATE SET points=EXCLUDED.points, color=EXCLUDED.color", (sid, *self._scope(a), pts, color))
+                c.execute("COMMIT")
+            except BaseException:
+                c.execute("ROLLBACK")
+                raise
+            return {"sectors": len(clean)}
         finally:
             c.close()
 

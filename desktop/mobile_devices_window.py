@@ -4,7 +4,7 @@ Toate datele vin prin `sync_v2` (HTTPS + cheia MAIN din SecretStore). Identifica
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTabWidget,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTabWidget,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 import cloud_sync
@@ -21,7 +21,7 @@ class MobileDevicesDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Telefoane Mobile v2")
         self.setMinimumSize(780, 460)
-        self._devices, self._conflicts = [], []
+        self._devices, self._conflicts, self._roles = [], [], {}
         root = QVBoxLayout(self)
         self.lbl = QLabel("")
         self.lbl.setWordWrap(True)
@@ -38,8 +38,8 @@ class MobileDevicesDialog(QDialog):
         lay = QVBoxLayout(w)
         lay.addWidget(QLabel("Bifează registrele pe care telefonul are voie să le modifice. Implicit telefoanele sunt doar pentru citire. "
                              "Ștergerea nu este permisă de pe telefon."))
-        self.dev_table = QTableWidget(0, 1 + len(ENTITY_LABELS))
-        self.dev_table.setHorizontalHeaderLabels(["Telefon"] + list(ENTITY_LABELS.values()))
+        self.dev_table = QTableWidget(0, 2 + len(ENTITY_LABELS))
+        self.dev_table.setHorizontalHeaderLabels(["Telefon", "Rol (șablon)"] + list(ENTITY_LABELS.values()))
         self.dev_table.horizontalHeader().setStretchLastSection(True)
         lay.addWidget(self.dev_table, 1)
         row = QHBoxLayout()
@@ -54,7 +54,14 @@ class MobileDevicesDialog(QDialog):
         self.dev_table.setRowCount(len(self._devices))
         for r, d in enumerate(self._devices):
             self.dev_table.setItem(r, 0, QTableWidgetItem(d["name"]))
-            for c, e in enumerate(ENTITY_LABELS, start=1):
+            combo = QComboBox()
+            combo.addItem("— păstrează setările actuale —", "")
+            for key, label in (self._roles or {}).items():
+                combo.addItem(label, key)
+            combo.setCurrentIndex(max(0, combo.findData(d.get("role") or "")))
+            combo.setToolTip("Rolul fixează și drepturile de CITIRE (ex. fără plăți) pe server. Alegerea unui rol înlocuiește bifele rândului.")
+            self.dev_table.setCellWidget(r, 1, combo)
+            for c, e in enumerate(ENTITY_LABELS, start=2):
                 cb = QCheckBox()
                 cb.setChecked(e in d["editable"])
                 self.dev_table.setCellWidget(r, c, cb)
@@ -62,8 +69,13 @@ class MobileDevicesDialog(QDialog):
     def _save_perms(self):
         try:
             for r, d in enumerate(self._devices):
-                chosen = [e for c, e in enumerate(ENTITY_LABELS, start=1) if self.dev_table.cellWidget(r, c).isChecked()]
-                sync_v2.set_device_entities(d["ref"], chosen)
+                role = self.dev_table.cellWidget(r, 1).currentData()
+                if role and role != (d.get("role") or ""):
+                    sync_v2.set_device_role(d["ref"], role)
+                    continue
+                chosen = [e for c, e in enumerate(ENTITY_LABELS, start=2) if self.dev_table.cellWidget(r, c).isChecked()]
+                if set(chosen) != set(d["editable"]):
+                    sync_v2.set_device_entities(d["ref"], chosen)
         except (cloud_sync.RetryLater, cloud_sync.Rejected) as exc:
             QMessageBox.warning(self, "Permisiuni", f"Nu s-au salvat: {getattr(exc, 'detail', exc)}")
             return
@@ -131,7 +143,8 @@ class MobileDevicesDialog(QDialog):
 
     def reload(self):
         try:
-            self._devices = sync_v2.list_devices()["devices"]
+            info = sync_v2.list_devices()
+            self._devices, self._roles = info["devices"], info.get("roles", {})
             self._conflicts = sync_v2.server_conflicts(True)
             runs = sync_v2.journal(100)
         except (cloud_sync.RetryLater, cloud_sync.Rejected) as exc:
