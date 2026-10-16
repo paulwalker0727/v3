@@ -41,6 +41,45 @@ def _row(row) -> Dict[str, Any]:
     return {k: row[k] for k in row.keys()} if row is not None else {}
 
 
+def validate_test_polygon_document(document: Any) -> Dict[str, Any]:
+    """Validează formatul exportului MAIN, fără a decide tenantul din payload."""
+    import hashlib
+    import math
+    if not isinstance(document, dict):
+        raise ValueError("export invalid")
+    manifest, payload = document.get("manifest"), document.get("payload")
+    if not isinstance(manifest, dict) or not isinstance(payload, dict):
+        raise ValueError("manifest invalid")
+    if payload.get("format") != "cimitir-mobile-v2-polygon-diagnostic-v1" or payload.get("source") != "MAIN-local-test":
+        raise ValueError("format invalid")
+    plots = payload.get("plots")
+    if not isinstance(plots, list) or len(plots) != 1 or manifest.get("count") != 1 or manifest.get("format") != payload["format"]:
+        raise ValueError("se acceptă un singur poligon")
+    digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    if digest != manifest.get("sha256"):
+        raise ValueError("hash diferit")
+    plot = plots[0]
+    if not isinstance(plot, dict) or not set(plot).issubset({"uid", "points", "cod_loc", "sector", "parcela", "rand", "numar"}):
+        raise ValueError("câmpuri neacceptate")
+    try:
+        uuid.UUID(str(plot["uid"]))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise ValueError("identificator invalid") from None
+    code = plot.get("cod_loc")
+    if not isinstance(code, str) or not (1 <= len(code.strip()) <= 120):
+        raise ValueError("cod loc invalid")
+    points = plot.get("points")
+    if not isinstance(points, list) or not (3 <= len(points) <= 500):
+        raise ValueError("poligon invalid")
+    for pt in points:
+        if not isinstance(pt, (list, tuple)) or len(pt) < 2 or not all(type(x) in (int, float) and math.isfinite(x) for x in pt[:2]):
+            raise ValueError("coordonate invalide")
+    for key in ("sector", "parcela", "rand", "numar"):
+        if plot.get(key) is not None and (not isinstance(plot[key], str) or len(plot[key]) > 120):
+            raise ValueError("metadate invalide")
+    return plot
+
+
 class MobileRegistryService:
     """API de citire peste registrele PostgreSQL live, scoped prin binding + RLS."""
 
@@ -53,6 +92,28 @@ class MobileRegistryService:
             raise cc.PermissionDenied("dispozitiv neacceptat")
         # authenticate() setează contextul cp.* pe thread; _c() îl propagă pe conexiunea nouă.
         return a
+
+    def import_test_polygon(self, binding_key: str, document: Any) -> Dict[str, Any]:
+        """Import pilot exclusiv MAIN, fără UPDATE/DELETE și fără alegerea tenantului de către client."""
+        import os
+        if os.getenv("CIMITIR_MOBILE_TEST_POLYGON_IMPORT") != "1":
+            raise cc.PermissionDenied("importul de test este dezactivat")
+        a = self._auth(binding_key)
+        if a.get("device_type") != "MAIN":
+            raise cc.PermissionDenied("doar dispozitivul MAIN poate importa")
+        plot = validate_test_polygon_document(document)
+        c = self.cp._c()
+        try:
+            # Constrângeri UNIQUE pe UID / (cemetery_uid, cod_loc) împiedică duplicatele.
+            # Nu folosim UPSERT: dacă există deja un loc, refuzăm să îl suprascriem.
+            c.execute("INSERT INTO locuri_de_veci (uid,cod_loc,points,sector,parcela,rand,numar,organization_uid,cemetery_uid) "
+                      "VALUES (?,?,CAST(? AS jsonb),?,?,?,?,CAST(? AS uuid),CAST(? AS uuid))",
+                      (str(plot["uid"]), plot["cod_loc"], json.dumps(plot["points"]),
+                       plot.get("sector"), plot.get("parcela"), plot.get("rand"), plot.get("numar"),
+                       a["organization_uid"], a["cemetery_uid"]))
+            return {"imported": 1, "code": plot["cod_loc"]}
+        finally:
+            c.close()
 
     def bootstrap(self, binding_key: str) -> Dict[str, Any]:
         a = self._auth(binding_key)

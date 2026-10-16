@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 import anyio
+import json
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -63,6 +64,18 @@ def create_router(service: mr.MobileRegistryService) -> APIRouter:
     async def data_status(_request: Request, key: str):
         return await run(lambda: service.data_status(key))
 
+    async def import_polygon_handler(request: Request):
+        secret = ""
+        try:
+            secret = fih._binding_key(request)
+            raw = await fih._body_limited(request, 64 * 1024)
+            document = json.loads(raw)
+            result = await run(lambda: service.import_test_polygon(secret, document))
+            return JSONResponse({"ok": True, "result": result}, headers=fih._HEADERS)
+        except Exception as exc:  # noqa: BLE001
+            return fih._error(exc, secret)
+
+    router.add_api_route("/test-polygon/import", import_polygon_handler, methods=["POST"])
     route("/bootstrap", bootstrap)
     route("/data-status", data_status)
     route("/summary", summary)
