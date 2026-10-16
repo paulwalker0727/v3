@@ -71,6 +71,16 @@ def create_router(service: sv.SyncV2Service) -> APIRouter:
         body = json.loads(await fih._body_limited(r, 4096))
         return await run(lambda: service.set_permissions(key, r.path_params["ref"], body.get("entities")))
 
+    async def history(r: Request, key):
+        return await run(lambda: service.history(key, r.query_params.get("entity", ""), r.query_params.get("uid", ""), qint(r, "limit", 100)))
+
+    async def roles(_r, key):
+        return await run(lambda: service.roles(key))
+
+    async def capabilities(r: Request, key):
+        body = json.loads(await fih._body_limited(r, 4096))
+        return await run(lambda: service.set_capabilities(key, r.path_params["ref"], body.get("role"), body.get("capabilities")))
+
     async def runs(r: Request, key):
         return await run(lambda: service.runs(key, qint(r, "limit", 50)))
 
@@ -82,5 +92,8 @@ def create_router(service: sv.SyncV2Service) -> APIRouter:
     add("/conflicts/{cid}/resolve", ["POST"], resolve)
     add("/devices", ["GET"], devices)
     add("/devices/{ref}/permissions", ["PUT"], permissions)
+    add("/history", ["GET"], history)
+    add("/roles", ["GET"], roles)
+    add("/devices/{ref}/capabilities", ["PUT"], capabilities)
     add("/runs", ["GET"], runs)
     return router

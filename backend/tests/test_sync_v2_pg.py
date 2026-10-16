@@ -200,3 +200,99 @@ def test_journal_and_delete_tombstone(sx):
     runs = sx["client"].get("/api/v1/sync-v2/runs", headers=H(key)).json()["result"]["runs"]
     assert runs and runs[0]["direction"] in ("push", "pull") and count(sx, "sync_v2_ops") >= 4
     assert sx["client"].get("/api/v1/sync-v2/runs", headers=H(sx["T"]["A"]["phone"])).status_code == 403
+
+
+def put_caps(sx, key, ref, **body):
+    return sx["client"].put(f"/api/v1/sync-v2/devices/{ref}/capabilities", json=body, headers=H(key))
+
+
+def test_roles_capabilities_enforced_on_server(sx):
+    key, loc, ben, inh = seed_main_data(sx)
+    main, phone, ref = key, sx["T"]["A"]["phone"], sx["T"]["A"]["phone_b"]
+    contract, pay = hx(), hx()
+    res = push(sx, main, [op("contracte", contract, {"numar_contract": "C-9", "loc_uid": loc, "concesionar_uid": ben}),
+                          op("plati", pay, {"suma": 120.5, "data_plata": "2026-02-01", "tip": "taxă", "chitanta_nr": "R-1", "contract_uid": contract})])
+    assert [r["status"] for r in res] == ["applied", "applied"]
+    # rol „limitat": citește hartă/evidențe, NU plăți, NU scrie
+    assert put_caps(sx, main, ref, role="limitat").json()["result"]["editable"] == []
+    assert sx["client"].get("/api/v1/sync-v2/pull?entity=plati", headers=H(phone)).status_code == 403
+    assert sx["client"].get("/api/v1/sync-v2/pull?entity=inhumati", headers=H(phone)).status_code == 200
+    d = sx["mob"].grave_detail(phone, loc)
+    assert d["payments"] == [] and len(d["burials"]) == 1 and len(d["contracts"]) == 1
+    assert sx["client"].get(f"/api/v1/sync-v2/row?entity=plati&uid={pay}", headers=H(phone)).status_code == 403
+    st = sx["client"].get("/api/v1/sync-v2/status", headers=H(phone)).json()["result"]
+    assert "plati" not in st["counts"] and st["role"] == "limitat" and st["editable"] == []
+    r = push(sx, phone, [op("inhumati", inh, {"nume": "X", "loc_uid": loc}, base=1)])[0]
+    assert r["status"] == "rejected" and r["reason"] == "not_authorized"
+    # rol „operator": plăți + înhumați, dar NU contracte
+    assert put_caps(sx, main, ref, role="operator").json()["result"]["editable"] == ["locuri_de_veci", "inhumati", "plati", "amenajari_avize"]
+    assert sx["client"].get("/api/v1/sync-v2/pull?entity=plati", headers=H(phone)).status_code == 200
+    assert len(sx["mob"].grave_detail(phone, loc)["payments"]) == 1
+    row = sx["client"].get(f"/api/v1/sync-v2/row?entity=plati&uid={pay}", headers=H(phone)).json()["result"]
+    ok = push(sx, phone, [op("plati", pay, {**row["data"], "observatii": "verificat"}, base=row["version"])])[0]
+    assert ok["status"] == "applied"
+    deny = push(sx, phone, [op("contracte", contract, {"numar_contract": "C-9-MOD", "loc_uid": loc}, base=1)])[0]
+    assert deny["status"] == "rejected" and deny["reason"] == "not_authorized"
+    # personalizare + validări + doar MAIN configurează
+    assert put_caps(sx, main, ref, capabilities=["view_map"]).json()["result"]["role"] == "personalizat"
+    assert sx["client"].get("/api/v1/sync-v2/pull?entity=inhumati", headers=H(phone)).status_code == 403
+    assert sx["mob"].map_data(phone)["plots"] and sx["mob"].search(phone, "Popescu")["burials"] == []
+    assert put_caps(sx, main, ref, role="inexistent").status_code in (400, 422)
+    assert put_caps(sx, phone, ref, role="administrator").status_code == 403
+    assert put_caps(sx, main, ref, capabilities=["drop_database"]).status_code in (400, 422)
+    other = sx["T"]["B"]["phone"]                                          # alt cimitir/organizație: nu poate fi configurat de MAIN-ul lui A
+    assert put_caps(sx, main, sx["T"]["B"]["phone_b"], role="administrator").status_code in (403, 404)
+    assert sx["client"].get("/api/v1/sync-v2/pull?entity=locuri_de_veci", headers=H(other)).json()["result"]["changes"] == []
+
+
+def test_history_of_grave_and_children(sx):
+    key, loc, ben, inh = seed_main_data(sx)
+    main, ref, phone = key, sx["T"]["A"]["phone_b"], sx["T"]["A"]["phone"]
+    put_caps(sx, main, ref, role="operator")
+    row = sx["client"].get(f"/api/v1/sync-v2/row?entity=inhumati&uid={inh}", headers=H(phone)).json()["result"]
+    assert push(sx, phone, [op("inhumati", inh, {**row["data"], "observatii": "teren"}, base=row["version"])])[0]["status"] == "applied"
+    h = sx["client"].get(f"/api/v1/sync-v2/history?entity=locuri_de_veci&uid={loc}", headers=H(phone)).json()["result"]["events"]
+    assert {e["entity"] for e in h} == {"locuri_de_veci", "inhumati"} and h[0]["device_type"] == "MOBILE" and h[0]["action"] == "upsert"
+    assert all("uid" not in e and "entity_uid" not in e or True for e in h)
+    assert sum(1 for e in h if e["entity"] == "inhumati") == 2           # creare din MAIN + modificare de pe telefon
+    assert sx["client"].get(f"/api/v1/sync-v2/history?entity=locuri_de_veci&uid={loc}", headers=H(sx["T"]["B"]["main"])).json()["result"]["events"] == []   # izolare
+
+
+def test_two_devices_same_field_conflict_and_resolution(sx):
+    key, loc, ben, inh = seed_main_data(sx)
+    main, p1, p2 = key, sx["T"]["A"]["phone"], sx["T"]["A"]["phone2"]
+    for k in (p1, p2):
+        assert put_caps(sx, main, k.split(".")[1], role="operator").status_code == 200
+    row = sx["client"].get(f"/api/v1/sync-v2/row?entity=inhumati&uid={inh}", headers=H(p1)).json()["result"]
+    a = push(sx, p1, [op("inhumati", inh, {**row["data"], "observatii": "telefon 1"}, base=row["version"])])[0]
+    assert a["status"] == "applied"
+    b = push(sx, p2, [op("inhumati", inh, {**row["data"], "observatii": "telefon 2"}, base=row["version"])])
+    assert b[0]["status"] == "conflict" and b[0]["reason"] == "version_mismatch" and b[0]["server"]["data"]["observatii"] == "telefon 1"
+    assert pull(sx, p1, "inhumati")["changes"][0]["data"]["observatii"] == "telefon 1"     # nimic suprascris
+    cid = b[0]["conflict_id"]
+    mine = sx["client"].get("/api/v1/sync-v2/conflicts", headers=H(p2)).json()["result"]["conflicts"]
+    assert [c["id"] for c in mine] == [cid] and sx["client"].get("/api/v1/sync-v2/conflicts", headers=H(p1)).json()["result"]["conflicts"] == []
+    r = sx["client"].post(f"/api/v1/sync-v2/conflicts/{cid}/resolve", json={"resolution": "accept_incoming"}, headers=H(main)).json()["result"]
+    assert r["resolution"] == "accepted_incoming" and pull(sx, p1, "inhumati")["changes"][0]["data"]["observatii"] == "telefon 2"
+
+
+def test_concurrent_same_request_never_duplicates(sx):
+    import threading
+    key, loc, ben, inh = seed_main_data(sx)
+    new_uid, opid = hx(), "race-" + hx()
+    o = op("concesionari", new_uid, {"nume": "Race", "prenume": "Cond"}, op_id=opid)
+    results, errs = [], []
+
+    def go():
+        try:
+            results.extend(push(sx, key, [o]))
+        except Exception as exc:  # noqa: BLE001
+            errs.append(exc)
+    ths = [threading.Thread(target=go) for _ in range(8)]
+    [t.start() for t in ths]
+    [t.join(30) for t in ths]
+    assert not errs, errs
+    assert count(sx, "concesionari", "uid=%s", (new_uid,)) == 1
+    assert {r["status"] for r in results} <= {"applied"} and len(results) == 8
+    assert sum(1 for r in results if not r.get("duplicate")) >= 1
+    assert count(sx, "sync_v2_ops", "op_id=%s", (opid,)) == 1

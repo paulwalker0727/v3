@@ -28,6 +28,25 @@ MAX_TEXT = 4000
 MAX_POINTS = 500
 RESOLUTIONS = ("keep_main", "accept_incoming", "restore_previous")
 
+# Permisiuni configurabile (aplicate pe SERVER): capabilități -> registre. Rolurile sunt doar șabloane de capabilități; MAIN poate personaliza oricând.
+CAPS: Dict[str, str] = {
+    "view_map": "Vizualizare hartă", "read_registers": "Citire evidențe (concesionari, înhumați, contracte, avize)", "read_finance": "Citire plăți și taxe",
+    "edit_graves": "Adăugare/modificare locuri", "register_burials": "Înregistrare înhumări", "manage_contracts": "Administrare contracte și concesionari",
+    "register_payments": "Înregistrare plăți", "upload_documents": "Încărcare documente și fotografii", "request_permits": "Solicitări de avize pentru lucrări",
+    "approve_requests": "Aprobare solicitări", "manage_users": "Administrare utilizatori/dispozitive", "export_print": "Export și tipărire"}
+ROLE_PRESETS: Dict[str, Dict[str, Any]] = {
+    "administrator": {"label": "Administrator", "caps": list(CAPS)},
+    "preot_paroh": {"label": "Preot paroh", "caps": ["view_map", "read_registers", "read_finance", "edit_graves", "register_burials", "manage_contracts", "register_payments",
+                                                      "upload_documents", "request_permits", "approve_requests", "export_print"]},
+    "operator": {"label": "Operator", "caps": ["view_map", "read_registers", "read_finance", "edit_graves", "register_burials", "register_payments", "upload_documents", "request_permits"]},
+    "limitat": {"label": "Utilizator cu acces limitat", "caps": ["view_map", "read_registers"]},
+}
+READ_CAPS = {"locuri_de_veci": ("view_map", "read_registers"), "concesionari": ("read_registers",), "contracte": ("read_registers",),
+             "inhumati": ("read_registers",), "plati": ("read_finance",), "amenajari_avize": ("read_registers",)}
+WRITE_CAP = {"locuri_de_veci": "edit_graves", "concesionari": "manage_contracts", "contracte": "manage_contracts", "inhumati": "register_burials",
+             "plati": "register_payments", "amenajari_avize": "request_permits"}
+CAP_PREFIX, ROLE_PREFIX = "cap:", "role:"
+
 
 def _jsonable(v: Any) -> Any:
     return v.isoformat() if isinstance(v, (datetime, date)) else v
@@ -66,6 +85,19 @@ def _db_value(kind: str, value: Any) -> Any:
     return json.dumps(value if value is not None else []) if kind == "j" else value
 
 
+def caps_of(c, a: Dict[str, Any]) -> Optional[set]:
+    """None = fără rol atribuit (compatibil: citire totală, scriere după registrele bifate). MAIN are mereu toate capabilitățile."""
+    if a["device_type"] == "MAIN":
+        return set(CAPS)
+    rows = c.execute("SELECT entity, can_edit FROM sync_v2_permissions WHERE binding_uid=CAST(? AS uuid) AND entity LIKE 'cap:%'", (a["binding_uid"],)).fetchall()
+    return {r["entity"][len(CAP_PREFIX):] for r in rows if r["can_edit"]} if rows else None
+
+
+def readable_entities(c, a: Dict[str, Any]) -> List[str]:
+    caps = caps_of(c, a)
+    return list(ents.ORDER) if caps is None else [e for e in ents.ORDER if any(k in caps for k in READ_CAPS[e])]
+
+
 class SyncV2Service:
     def __init__(self, inbox):
         self.inbox, self.cp = inbox, inbox.cp
@@ -92,6 +124,10 @@ class SyncV2Service:
         rows = c.execute("SELECT entity FROM sync_v2_permissions WHERE binding_uid=CAST(? AS uuid) AND can_edit", (a["binding_uid"],)).fetchall()
         return [r["entity"] for r in rows if r["entity"] in ents.ENTITIES]
 
+    def _need_read(self, c, a: Dict[str, Any], entity: str) -> None:
+        if entity not in readable_entities(c, a):
+            raise cc.PermissionDenied("nu ai dreptul de citire pentru acest registru")
+
     # ------------------------------------------------------------------ jurnal
     def _run(self, c, a, direction: str, **n) -> None:
         c.execute("INSERT INTO sync_v2_runs (organization_uid,cemetery_uid,binding_uid,device_type,direction,received,applied,conflicts,rejected,retries,duplicates,pulled) "
@@ -109,7 +145,8 @@ class SyncV2Service:
         try:
             sc = self._scope(a)
             counts, seqs = {}, {}
-            for e in ents.ORDER:
+            visible = readable_entities(c, a)
+            for e in visible:
                 r = c.execute(f"SELECT COUNT(*) AS n, COALESCE(MAX(change_seq),0) AS m FROM {e} WHERE organization_uid=CAST(? AS uuid) AND cemetery_uid=CAST(? AS uuid)", sc).fetchone()
                 counts[e], seqs[e] = int(r["n"]), int(r["m"])
             mine = "" if a["device_type"] == "MAIN" else " AND origin_binding_uid=CAST(? AS uuid)"
@@ -119,7 +156,8 @@ class SyncV2Service:
             last = c.execute("SELECT direction, applied, conflicts, rejected, created_at FROM sync_v2_runs WHERE cemetery_uid=CAST(? AS uuid) "
                              "AND binding_uid=CAST(? AS uuid) ORDER BY id DESC LIMIT 1", (a["cemetery_uid"], a["binding_uid"])).fetchone()
             return {"device_type": a["device_type"], "counts": counts, "max_seq": seqs, "open_conflicts": open_n,
-                    "editable": self._editable(c, a), "entities": list(ents.ORDER),
+                    "editable": self._editable(c, a), "entities": visible, "role": self._role(c, a),
+                    "capabilities": sorted(caps_of(c, a) if caps_of(c, a) is not None else CAPS),
                     "last_run": {k: _jsonable(last[k]) for k in last.keys()} if last else None}
         finally:
             c.close()
@@ -130,6 +168,7 @@ class SyncV2Service:
             raise ValueError("entitate necunoscută")
         c = self.cp._c()
         try:
+            self._need_read(c, a, entity)
             r = self._fetch(c, a, entity, str(uid)[:80])
             if r is None:
                 raise cc.ScopeError("înregistrare inexistentă")
@@ -144,6 +183,7 @@ class SyncV2Service:
         since, limit = max(0, int(since)), max(1, min(int(limit), MAX_PULL))
         c = self.cp._c()
         try:
+            self._need_read(c, a, entity)
             sc = self._scope(a)
             rows = c.execute(_select_sql(entity) + " AND t.change_seq > ? ORDER BY t.change_seq LIMIT ?", (*sc, since, limit + 1)).fetchall()
             tombs = c.execute("SELECT uid, version, change_seq FROM sync_tombstones WHERE entity=? AND change_seq > ? AND organization_uid=CAST(? AS uuid) "
@@ -417,10 +457,12 @@ class SyncV2Service:
                              "AND d.organization_uid=b.organization_uid WHERE b.organization_uid=CAST(? AS uuid) AND b.cemetery_uid=CAST(? AS uuid) AND b.active "
                              "AND b.revoked_at IS NULL AND d.device_type='MOBILE' ORDER BY d.device_name", self._scope(a)).fetchall()
             perms = {}
-            for p in c.execute("SELECT binding_uid, entity FROM sync_v2_permissions WHERE can_edit AND organization_uid=CAST(? AS uuid) AND cemetery_uid=CAST(? AS uuid)", self._scope(a)).fetchall():
+            for p in c.execute("SELECT binding_uid, entity FROM sync_v2_permissions WHERE can_edit AND entity NOT LIKE 'cap:%' AND entity NOT LIKE 'role:%' AND organization_uid=CAST(? AS uuid) AND cemetery_uid=CAST(? AS uuid)", self._scope(a)).fetchall():
                 perms.setdefault(p["binding_uid"], []).append(p["entity"])
-            return {"entities": list(ents.ORDER),
-                    "devices": [{"ref": r["binding_uid"], "name": r["device_name"], "editable": sorted(perms.get(r["binding_uid"], []))} for r in rows]}
+            roles = {p["binding_uid"]: p["entity"][len(ROLE_PREFIX):] for p in c.execute(
+                "SELECT binding_uid, entity FROM sync_v2_permissions WHERE can_edit AND entity LIKE 'role:%' AND organization_uid=CAST(? AS uuid) AND cemetery_uid=CAST(? AS uuid)", self._scope(a)).fetchall()}
+            return {"entities": list(ents.ORDER), "roles": {k: v["label"] for k, v in ROLE_PRESETS.items()},
+                    "devices": [{"ref": r["binding_uid"], "name": r["device_name"], "editable": sorted(perms.get(r["binding_uid"], [])), "role": roles.get(r["binding_uid"])} for r in rows]}
         finally:
             c.close()
 
@@ -447,6 +489,77 @@ class SyncV2Service:
                 c.execute("ROLLBACK")
                 raise
             return {"editable": [e for e in ents.ORDER if e in entities]}
+        finally:
+            c.close()
+
+    def _role(self, c, a) -> Optional[str]:
+        if a["device_type"] == "MAIN":
+            return "administrator"
+        r = c.execute("SELECT entity FROM sync_v2_permissions WHERE binding_uid=CAST(? AS uuid) AND entity LIKE 'role:%' AND can_edit", (a["binding_uid"],)).fetchone()
+        return r["entity"][len(ROLE_PREFIX):] if r else None
+
+    def roles(self, binding_key: str) -> Dict[str, Any]:
+        self._auth(binding_key)
+        return {"capabilities": CAPS, "roles": {k: {"label": v["label"], "capabilities": v["caps"]} for k, v in ROLE_PRESETS.items()}}
+
+    def set_capabilities(self, binding_key: str, ref: str, role: Optional[str], capabilities: Any) -> Dict[str, Any]:
+        """Doar MAIN. `role` = șablon; `capabilities` = listă explicită (rol „personalizat"). Se derivă și registrele editabile (aplicate pe server la push)."""
+        a = self._auth(binding_key)
+        self._need_main(a)
+        if role is not None and role not in ROLE_PRESETS:
+            raise ValueError("rol necunoscut")
+        caps = list(ROLE_PRESETS[role]["caps"]) if capabilities is None and role else capabilities
+        if not isinstance(caps, list) or any(k not in CAPS for k in caps):
+            raise ValueError("capabilități invalide")
+        label = role if capabilities is None else "personalizat"
+        editable = [e for e in ents.ORDER if WRITE_CAP[e] in caps]
+        ref = str(uuid.UUID(str(ref)))
+        c = self.cp._c()
+        try:
+            ok = c.execute("SELECT 1 FROM device_cemetery_bindings b JOIN devices d ON d.device_uid=b.device_uid AND d.organization_uid=b.organization_uid "
+                           "WHERE b.binding_uid=CAST(? AS uuid) AND b.organization_uid=CAST(? AS uuid) AND b.cemetery_uid=CAST(? AS uuid) AND d.device_type='MOBILE'",
+                           (ref, *self._scope(a))).fetchone()
+            if ok is None:
+                raise cc.ScopeError("dispozitiv inexistent")
+            rows = [(CAP_PREFIX + k, k in caps) for k in CAPS] + [(ROLE_PREFIX + k, k == label) for k in (*ROLE_PRESETS, "personalizat")] + [(e, e in editable) for e in ents.ORDER]
+            c.execute("BEGIN")
+            try:
+                for ent, flag in rows:
+                    c.execute("INSERT INTO sync_v2_permissions (organization_uid,cemetery_uid,binding_uid,entity,can_edit) VALUES (CAST(? AS uuid),CAST(? AS uuid),CAST(? AS uuid),?,?) "
+                              "ON CONFLICT (binding_uid, entity) DO UPDATE SET can_edit=EXCLUDED.can_edit, updated_at=now()", (*self._scope(a), ref, ent, flag))
+                c.execute("COMMIT")
+            except BaseException:
+                c.execute("ROLLBACK")
+                raise
+            return {"role": label, "capabilities": sorted(caps), "editable": editable}
+        finally:
+            c.close()
+
+    def history(self, binding_key: str, entity: str, uid: str, limit: int = 100) -> Dict[str, Any]:
+        """Istoricul modificărilor unui rând (și, pentru un loc, al înhumaților/contractelor/plăților lui) din jurnalul sync_v2_ops; fără date personale în clar."""
+        a = self._auth(binding_key)
+        if entity not in ents.ENTITIES:
+            raise ValueError("entitate necunoscută")
+        c = self.cp._c()
+        try:
+            self._need_read(c, a, entity)
+            sc, uid = self._scope(a), str(uid)[:80]
+            pairs = [(entity, uid)]
+            if entity == "locuri_de_veci":
+                for child, via in (("inhumati", "id_loc"), ("contracte", "id_loc")):
+                    pairs += [(child, r["uid"]) for r in c.execute(f"SELECT uid FROM {child} WHERE {via}=(SELECT id FROM locuri_de_veci WHERE uid=? AND organization_uid=CAST(? AS uuid) AND cemetery_uid=CAST(? AS uuid))", (uid, *sc)).fetchall()]
+                pairs += [("plati", r["uid"]) for r in c.execute("SELECT p.uid FROM plati p JOIN contracte k ON k.id=p.contract_id WHERE k.id_loc=(SELECT id FROM locuri_de_veci WHERE uid=? AND organization_uid=CAST(? AS uuid) AND cemetery_uid=CAST(? AS uuid))", (uid, *sc)).fetchall()]
+            allowed = set(readable_entities(c, a))
+            pairs = [(e, u) for e, u in pairs if e in allowed]
+            if not pairs:
+                return {"events": []}
+            marks = ",".join("(?,?)" for _ in pairs)
+            flat = [x for p in pairs for x in p]
+            rows = c.execute("SELECT o.entity, o.entity_uid, o.action, o.status, o.reason, o.new_version, o.device_type, o.created_at, "
+                             "(SELECT d.device_name FROM device_cemetery_bindings b JOIN devices d ON d.device_uid=b.device_uid WHERE b.binding_uid=o.binding_uid) AS device "
+                             f"FROM sync_v2_ops o WHERE o.organization_uid=CAST(? AS uuid) AND o.cemetery_uid=CAST(? AS uuid) AND (o.entity, o.entity_uid) IN ({marks}) "
+                             "ORDER BY o.created_at DESC LIMIT ?", (*sc, *flat, max(1, min(int(limit), 300)))).fetchall()
+            return {"events": [{k: _jsonable(r[k]) for k in r.keys()} for r in rows]}
         finally:
             c.close()
 

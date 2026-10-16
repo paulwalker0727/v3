@@ -15,6 +15,7 @@ import uuid
 from typing import Any, Dict, List
 
 import cimitir_cloud_control as cc
+import cimitir_sync_v2 as sv
 
 SEARCH_LIMIT_MAX = 25
 MAP_LIMIT_MAX = 10000
@@ -165,7 +166,7 @@ class MobileRegistryService:
             c.close()
 
     def search(self, binding_key: str, query: str, limit: int = 12) -> Dict[str, List[Dict[str, Any]]]:
-        self._auth(binding_key)
+        a = self._auth(binding_key)
         q = (query or "").strip()
         if len(q) < 2:
             return {"graves": [], "concessionaires": [], "burials": [], "contracts": []}
@@ -212,15 +213,19 @@ class MobileRegistryService:
                              "WHERE COALESCE(ct.numar_contract,'') ILIKE ? OR COALESCE(ct.cod_loc,'') ILIKE ? "
                              "OR (COALESCE(x.nume,'') || ' ' || COALESCE(x.prenume,'')) ILIKE ? "
                              "ORDER BY ct.id DESC LIMIT ?", (like, like, like, limit)).fetchall()]
-            return {"graves": graves, "concessionaires": concessionaires, "burials": burials, "contracts": contracts}
+            vis = sv.readable_entities(c, a)      # permisiuni aplicate pe server (rol/capabilități)
+            return {"graves": graves if "locuri_de_veci" in vis else [], "concessionaires": concessionaires if "concesionari" in vis else [],
+                    "burials": burials if "inhumati" in vis else [], "contracts": contracts if "contracte" in vis else []}
         finally:
             c.close()
 
     def map_data(self, binding_key: str, limit: int = MAP_LIMIT_MAX) -> Dict[str, Any]:
-        self._auth(binding_key)
+        a = self._auth(binding_key)
         limit = max(1, min(int(limit), MAP_LIMIT_MAX))
         c = self.cp._c()
         try:
+            if "locuri_de_veci" not in sv.readable_entities(c, a):
+                return {"plots": [], "sectors": [], "truncated": False}
             plots = []
             for r in c.execute(
                 "SELECT uid,cod_loc,points,sector,parcela,rand,numar,disponibilitate,stare,ocupat,are_inhumari "
@@ -273,7 +278,7 @@ class MobileRegistryService:
             c.close()
 
     def grave_detail(self, binding_key: str, grave_uid: str) -> Dict[str, Any]:
-        self._auth(binding_key)
+        a = self._auth(binding_key)
         # MAIN creează atât UID-uri hex32 (SQLite randomblob), cât și UUID-uri canonice cu cratime.
         # Nu normalizăm obligatoriu la UUID36: în PostgreSQL coloana UID este TEXT și trebuie păstrată exact.
         try:
@@ -310,6 +315,10 @@ class MobileRegistryService:
             permits = [_row(r) for r in c.execute(
                 "SELECT uid,nr_aviz,data_aviz,lucrare FROM amenajari_avize WHERE cod_loc=? ORDER BY id DESC",
                 (grave["cod_loc"],)).fetchall()]
-            return {"grave": grave, "contracts": contracts, "burials": burials, "payments": payments, "permits": permits}
+            vis = sv.readable_entities(c, a)      # permisiuni aplicate pe server (rol/capabilități)
+            if "locuri_de_veci" not in vis:
+                raise cc.PermissionDenied("nu ai dreptul de citire pentru acest registru")
+            return {"grave": grave, "contracts": contracts if "contracte" in vis else [], "burials": burials if "inhumati" in vis else [],
+                    "payments": payments if "plati" in vis else [], "permits": permits if "amenajari_avize" in vis else []}
         finally:
             c.close()
