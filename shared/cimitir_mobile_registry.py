@@ -206,7 +206,7 @@ class MobileRegistryService:
                               end_date=_text(r["data_sfarsit"]), grave_uid=_text(r["grave_uid"]), grave_code=_text(r["cod_loc"]),
                               concessionaire_uid=_text(r["concessionaire_uid"]), concessionaire=(f"{_text(r['nume'])} {_text(r['prenume'])}").strip())
                          for r in c.execute(
-                             "SELECT ct.uid,ct.numar_contract,ct.data_contract,ct.data_sfarsit,l.uid AS grave_uid,COALESCE(l.cod_loc,ct.cod_loc) AS cod_loc,"
+                             "SELECT ct.uid,ct.version,ct.numar_contract,ct.data_contract,ct.data_sfarsit,l.uid AS grave_uid,COALESCE(l.cod_loc,ct.cod_loc) AS cod_loc,"
                              "x.uid AS concessionaire_uid,x.nume,x.prenume FROM contracte ct "
                              "LEFT JOIN locuri_de_veci l ON l.id=ct.id_loc LEFT JOIN concesionari x ON x.id=ct.concesionar_id "
                              "WHERE COALESCE(ct.numar_contract,'') ILIKE ? OR COALESCE(ct.cod_loc,'') ILIKE ? "
@@ -285,7 +285,7 @@ class MobileRegistryService:
         c = self.cp._c()
         try:
             g = c.execute(
-                "SELECT uid,cod_loc,points,sector,parcela,rand,numar,capacitate,disponibilitate,tip,stare,categorie,suprafata,nr_vechi,numar_cf,"
+                "SELECT uid,version,cod_loc,points,sector,parcela,rand,numar,capacitate,disponibilitate,tip,stare,categorie,suprafata,nr_vechi,numar_cf,"
                 f"ocupat,observatii,are_inhumari FROM locuri_de_veci WHERE uid IN ({placeholders}) "
                 "ORDER BY CASE WHEN uid=? THEN 0 ELSE 1 END LIMIT 1", (*candidates, str(grave_uid))).fetchone()
             if not g:
@@ -296,12 +296,12 @@ class MobileRegistryService:
             grave["occupied"] = bool(grave.pop("ocupat", 0) or grave.get("are_inhumari"))
 
             contracts = [_row(r) for r in c.execute(
-                "SELECT ct.uid,ct.numar_contract,ct.data_contract,ct.data_inceput,ct.data_sfarsit,ct.valabilitate,ct.observatii,"
-                "x.uid AS concessionaire_uid,x.nume,x.prenume,x.telefon,x.email,x.adresa "
+                "SELECT ct.uid,ct.version,ct.numar_contract,ct.data_contract,ct.data_inceput,ct.data_sfarsit,ct.valabilitate,ct.observatii,"
+                "x.uid AS concessionaire_uid,x.version AS concessionaire_version,x.nume,x.prenume,x.telefon,x.email,x.adresa "
                 "FROM contracte ct LEFT JOIN concesionari x ON x.id=ct.concesionar_id WHERE ct.id_loc=(SELECT id FROM locuri_de_veci WHERE uid=?) "
                 "ORDER BY ct.id DESC", (grave_uid,)).fetchall()]
             burials = [_row(r) for r in c.execute(
-                "SELECT uid,nume,prenume,data_nasterii,data_deces,data_inhumare,data_deshumare,sex,observatii,nr_certificat_deces,nr_adeverinta_inhumare "
+                "SELECT uid,version,nume,prenume,data_nasterii,data_deces,data_inhumare,data_deshumare,sex,observatii,nr_certificat_deces,nr_adeverinta_inhumare "
                 "FROM inhumati WHERE id_loc=(SELECT id FROM locuri_de_veci WHERE uid=?) ORDER BY id DESC", (grave_uid,)).fetchall()]
             payments = [_row(r) for r in c.execute(
                 "SELECT p.uid,p.suma,p.data_plata,p.tip,p.chitanta_nr,p.observatii FROM plati p "

@@ -34,8 +34,9 @@ function getClientId(){let id=localStorage.getItem('cimitir_mobile_client');if(!
 
 function shell(){
   const cem=fmtName(state.bootstrap?.cemetery), dev=state.bootstrap?.device?.device_name||'Dispozitiv mobil';
-  app.innerHTML=`<div class="shell"><aside class="sidebar"><div class="side-brand"><div class="brand-mark">✦</div><div><div class="side-title">Cimitir Mobile</div><div class="side-sub">${esc(cem)}</div></div></div><nav class="nav">${navBtn('dashboard','⌂','Acasă')}${navBtn('search','⌕','Căutare')}${navBtn('map','⌖','Hartă')}${navBtn('modules','▦','Registre')}</nav><div class="side-foot"><div><span class="online-dot"></span>Cloud conectat</div><button class="logout-link" id="unpair">Dezasociază acest dispozitiv</button></div></aside><div class="main"><header class="topbar"><div><div class="top-title">${esc(cem)}</div></div><div class="top-meta"><span class="device-chip">${esc(dev)}</span></div></header><main class="content" id="view"></main></div></div><nav class="bottom-nav">${bottomBtn('dashboard','⌂','Acasă')}${bottomBtn('search','⌕','Caută')}${bottomBtn('map','⌖','Hartă')}${bottomBtn('modules','▦','Meniu')}</nav><div class="sheet-backdrop" id="sheet"><div class="sheet" id="sheet-body"></div></div>`;
+  app.innerHTML=`<div class="shell"><aside class="sidebar"><div class="side-brand"><div class="brand-mark">✦</div><div><div class="side-title">Cimitir Mobile</div><div class="side-sub">${esc(cem)}</div></div></div><nav class="nav">${navBtn('dashboard','⌂','Acasă')}${navBtn('search','⌕','Căutare')}${navBtn('map','⌖','Hartă')}${navBtn('modules','▦','Registre')}</nav><div class="side-foot"><div><span class="online-dot"></span>Cloud conectat</div><button class="logout-link" id="unpair">Dezasociază acest dispozitiv</button></div></aside><div class="main"><header class="topbar"><div><div class="top-title">${esc(cem)}</div></div><div class="top-meta"><button class="sync-btn" id="sync-btn" data-testid="sync-button"></button><span class="device-chip">${esc(dev)}</span></div></header><main class="content" id="view"></main></div></div><nav class="bottom-nav">${bottomBtn('dashboard','⌂','Acasă')}${bottomBtn('search','⌕','Caută')}${bottomBtn('map','⌖','Hartă')}${bottomBtn('modules','▦','Meniu')}</nav><div class="sheet-backdrop" id="sheet"><div class="sheet" id="sheet-body"></div></div>`;
   document.querySelectorAll('[data-view]').forEach((b)=>b.addEventListener('click',()=>navigate(b.dataset.view)));
+  document.getElementById('sync-btn')?.addEventListener('click',openSyncPanel);renderSyncBtn();
   document.getElementById('unpair')?.addEventListener('click',async()=>{if(confirm('Dezasociezi acest dispozitiv? Va fi necesar un cod nou pentru reconectare.')){await kvDel('binding_key');state.key=null;pairingView();}});
 }
 function navBtn(v,i,l){return `<button data-view="${v}" class="${state.view===v?'active':''}"><span class="ico">${i}</span>${l}</button>`}
@@ -49,7 +50,9 @@ async function loadApp(){
     state.summary=await api(`${API}/mobile/summary`);
     state.dataStatus=await api(`${API}/mobile/data-status`).catch(()=>null);
     await kvSet('bootstrap_cache',state.bootstrap); await kvSet('summary_cache',state.summary);
+    await loadSyncInfo();
     shell();renderView();
+    if((await outbox()).some(o=>o.state==='pending'))syncNow();
   }catch(e){
     if(e.status===401){await kvDel('binding_key');await kvDel('bootstrap_cache');await kvDel('summary_cache');state.key=null;pairingView('Asocierea nu mai este validă. Generează un cod nou din MAIN.');return;}
     const cachedBootstrap=await kvGet('bootstrap_cache').catch(()=>null), cachedSummary=await kvGet('summary_cache').catch(()=>null);
@@ -91,8 +94,74 @@ function pts(a){return a.map(p=>`${Number(p[0])},${Number(p[1])}`).join(' ')}
 
 function renderModules(v){v.innerHTML=`<div class="page-head"><div><h1>Registre</h1><p>Interfața este pregătită pentru modulele complete. Prima etapă este intenționat read-only.</p></div></div><div class="module-grid"><button class="module-card" data-go="search"><span class="ico">♟</span><strong>Concesionari</strong><small>Caută și deschide locul asociat.</small></button><button class="module-card" data-go="search"><span class="ico">✦</span><strong>Înhumați</strong><small>Caută după nume, CNP sau loc.</small></button><button class="module-card" data-go="search"><span class="ico">▤</span><strong>Contracte</strong><small>Caută după număr, concesionar sau loc.</small></button><button class="module-card" data-soon="Plăți"><span class="ico">▣</span><strong>Plăți</strong><small>${state.summary?.payments??'—'} plăți în cloud; registrul complet urmează.</small></button></div>`;v.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>navigate(b.dataset.go));v.querySelectorAll('[data-soon]').forEach(b=>b.onclick=()=>toast('Registrul Plăți va fi activat în etapa următoare.'));}
 
-async function openGrave(uid){if(!uid)return;const back=document.getElementById('sheet'),body=document.getElementById('sheet-body');back.classList.add('show');body.innerHTML='<div class="sheet-body">Se încarcă fișa…</div>';back.onclick=(e)=>{if(e.target===back)back.classList.remove('show');};try{const d=await api(`${API}/mobile/graves/${encodeURIComponent(uid)}`);const g=d.grave||{};body.innerHTML=`<div class="sheet-head"><button id="sheet-x">×</button><div class="micro">FIȘĂ LOC DE VECI</div><h2>${esc(g.cod_loc||'Loc')}</h2><div>${esc([g.sector&&'Sector '+g.sector,g.parcela&&'Parcela '+g.parcela,g.rand&&'Rând '+g.rand].filter(Boolean).join(' · '))}</div></div><div class="sheet-body">${detailBlock('Date loc',[["Stare",g.stare||g.disponibilitate||'—'],['Suprafață',g.suprafata?g.suprafata+' m²':'—'],['Capacitate',g.capacitate||'—'],['Nr. vechi',g.nr_vechi||'—']])}${listBlock('Concesionari / contracte',d.contracts,(x)=>`${x.nume||''} ${x.prenume||''}`.trim()||'Concesionar',x=>`Contract ${x.numar_contract||'—'} · ${x.data_contract||'fără dată'}`)}${listBlock('Înhumați',d.burials,(x)=>`${x.nume||''} ${x.prenume||''}`.trim(),x=>`Deces ${x.data_deces||'—'} · Înhumare ${x.data_inhumare||'—'}`)}${listBlock('Plăți',d.payments,(x)=>`${x.suma??0} lei`,x=>`${x.chitanta_nr||'Fără nr.'} · ${x.data_plata||'—'}`)}${listBlock('Avize de construcție',d.permits,(x)=>`Aviz ${x.nr_aviz||'—'}`,x=>`${x.lucrare||'Lucrare'} · ${x.data_aviz||'fără dată'}`)}</div>`;document.getElementById('sheet-x').onclick=()=>back.classList.remove('show');}catch(e){body.innerHTML='<div class="sheet-body">Fișa nu a putut fi încărcată.</div>';}}
+async function openGrave(uid){if(!uid)return;const back=document.getElementById('sheet'),body=document.getElementById('sheet-body');back.classList.add('show');body.innerHTML='<div class="sheet-body">Se încarcă fișa…</div>';back.onclick=(e)=>{if(e.target===back)back.classList.remove('show');};try{const d=await api(`${API}/mobile/graves/${encodeURIComponent(uid)}`);state.currentGrave=d;const g=d.grave||{};const pend=(await outbox()).filter(o=>o.entity==='inhumati'&&o.data?.loc_uid===g.uid&&!(d.burials||[]).some(b=>b.uid===o.uid));body.innerHTML=`<div class="sheet-head"><button id="sheet-x" data-testid="sheet-close">×</button><div class="micro">FIȘĂ LOC DE VECI</div><h2>${esc(g.cod_loc||'Loc')}</h2><div>${esc([g.sector&&'Sector '+g.sector,g.parcela&&'Parcela '+g.parcela,g.rand&&'Rând '+g.rand].filter(Boolean).join(' · '))}</div></div><div class="sheet-body">${detailBlock('Date loc',[["Stare",g.stare||g.disponibilitate||'—'],['Suprafață',g.suprafata?g.suprafata+' m²':'—'],['Capacitate',g.capacitate||'—'],['Nr. vechi',g.nr_vechi||'—'],['Observații',g.observatii||'—']])}${can('locuri_de_veci')?'<button class="edit-btn" data-edit="locuri_de_veci" data-testid="edit-grave">Editează locul</button>':''}${listBlock('Concesionari / contracte',d.contracts,(x)=>`${x.nume||''} ${x.prenume||''}`.trim()||'Concesionar',x=>`Contract ${x.numar_contract||'—'} · ${x.data_contract||'fără dată'}`,'concesionari','concessionaire_uid')}${listBlock('Înhumați',(d.burials||[]).concat(pend.map(o=>({uid:o.uid,nume:o.data.nume,prenume:o.data.prenume,data_deces:o.data.data_deces,data_inhumare:o.data.data_inhumare,_pending:true}))),(x)=>`${x.nume||''} ${x.prenume||''}`.trim(),x=>`Deces ${x.data_deces||'—'} · Înhumare ${x.data_inhumare||'—'}${x._pending?' · nesincronizat':''}`,'inhumati','uid')}${can('inhumati')?'<button class="edit-btn" data-add="inhumati" data-testid="add-burial">Adaugă înhumat</button>':''}${listBlock('Plăți',d.payments,(x)=>`${x.suma??0} lei`,x=>`${x.chitanta_nr||'Fără nr.'} · ${x.data_plata||'—'}`)}${listBlock('Avize de construcție',d.permits,(x)=>`Aviz ${x.nr_aviz||'—'}`,x=>`${x.lucrare||'Lucrare'} · ${x.data_aviz||'fără dată'}`)}</div>`;document.getElementById('sheet-x').onclick=()=>back.classList.remove('show');body.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openRecordForm(b.dataset.edit,b.dataset.uid||g.uid));body.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>openRecordForm(b.dataset.add,null));}catch(e){body.innerHTML='<div class="sheet-body">Fișa nu a putut fi încărcată.</div>';}}
 function detailBlock(title,rows){return `<section class="detail-card"><h3>${esc(title)}</h3>${rows.map(([k,v])=>`<div class="kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</section>`}
-function listBlock(title,arr,titleFn,subFn){arr=arr||[];return `<section class="detail-card"><h3>${esc(title)} · ${arr.length}</h3>${arr.length?arr.map(x=>`<div class="kv"><div><b>${esc(titleFn(x))}</b><div class="micro">${esc(subFn(x))}</div></div></div>`).join(''):'<div class="micro">Nicio înregistrare.</div>'}</section>`}
+function listBlock(title,arr,titleFn,subFn,entity,uidKey){arr=arr||[];const ed=entity&&can(entity);return `<section class="detail-card"><h3>${esc(title)} · ${arr.length}</h3>${arr.length?arr.map(x=>`<div class="kv"><div><b>${esc(titleFn(x))}</b><div class="micro">${esc(subFn(x))}</div></div>${ed&&x[uidKey]&&!x._pending?`<button class="edit-btn small" data-edit="${entity}" data-uid="${esc(x[uidKey])}" data-testid="edit-${entity}">Editează</button>`:''}</div>`).join(''):'<div class="micro">Nicio înregistrare.</div>'}</section>`}
+
+/* ---------------- Sync v2: stare, outbox, reluare ---------------- */
+const ENTITY_ORDER=['locuri_de_veci','concesionari','contracte','inhumati','plati','amenajari_avize'];
+const FORMS={
+  inhumati:{title:'Înhumat',fields:[['nume','Nume'],['prenume','Prenume'],['data_nasterii','Data nașterii'],['data_deces','Data decesului'],['data_inhumare','Data înhumării'],['observatii','Observații']],label:d=>`Înhumat: ${d.nume||''} ${d.prenume||''}`.trim()},
+  locuri_de_veci:{title:'Loc de veci',fields:[['stare','Stare'],['disponibilitate','Disponibilitate'],['observatii','Observații']],label:d=>`Loc ${d.cod_loc||''}`.trim()},
+  concesionari:{title:'Concesionar',fields:[['nume','Nume'],['prenume','Prenume'],['telefon','Telefon'],['email','E-mail'],['adresa','Adresă'],['observatii','Observații']],label:d=>`Concesionar: ${d.nume||''} ${d.prenume||''}`.trim()}
+};
+const REASONS={not_authorized:'Nu ai dreptul de editare pentru acest registru (se acordă din MAIN).',delete_not_allowed:'Ștergerea nu este permisă de pe telefon.',version_mismatch:'Înregistrarea a fost modificată între timp. Se păstrează varianta din MAIN.',natural_key:'Există deja un loc cu acest cod.',deleted_on_server:'Înregistrarea a fost ștearsă între timp.',date_invalide:'Date invalide.'};
+const can=(e)=>!!state.syncInfo?.editable?.includes(e);
+const newId=()=>((crypto.randomUUID?.()||`${Date.now().toString(16)}${Math.random().toString(16).slice(2)}0000000000000000`)).replace(/-/g,'').slice(0,32);
+async function outbox(){return (await kvGet('outbox').catch(()=>null))||[];}
+async function saveOutbox(o){await kvSet('outbox',o);renderSyncBtn();}
+async function loadSyncInfo(){try{state.syncInfo=await api(`${API}/sync-v2/status`);}catch(e){if(e.status===401)throw e;}state.lastSync=state.lastSync||await kvGet('last_sync').catch(()=>null);}
+async function renderSyncBtn(){const b=document.getElementById('sync-btn');if(!b)return;const ob=await outbox();const pending=ob.filter(o=>o.state==='pending').length,bad=ob.filter(o=>o.state==='conflict'||o.state==='error').length;const ls=state.lastSync||{};b.dataset.state=state.syncing?'busy':bad?'bad':ls.offline?'offline':pending?'pending':'ok';b.textContent=state.syncing?'Se sincronizează…':bad?`Sincronizează · ${bad} de rezolvat`:pending?`Sincronizează · ${pending} în coadă`:ls.offline?'Offline · reîncearcă':'Sincronizează';b.disabled=!!state.syncing;}
+async function syncNow(){
+  if(state.syncing)return;state.syncing=true;renderSyncBtn();
+  const res={at:Date.now(),applied:0,conflicts:0,errors:0,retry:0,offline:false,error:''};
+  try{
+    let ob=await outbox();
+    const todo=ob.filter(o=>o.state==='pending').sort((a,b)=>ENTITY_ORDER.indexOf(a.entity)-ENTITY_ORDER.indexOf(b.entity));
+    for(let i=0;i<todo.length;i+=50){
+      const chunk=todo.slice(i,i+50);
+      const r=await api(`${API}/sync-v2/push`,{method:'POST',body:JSON.stringify({ops:chunk.map(o=>({op_id:o.op_id,entity:o.entity,uid:o.uid,action:o.action,base_version:o.base_version,data:o.data}))})});
+      for(const x of r.results){const o=ob.find(z=>z.op_id===x.op_id);if(!o)continue;
+        if(x.status==='applied'){ob=ob.filter(z=>z!==o);res.applied++;}
+        else if(x.status==='conflict'){o.state='conflict';o.reason=x.reason;o.serverVersion=x.server_version;res.conflicts++;}
+        else if(x.status==='retry'){o.state='pending';o.error=x.reason;res.retry++;}
+        else{o.state='error';o.reason=x.reason;res.errors++;}}
+      await saveOutbox(ob);
+    }
+    state.summary=await api(`${API}/mobile/summary`);state.dataStatus=await api(`${API}/mobile/data-status`).catch(()=>null);state.map=null;
+    await loadSyncInfo();await kvSet('summary_cache',state.summary);
+  }catch(e){
+    if(e.status===401){await kvDel('binding_key');state.key=null;state.syncing=false;pairingView('Asocierea nu mai este validă. Generează un cod nou din MAIN.');return;}
+    res.offline=!e.status;res.error=res.offline?'Fără conexiune la internet. Modificările rămân în coadă.':(e.message||'Eroare');res.errors+=res.offline?0:1;
+  }
+  state.syncing=false;state.lastSync=res;await kvSet('last_sync',res);renderSyncBtn();renderView();
+  toast(res.offline?res.error:res.error?`Sincronizare incompletă: ${res.error}`:res.conflicts||res.errors?`Sincronizat: ${res.applied} trimise, ${res.conflicts+res.errors} de rezolvat`:`Sincronizat: ${res.applied} modificări trimise, date actualizate.`);
+  if(document.getElementById('sheet')?.classList.contains('show')&&state.panel)openSyncPanel();
+}
+async function openSyncPanel(){
+  state.panel=true;const back=document.getElementById('sheet'),body=document.getElementById('sheet-body');back.classList.add('show');back.onclick=(e)=>{if(e.target===back){back.classList.remove('show');state.panel=false;}};
+  const ob=await outbox();const ls=state.lastSync||{};const when=ls.at?new Date(ls.at).toLocaleString('ro-RO'):'niciodată';
+  const rows=ob.map((o,i)=>`<div class="kv"><div><b>${esc(o.label||o.entity)}</b><div class="micro">${esc(o.state==='pending'?'În așteptare'+(o.error?' · se reîncearcă':''):o.state==='conflict'?(REASONS[o.reason]||'Conflict'):(REASONS[o.reason]||'Refuzat de server'))}</div></div>${o.state==='conflict'?`<button class="edit-btn small" data-rebase="${i}">Reia peste varianta nouă</button>`:''}${o.state!=='pending'?`<button class="edit-btn small" data-retry="${i}">Reîncearcă</button>`:''}<button class="edit-btn small" data-drop="${i}">Renunță</button></div>`).join('');
+  body.innerHTML=`<div class="sheet-head"><button id="sheet-x" data-testid="sync-close">×</button><div class="micro">SINCRONIZARE</div><h2>Stare sincronizare</h2></div><div class="sheet-body"><section class="detail-card" data-testid="sync-status"><div class="kv"><span>Ultima sincronizare</span><b>${esc(when)}</b></div><div class="kv"><span>În coadă</span><b>${ob.filter(o=>o.state==='pending').length}</b></div><div class="kv"><span>Conflicte / erori</span><b>${ob.filter(o=>o.state!=='pending').length}</b></div>${ls.at?`<div class="kv"><span>Ultimul rezultat</span><b>${ls.offline?'Offline':`${ls.applied||0} trimise`}</b></div>`:''}${ls.error?`<div class="micro">${esc(ls.error)}</div>`:''}</section><section class="detail-card"><h3>Modificări locale · ${ob.length}</h3>${rows||'<div class="micro">Nicio modificare locală.</div>'}</section><button class="primary" id="sync-run" data-testid="sync-run">${ob.some(o=>o.state==='pending')?'Sincronizează acum':'Verifică și actualizează'}</button></div>`;
+  document.getElementById('sheet-x').onclick=()=>{back.classList.remove('show');state.panel=false;};
+  document.getElementById('sync-run').onclick=()=>syncNow();
+  body.querySelectorAll('[data-retry]').forEach(b=>b.onclick=async()=>{const o=ob[+b.dataset.retry];o.state='pending';o.op_id='m-'+newId();await saveOutbox(ob);syncNow();});
+  body.querySelectorAll('[data-drop]').forEach(b=>b.onclick=async()=>{ob.splice(+b.dataset.drop,1);await saveOutbox(ob);openSyncPanel();});
+  body.querySelectorAll('[data-rebase]').forEach(b=>b.onclick=async()=>{const o=ob[+b.dataset.rebase];o.state='pending';o.op_id='m-'+newId();o.base_version=o.serverVersion||o.base_version;await saveOutbox(ob);syncNow();});
+}
+async function openRecordForm(entity,uid){
+  const f=FORMS[entity];if(!f||!can(entity))return;const body=document.getElementById('sheet-body');state.panel=false;
+  let row=null;
+  if(uid){try{row=await api(`${API}/sync-v2/row?entity=${entity}&uid=${encodeURIComponent(uid)}`);}catch(_e){toast('Înregistrarea nu poate fi citită acum. Reîncearcă online.');return;}}
+  const cur=row?.data||{};
+  body.innerHTML=`<div class="sheet-head"><button id="sheet-x">×</button><div class="micro">${row?'EDITARE':'ADĂUGARE'}</div><h2>${esc(f.title)}</h2></div><div class="sheet-body"><form id="rec-form">${f.fields.map(([k,l])=>`<div class="field"><label>${esc(l)}</label><input name="${k}" maxlength="500" value="${esc(cur[k]??'')}" data-testid="field-${k}"></div>`).join('')}<button class="primary" id="rec-save" data-testid="record-save">Salvează și sincronizează</button></form></div>`;
+  document.getElementById('sheet-x').onclick=()=>document.getElementById('sheet').classList.remove('show');
+  document.getElementById('rec-form').onsubmit=async(e)=>{e.preventDefault();const vals=Object.fromEntries(new FormData(e.target).entries());
+    const data=row?{...cur,...vals}:{...vals};
+    if(!row&&entity==='inhumati')data.loc_uid=state.currentGrave?.grave?.uid;
+    const op={op_id:'m-'+newId(),entity,uid:row?.uid||newId(),action:'upsert',base_version:row?.version||0,data,state:'pending',label:f.label({...cur,...vals,cod_loc:state.currentGrave?.grave?.cod_loc})};
+    let ob=(await outbox()).filter(o=>!(o.uid===op.uid&&o.state==='pending'));ob.push(op);await saveOutbox(ob);
+    document.getElementById('sheet').classList.remove('show');await syncNow();};
+}
 
 (async function boot(){if('serviceWorker' in navigator){navigator.serviceWorker.register('/mobile/sw.js',{scope:'/mobile/'}).catch(()=>{});}try{state.key=await kvGet('binding_key');}catch(_e){}if(state.key)await loadApp();else pairingView();})();

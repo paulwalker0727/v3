@@ -101,9 +101,11 @@ class CloudSyncWindow(QDialog):
         self.btn_demo = QPushButton("🗑 Șterge datele demo din portal")
         self.btn_demo.setToolTip("Șterge locurile fictive folosite pentru demonstrație. "
                                  "Datele reale, sincronizate din program, NU sunt atinse.")
+        self.btn_phones = QPushButton("📱 Telefoane Mobile")
+        self.btn_phones.setToolTip("Permisiuni de editare per telefon, conflicte și jurnal de sincronizare (Mobile v2).")
         self.btn_conflicts = QPushButton("⚠ Conflicte")
         self.btn_conflicts.setToolTip("Obiecte modificate pe două calculatoare: alege versiunea corectă.")
-        for b in (self.btn_preview, self.btn_republish, self.btn_demo, self.btn_conflicts):
+        for b in (self.btn_preview, self.btn_republish, self.btn_demo, self.btn_conflicts, self.btn_phones):
             btns2.addWidget(b)
         btns2.addStretch(1)
         root.addLayout(btns2)
@@ -135,6 +137,7 @@ class CloudSyncWindow(QDialog):
         self.btn_republish.clicked.connect(self._republish)
         self.btn_conflicts.clicked.connect(self._conflicts)
         self.btn_profiles.clicked.connect(self._profiles)
+        self.btn_phones.clicked.connect(self._phones)
 
     def _profiles(self):
         from cloud_profiles_dialog import CloudProfilesDialog
@@ -154,6 +157,10 @@ class CloudSyncWindow(QDialog):
 
     def _effective_key(self) -> str:
         return self._key_value() or cloud_sync.get_config()["key"]
+
+    def _phones(self):
+        from mobile_devices_window import MobileDevicesDialog
+        MobileDevicesDialog(self).exec()
 
     def _conflicts(self):
         from cloud_conflicts_window import CloudConflictsDialog
@@ -224,6 +231,14 @@ class CloudSyncWindow(QDialog):
             pending = 0
         last = cfg["last"] or "niciodată"
         text = f"Ultima sincronizare reușită: {last} · Operații în coadă: {pending}"
+        try:
+            import sync_v2
+            rep = sync_v2.last_report() if sync_v2.is_binding() else {}
+            if rep:
+                text += (f"\nUltima rulare: {rep.get('state')} · trimise {rep.get('applied', 0)} · primite {rep.get('pulled', 0)} · "
+                         f"conflicte {rep.get('conflicts', 0)} · erori {rep.get('errors', 0)}")
+        except Exception:
+            pass
         try:
             import entity_sync
             summary = entity_sync.status_summary()

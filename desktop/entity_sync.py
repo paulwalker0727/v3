@@ -46,6 +46,14 @@ _OUTBOX_COLS = ("kind, entity, entity_uid, action, base_version, state, op_id, c
                 "tracking_code, status, note, payload")
 
 
+def _call(method: str, op: str, **kw):
+    """Transport: Sync v2 (cheie Binding, /api/v1/sync-v2) sau serverul vechi (X-Sync-Key, /api/sync/entities)."""
+    import sync_v2
+    if sync_v2.is_binding():
+        return sync_v2.request(method, op, **kw)
+    return cs._request(method, f"/entities/{op}", **kw)
+
+
 # ------------------------------------------------------------------ stare / capabilități
 SET_ENABLED = "cloud_entity_sync_enabled"   # '0' = regim vechi (MAIN publică doar harta); implicit activ
 
@@ -376,7 +384,7 @@ def flush_entities() -> Tuple[bool, List[str], Dict[str, int]]:
         if not wire_ops:
             continue
         try:
-            body = cs._request("POST", "/entities/push", json={
+            body = _call("POST", "push", json={
                 "ops": wire_ops, "publish_burials": cs.get_config()["burials"]}, timeout=120).json()
         except cs.RetryLater as exc:
             for op in chunk:
@@ -410,7 +418,7 @@ def pull_entities() -> Tuple[bool, str, int]:
         while True:
             since = int(db.get_setting(CURSOR_PREFIX + entity) or 0)
             try:
-                page = cs._request("GET", "/entities/pull", params={"entity": entity, "since": since, "limit": PULL_LIMIT}).json()
+                page = _call("GET", "pull", params={"entity": entity, "since": since, "limit": PULL_LIMIT}).json()
             except (cs.RetryLater, cs.Rejected) as exc:
                 return False, f"Entități (descărcare): {exc}", changed
             with _Applying() as conn:

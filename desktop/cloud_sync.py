@@ -699,6 +699,9 @@ def sync_all() -> Dict[str, Any]:
         return {"ok": False, "lines": ["Sincronizarea nu este configurată (adresă server + cheie)."], "cereri_noi": 0,
                 "pending": 0}
     ensure_tables()
+    import sync_v2
+    if sync_v2.is_binding():   # profil Cloud cu cheie MAIN (Binding): Sync v2 prin /api/v1/sync-v2
+        return sync_v2.run()
     for queue in (queue_map, queue_map_image, queue_statuses):
         try:
             queue()

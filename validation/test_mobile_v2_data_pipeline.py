@@ -39,7 +39,7 @@ def service(tmp_path):
     path = tmp_path / "db.sqlite"
     conn = sqlite3.connect(path)
     for table in ("locuri_de_veci", "concesionari", "contracte", "inhumati", "plati", "amenajari_avize", "sectoare"):
-        conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY, uid TEXT, organization_uid TEXT, cemetery_uid TEXT)")
+        conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY, uid TEXT, version INTEGER DEFAULT 1, organization_uid TEXT, cemetery_uid TEXT)")
     for table, sql in (
         ("locuri_de_veci", "cod_loc TEXT, points TEXT, sector TEXT, parcela TEXT, rand TEXT, numar TEXT, capacitate TEXT, disponibilitate TEXT, tip TEXT, stare TEXT, categorie TEXT, suprafata REAL, nr_vechi TEXT, numar_cf TEXT, ocupat INTEGER, observatii TEXT, are_inhumari INTEGER"),
         ("contracte", "id_loc INTEGER, numar_contract TEXT, data_contract TEXT, data_inceput TEXT, data_sfarsit TEXT, valabilitate TEXT, observatii TEXT, concesionar_id INTEGER"),

@@ -27,6 +27,8 @@ import cimitir_field_inbox_http as fih
 import cimitir_phone_pairing_http as pph
 import cimitir_mobile_http as mih
 import cimitir_mobile_registry as mir
+import cimitir_sync_v2 as sv2
+import cimitir_sync_v2_http as sv2h
 
 log = logging.getLogger("cimitir.cloud_app")
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,6 +102,7 @@ def create_app(service: Any = None, origins: Optional[list] = None, pairing: Any
     service = service or fi.build_service_from_env()
     app = fih.create_app(service, origins, pairing)
     app.include_router(mih.create_router(mir.MobileRegistryService(service)))
+    app.include_router(sv2h.create_router(sv2.SyncV2Service(service)))
     jenv = _template()
     sys.path.insert(0, str(BACKEND))
     import attachments
