@@ -184,6 +184,14 @@ def run() -> Dict[str, Any]:
         report.update(pushed=counts["sent"], applied=counts["applied"], conflicts=counts["conflict"], errors=counts["error"],
                       retry=counts["retry"], pulled=n1 + n2)
         report["ok"] = ok_pull and ok_push and ok_pull2
+        try:
+            import sync_v2_docs
+            docs = sync_v2_docs.sync_documents()
+            report["lines"] += docs["lines"]
+            report["documents"] = {k: docs.get(k) for k in ("push", "pull")}
+            report["ok"] = report["ok"] and docs["ok"]
+        except Exception as exc:  # noqa: BLE001  (documentele nu opresc sincronizarea registrelor)
+            report["lines"].append(f"Documente: eroare neașteptată ({type(exc).__name__}).")
         report["state"] = "ok" if report["ok"] else ("conflict" if counts["conflict"] else "partial")
         try:
             report["server_open_conflicts"] = int(request("GET", "status").json().get("open_conflicts", 0))

@@ -175,6 +175,7 @@ class MobileRegistryService:
         like = f"%{q}%"
         c = self.cp._c()
         try:
+            pii = sv.pii_allowed(c, a)     # căutarea după CNP este permisă doar rolurilor cu acces explicit la date sensibile
             graves = [dict(uid=r["uid"], code=_text(r["cod_loc"]), sector=_text(r["sector"]), parcel=_text(r["parcela"]),
                            row=_text(r["rand"]), number=_text(r["numar"]), availability=_text(r["disponibilitate"]),
                            state=_text(r["stare"]), occupied=bool(r["ocupat"] or r["are_inhumari"]))
@@ -192,8 +193,8 @@ class MobileRegistryService:
                                     "LEFT JOIN locuri_de_veci l ON l.id=ct.id_loc "
                                     "WHERE COALESCE(x.nume,'') ILIKE ? OR COALESCE(x.prenume,'') ILIKE ? "
                                     "OR (COALESCE(x.nume,'') || ' ' || COALESCE(x.prenume,'')) ILIKE ? "
-                                    "OR COALESCE(x.telefon,'') ILIKE ? OR COALESCE(x.cnp,'') ILIKE ? "
-                                    "ORDER BY x.nume,x.prenume LIMIT ?", (like, like, like, like, like, limit)).fetchall()]
+                                    "OR COALESCE(x.telefon,'') ILIKE ? " + ("OR COALESCE(x.cnp,'') ILIKE ? " if pii else "") +
+                                    "ORDER BY x.nume,x.prenume LIMIT ?", (like, like, like, like) + ((like,) if pii else ()) + (limit,)).fetchall()]
 
             burials = [dict(uid=r["uid"], name=(f"{_text(r['nume'])} {_text(r['prenume'])}").strip(), death_date=_text(r["data_deces"]),
                             burial_date=_text(r["data_inhumare"]), grave_uid=_text(r["grave_uid"]), grave_code=_text(r["cod_loc"]))
@@ -201,8 +202,8 @@ class MobileRegistryService:
                            "SELECT i.uid,i.nume,i.prenume,i.data_deces,i.data_inhumare,l.uid AS grave_uid,l.cod_loc "
                            "FROM inhumati i LEFT JOIN locuri_de_veci l ON l.id=i.id_loc "
                            "WHERE COALESCE(i.nume,'') ILIKE ? OR COALESCE(i.prenume,'') ILIKE ? "
-                           "OR (COALESCE(i.nume,'') || ' ' || COALESCE(i.prenume,'')) ILIKE ? OR COALESCE(i.cnp,'') ILIKE ? "
-                           "OR COALESCE(l.cod_loc,'') ILIKE ? ORDER BY i.nume,i.prenume LIMIT ?", (like, like, like, like, like, limit)).fetchall()]
+                           "OR (COALESCE(i.nume,'') || ' ' || COALESCE(i.prenume,'')) ILIKE ? " + ("OR COALESCE(i.cnp,'') ILIKE ? " if pii else "") +
+                           "OR COALESCE(l.cod_loc,'') ILIKE ? ORDER BY i.nume,i.prenume LIMIT ?", (like, like, like) + ((like,) if pii else ()) + (like, limit)).fetchall()]
 
             contracts = [dict(uid=r["uid"], number=_text(r["numar_contract"]), start_date=_text(r["data_contract"]),
                               end_date=_text(r["data_sfarsit"]), grave_uid=_text(r["grave_uid"]), grave_code=_text(r["cod_loc"]),

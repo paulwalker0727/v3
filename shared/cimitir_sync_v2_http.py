@@ -5,18 +5,20 @@ import json
 
 import anyio
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 import cimitir_cloud_control as cc
 import cimitir_cloud_wire as wire
 import cimitir_field_inbox_http as fih
+import cimitir_field_storage as fs
 import cimitir_sync_v2 as sv
+import cimitir_sync_v2_docs as sdocs
 
 PREFIX = wire.API + "/sync-v2"
 PUSH_LIMIT = 512 * 1024
 
 
-def create_router(service: sv.SyncV2Service) -> APIRouter:
+def create_router(service: sv.SyncV2Service, docs: "sdocs.DocumentService | None" = None) -> APIRouter:
     router = APIRouter(prefix=PREFIX)
 
     def add(path: str, methods: list, fn):
@@ -101,4 +103,39 @@ def create_router(service: sv.SyncV2Service) -> APIRouter:
     add("/devices/{ref}/capabilities", ["PUT"], capabilities)
     add("/sectors", ["PUT"], sectors)
     add("/runs", ["GET"], runs)
+    if docs is not None:
+        async def doc_list(r: Request, key):
+            return await run(lambda: docs.list(key, qint(r, "since", 0), r.query_params.get("entity", ""), r.query_params.get("entity_uid", ""), qint(r, "limit", 200)))
+
+        async def doc_declare(r: Request, key):
+            body = json.loads(await fih._body_limited(r, 16 * 1024))
+            return await run(lambda: docs.declare(key, body))
+
+        async def doc_upload(r: Request, key):
+            data = await fih._body_limited(r, sdocs.MAX_BYTES)
+            return await run(lambda: docs.upload(key, r.path_params["uid"], data))
+
+        async def doc_delete(r: Request, key):
+            return await run(lambda: docs.delete(key, r.path_params["uid"]))
+
+        async def doc_file(request: Request):
+            secret = ""
+            try:
+                secret = fih._binding_key(request)
+                try:
+                    f = await run(lambda: docs.fetch(secret, request.path_params["uid"]))
+                except cc.ScopeError as exc:
+                    if str(exc) == "legătură invalidă":
+                        raise wire.Unauthenticated("legătură invalidă") from None
+                    raise
+                return Response(f["data"], media_type=f["mime"], headers={**fih._HEADERS, "X-Content-SHA256": f["sha256"], "X-Content-Type-Options": "nosniff",
+                                                                          "Content-Disposition": 'inline; filename="document"'})
+            except Exception as exc:  # noqa: BLE001
+                return fih._error(exc, secret)
+
+        add("/documents", ["GET"], doc_list)
+        add("/documents/declare", ["POST"], doc_declare)
+        add("/documents/{uid}/content", ["PUT"], doc_upload)
+        add("/documents/{uid}", ["DELETE"], doc_delete)
+        router.add_api_route("/documents/{uid}/file", doc_file, methods=["GET"])
     return router

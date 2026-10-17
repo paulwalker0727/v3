@@ -33,9 +33,10 @@ CAPS: Dict[str, str] = {
     "view_map": "Vizualizare hartă", "read_registers": "Citire evidențe (concesionari, înhumați, contracte, avize)", "read_finance": "Citire plăți și taxe",
     "edit_graves": "Adăugare/modificare locuri", "register_burials": "Înregistrare înhumări", "manage_contracts": "Administrare contracte și concesionari",
     "register_payments": "Înregistrare plăți", "upload_documents": "Încărcare documente și fotografii", "request_permits": "Solicitări de avize pentru lucrări",
-    "approve_requests": "Aprobare solicitări", "manage_users": "Administrare utilizatori/dispozitive", "export_print": "Export și tipărire"}
+    "approve_requests": "Aprobare solicitări", "manage_users": "Administrare utilizatori/dispozitive", "export_print": "Export și tipărire",
+    "view_pii": "Acces EXCEPȚIONAL la date personale sensibile (CNP, serie/număr act de identitate)"}
 ROLE_PRESETS: Dict[str, Dict[str, Any]] = {
-    "administrator": {"label": "Administrator", "caps": list(CAPS)},
+    "administrator": {"label": "Administrator", "caps": [k for k in CAPS if k != "view_pii"]},
     "preot_paroh": {"label": "Preot paroh", "caps": ["view_map", "read_registers", "read_finance", "edit_graves", "register_burials", "manage_contracts", "register_payments",
                                                       "upload_documents", "request_permits", "approve_requests", "export_print"]},
     "operator": {"label": "Operator", "caps": ["view_map", "read_registers", "read_finance", "edit_graves", "register_burials", "register_payments", "upload_documents", "request_permits"]},
@@ -46,6 +47,27 @@ READ_CAPS = {"locuri_de_veci": ("view_map", "read_registers"), "concesionari": (
 WRITE_CAP = {"locuri_de_veci": "edit_graves", "concesionari": "manage_contracts", "contracte": "manage_contracts", "inhumati": "register_burials",
              "plati": "register_payments", "amenajari_avize": "request_permits"}
 CAP_PREFIX, ROLE_PREFIX = "cap:", "role:"
+# Date personale sensibile: NU ajung pe telefon (pull, rând, conflicte, răspunsuri push, căutare) decât cu capabilitatea explicită `view_pii`; MAIN le are mereu.
+SENSITIVE: Dict[str, tuple] = {"concesionari": ("cnp", "bi_ci"), "contracte": ("owner_cnp", "owner_id_card_serie_number"), "inhumati": ("cnp",)}
+
+
+def pii_allowed(c, a: Dict[str, Any]) -> bool:
+    if a["device_type"] == "MAIN":
+        return True
+    caps = caps_of(c, a)
+    return caps is not None and "view_pii" in caps
+
+
+def redact_data(entity: str, data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(data, dict):
+        return data
+    return {k: v for k, v in data.items() if k not in SENSITIVE.get(entity, ())}
+
+
+def redact_wire(entity: str, w: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(w, dict) or not isinstance(w.get("data"), dict):
+        return w
+    return {**w, "data": redact_data(entity, w["data"])}
 
 
 def _jsonable(v: Any) -> Any:
@@ -71,14 +93,15 @@ def _select_sql(entity: str) -> str:
             "WHERE t.organization_uid=CAST(? AS uuid) AND t.cemetery_uid=CAST(? AS uuid)")
 
 
-def _wire(entity: str, row) -> Dict[str, Any]:
+def _wire(entity: str, row, pii: bool = True) -> Dict[str, Any]:
     d = {k: row[k] for k in row.keys()}
     sp = ents.ENTITIES[entity]
     data = {c: (ents.coerce("j", d[c]) if kind == "j" else _jsonable(d[c])) for c, kind in sp["cols"].items()}
     for w in ents.fk_wire_names(entity):
         data[w] = d.get(w)
-    return {"uid": d["uid"], "version": int(d["version"] or 0), "seq": int(d["change_seq"] or 0),
-            "updated_at": _jsonable(d["modified_at"]), "deleted": False, "data": data}
+    w = {"uid": d["uid"], "version": int(d["version"] or 0), "seq": int(d["change_seq"] or 0),
+         "updated_at": _jsonable(d["modified_at"]), "deleted": False, "data": data}
+    return w if pii else redact_wire(entity, w)
 
 
 def _db_value(kind: str, value: Any) -> Any:
@@ -178,7 +201,7 @@ class SyncV2Service:
             r = self._fetch(c, a, entity, str(uid)[:80])
             if r is None:
                 raise cc.ScopeError("înregistrare inexistentă")
-            return _wire(entity, r)
+            return _wire(entity, r, pii_allowed(c, a))
         finally:
             c.close()
 
@@ -194,7 +217,8 @@ class SyncV2Service:
             rows = c.execute(_select_sql(entity) + " AND t.change_seq > ? ORDER BY t.change_seq LIMIT ?", (*sc, since, limit + 1)).fetchall()
             tombs = c.execute("SELECT uid, version, change_seq FROM sync_tombstones WHERE entity=? AND change_seq > ? AND organization_uid=CAST(? AS uuid) "
                               "AND cemetery_uid=CAST(? AS uuid) ORDER BY change_seq LIMIT ?", (entity, since, *sc, limit + 1)).fetchall()
-            changes = [_wire(entity, r) for r in rows]
+            pii = pii_allowed(c, a)
+            changes = [_wire(entity, r, pii) for r in rows]
             changes += [{"uid": t["uid"], "version": int(t["version"]), "seq": int(t["change_seq"]), "deleted": True, "data": None} for t in tombs]
             changes.sort(key=lambda x: x["seq"])
             more = len(changes) > limit
@@ -237,6 +261,7 @@ class SyncV2Service:
         c = self.cp._c()
         try:
             editable = set(self._editable(c, a))
+            a["_pii"] = pii_allowed(c, a)
             results = [self._process(c, a, raw, editable) for raw in raw_ops]
             n = {s: sum(1 for r in results if r["status"] == s) for s in ("applied", "conflict", "rejected", "retry")}
             self._run(c, a, "push", received=len(results), applied=n["applied"], conflicts=n["conflict"], rejected=n["rejected"], retries=n["retry"],
@@ -259,6 +284,8 @@ class SyncV2Service:
             try:
                 result = self._decide(c, a, op, editable)
                 result.update(op_id=op["op_id"], entity=op["entity"], uid=op["uid"])
+                if not a.get("_pii") and isinstance(result.get("server"), dict):
+                    result["server"] = redact_wire(op["entity"], result["server"])     # răspunsul (și jurnalul) pentru telefon nu conțin date sensibile
                 if result["status"] in ("applied", "conflict") or (result["status"] == "rejected" and result.get("reason") != "not_authorized"):
                     c.execute("INSERT INTO sync_v2_ops (op_id,organization_uid,cemetery_uid,binding_uid,device_type,entity,entity_uid,action,base_version,status,new_version,reason,response) "
                               "VALUES (?,CAST(? AS uuid),CAST(? AS uuid),CAST(? AS uuid),?,?,?,?,?,?,?,?,CAST(? AS jsonb))",
@@ -321,6 +348,9 @@ class SyncV2Service:
 
         self._check_data(entity, op["data"])
         data = ents.clean_data(entity, op["data"])
+        if not a.get("_pii") and entity in SENSITIVE:
+            for col in SENSITIVE[entity]:      # telefonul nu poate citi, scrie sau șterge câmpuri sensibile: se păstrează valoarea din server
+                data[col] = server["data"].get(col) if server else None
         fk_values, missing = self._resolve_fks(c, a, entity, data)
         if missing:
             return {"status": "retry", "reason": missing}
@@ -404,10 +434,13 @@ class SyncV2Service:
             else:
                 sql += " AND resolution IN ('open','main_wins')"
             rows = c.execute(sql + " ORDER BY id DESC LIMIT ?", (*params, max(1, min(int(limit), 500)))).fetchall()
+            pii = pii_allowed(c, a)
             out = []
             for r in rows:
                 d = {k: _jsonable(r[k]) for k in r.keys()}
                 d["incoming"], d["server"] = _loads(d["incoming"]), _loads(d["server"])
+                if not pii:
+                    d["incoming"], d["server"] = redact_data(d["entity"], d["incoming"]), redact_wire(d["entity"], d["server"])
                 out.append(d)
             return {"conflicts": out}
         finally:
