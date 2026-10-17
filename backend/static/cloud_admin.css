@@ -17,3 +17,4 @@ button:disabled{opacity:.5;cursor:not-allowed}
 table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}th{color:var(--mut);font-weight:500}
 .tag{padding:2px 8px;border-radius:10px;font-size:12px;background:#223244}.tag.active{background:#17493a}.tag.revoked,.tag.expired{background:#4a2a28}.tag.used{background:#2f3a4a}
 .toast{position:fixed;right:20px;bottom:20px;background:#0b121a;border:1px solid var(--acc);padding:10px 16px;border-radius:8px}
+.qr-wrap{margin:8px 0}.qr{background:#fff;padding:8px;border-radius:8px;width:220px;height:220px;display:block}

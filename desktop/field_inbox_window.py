@@ -144,8 +144,8 @@ class FieldInboxWindow(QDialog):
         self.btn_import.setEnabled(status == "ACCEPTED")
 
     def _configure(self) -> None:
-        from cloud_profiles_dialog import CloudProfilesDialog
-        CloudProfilesDialog(self).exec()
+        from cloud_simple_dialog import open_cloud_config
+        open_cloud_config(self)
         self.reload()
 
     # ------------------------------------------------------------------ listă

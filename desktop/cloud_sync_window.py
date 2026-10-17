@@ -18,6 +18,11 @@ import cloud_profiles
 import cloud_sync
 
 
+def _advanced_ui() -> bool:
+    import cloud_simple
+    return cloud_simple.advanced_ui_enabled()
+
+
 class _SyncThread(QThread):
     done = Signal(dict)
 
@@ -68,6 +73,8 @@ class CloudSyncWindow(QDialog):
 
         form.addRow("Adresă server:", self.txt_url)
         form.addRow("Cheie sincronizare:", self.txt_key)
+        if not _advanced_ui():
+            form.setRowVisible(self.txt_key, False)      # cheia brută nu se cere utilizatorului obișnuit
         self.chk_entities = QCheckBox("Sincronizează registrul (locuri, concesionari, contracte, înhumați, plăți) prin server")
         self.chk_entities.setToolTip("Serverul (PostgreSQL) devine sursa principală când există internet; fără internet "
                                      "lucrezi local și modificările se trimit automat la reconectare.")
@@ -86,7 +93,7 @@ class CloudSyncWindow(QDialog):
         self.btn_test = QPushButton("Testează conexiunea")
         self.btn_sync = QPushButton("Sincronizează acum")
         self.btn_sync.setDefault(True)
-        self.btn_profiles = QPushButton("Profile conexiune…")
+        self.btn_profiles = QPushButton("Configurare Cloud…")
         for b in (self.btn_save, self.btn_test, self.btn_sync, self.btn_profiles):
             btns.addWidget(b)
         btns.addStretch(1)
@@ -140,8 +147,8 @@ class CloudSyncWindow(QDialog):
         self.btn_phones.clicked.connect(self._phones)
 
     def _profiles(self):
-        from cloud_profiles_dialog import CloudProfilesDialog
-        CloudProfilesDialog(self).exec()
+        from cloud_simple_dialog import open_cloud_config
+        open_cloud_config(self)
         self._profile = cloud_profiles.active_profile()
         cfg = cloud_sync.get_config()
         self.txt_url.setText(cfg["url"])

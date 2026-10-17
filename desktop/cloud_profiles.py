@@ -604,6 +604,23 @@ def test_connection(profile: Profile, mode: str = "api", store: Optional[ss.Secr
     return report
 
 
+def _registry_binding(store: Optional[ss.SecretStore]) -> Tuple[str, str]:
+    """Cheia Binding a legăturii MAIN (din SecretStore, prin registrul local) și cimitirul legat; ('', '') dacă MAIN nu e asociat."""
+    try:
+        import cimitir_registry as reg
+        import sync_v2
+        ref = (db.get_setting(sync_v2.SET_REG_REF) or "").strip()
+        if not ref:
+            return "", ""
+        key = _read_ref(ref, store)
+        if not (key and sync_v2.BINDING_RE.match(key)):
+            return "", ""
+        b = reg.current_binding()
+        return key, (b.cemetery_uid if b else "")
+    except Exception:  # noqa: BLE001
+        return "", ""
+
+
 def _test_api(p: Profile, rep: TestReport, store, http) -> None:
     import cloud_sync
     err = cloud_sync.validate_url(p.api_base_url)
@@ -612,22 +629,25 @@ def _test_api(p: Profile, rep: TestReport, store, http) -> None:
         return
 
     key = _read_ref(p.sync_key_ref, store)
+    registry_bound = ""
+    if not key:
+        key, registry_bound = _registry_binding(store)
     base = p.api_base_url.rstrip("/")
 
     try:
         health = http.get(f"{base}/api/v1/health", timeout=TIMEOUT)
     except requests.RequestException as exc:
-        rep.add("API reachable", "FAIL", f"serverul nu r?spunde ({type(exc).__name__})")
+        rep.add("API reachable", "FAIL", f"serverul nu răspunde ({type(exc).__name__})")
         return
 
     if health.status_code != 200:
-        rep.add("API reachable", "FAIL", f"/api/v1/health a r?spuns {health.status_code}")
+        rep.add("API reachable", "FAIL", f"/api/v1/health a răspuns {health.status_code}")
         return
 
     try:
         hj = health.json()
     except ValueError:
-        rep.add("API reachable", "FAIL", "r?spuns invalid la /api/v1/health")
+        rep.add("API reachable", "FAIL", "răspuns invalid la /api/v1/health")
         return
 
     if not hj.get("ok"):
@@ -637,7 +657,7 @@ def _test_api(p: Profile, rep: TestReport, store, http) -> None:
     rep.add("API reachable", "OK", base)
 
     if not key:
-        rep.add("Tenant/device binding", "FAIL", "cheia de sincronizare lipse?te din profil")
+        rep.add("Tenant/device binding", "FAIL", "cheia de sincronizare lipsește din profil")
         rep.add("Cemetery binding", "SKIP", "")
         return
 
@@ -646,14 +666,14 @@ def _test_api(p: Profile, rep: TestReport, store, http) -> None:
     try:
         resp = http.get(f"{base}/api/v1/field-inbox/me", headers=headers, timeout=TIMEOUT)
     except requests.RequestException as exc:
-        rep.add("Tenant/device binding", "FAIL", f"f?r? conexiune ({type(exc).__name__})")
+        rep.add("Tenant/device binding", "FAIL", f"fără conexiune ({type(exc).__name__})")
         return
 
     if resp.status_code == 401:
-        rep.add("Tenant/device binding", "FAIL", "cheie de sincronizare invalid? (401)")
+        rep.add("Tenant/device binding", "FAIL", "cheie de sincronizare invalidă (401)")
         return
     if resp.status_code == 429:
-        rep.add("Tenant/device binding", "FAIL", "prea multe ?ncerc?ri (429)")
+        rep.add("Tenant/device binding", "FAIL", "prea multe încercări (429)")
         return
     if resp.status_code >= 400:
         rep.add("Tenant/device binding", "FAIL", f"serverul a refuzat ({resp.status_code})")
@@ -663,19 +683,19 @@ def _test_api(p: Profile, rep: TestReport, store, http) -> None:
         body = resp.json()
         info = body.get("result", {}) if isinstance(body, dict) else {}
     except ValueError:
-        rep.add("Tenant/device binding", "FAIL", "r?spuns invalid")
+        rep.add("Tenant/device binding", "FAIL", "răspuns invalid")
         return
 
     server_cem = str(info.get("cemetery_uid") or "")
     device_type = str(info.get("device_type") or "")
 
     if device_type and device_type != "MAIN":
-        rep.add("Tenant/device binding", "FAIL", f"cheia apar?ine unui dispozitiv {device_type}, nu MAIN")
+        rep.add("Tenant/device binding", "FAIL", f"cheia aparține unui dispozitiv {device_type}, nu MAIN")
         return
 
-    rep.add("Tenant/device binding", "OK", "cheia MAIN este acceptat?")
+    rep.add("Tenant/device binding", "OK", "cheia MAIN este acceptată")
 
-    bound = db.get_setting("cloud_bound_cemetery") or ""
+    bound = db.get_setting("cloud_bound_cemetery") or registry_bound
 
     if not server_cem:
         rep.add("Cemetery binding", "FAIL", "serverul nu a returnat cemetery_uid")

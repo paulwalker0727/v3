@@ -18,12 +18,30 @@ async function api(path, options={}){
 }
 function toast(msg){document.querySelector('.toast')?.remove();const n=document.createElement('div');n.className='toast';n.textContent=msg;document.body.appendChild(n);setTimeout(()=>n.remove(),3200);}
 
-function pairingView(message=''){
-  app.innerHTML=`<div class="auth-wrap"><section class="auth-card"><div class="brand-mark">✦</div><h1>Cimitir Mobile</h1><p>Asociază acest dispozitiv o singură dată. Codul se generează din MAIN → <b>Cloud / Telefoane</b>.</p><form id="pair-form"><div class="field"><label>Cod pairing</label><input id="pair-code" class="pair-code" maxlength="28" autocomplete="one-time-code" inputmode="text" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" required></div><div class="field"><label>Numele dispozitivului</label><input id="device-name" maxlength="64" value="${/Android/i.test(navigator.userAgent)?'Telefon / tabletă Android':'Dispozitiv mobil'}"></div><button class="primary" id="pair-submit">Asociază dispozitivul</button><div class="error" id="pair-error">${esc(message)}</div></form><p class="micro">Cheia tehnică este păstrată local și nu este afișată în interfața normală.</p></section></div>`;
+function pairingView(message='',autoCode=''){
+  app.innerHTML=`<div class="auth-wrap"><section class="auth-card"><div class="brand-mark">✦</div><h1>Cimitir Mobile</h1><p>Asociază acest dispozitiv o singură dată. Codul se generează din MAIN → <b>Cloud / Telefoane</b>.</p><form id="pair-form"><div class="field"><label>Cod pairing</label><input id="pair-code" class="pair-code" maxlength="28" autocomplete="one-time-code" inputmode="text" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" required></div><div class="field"><label>Numele dispozitivului</label><input id="device-name" maxlength="64" value="${/Android/i.test(navigator.userAgent)?'Telefon / tabletă Android':'Dispozitiv mobil'}"></div><button class="primary" id="pair-submit">Asociază dispozitivul</button>${'BarcodeDetector' in window?'<button type="button" class="secondary" id="pair-scan" data-testid="pair-scan">Scanează codul QR</button><video id="pair-video" class="pair-video" playsinline muted hidden></video>':''}<div class="error" id="pair-error">${esc(message)}</div></form><p class="micro">Cheia tehnică este păstrată local și nu este afișată în interfața normală.</p></section></div>`;
   const form=document.getElementById('pair-form');
   const inp=document.getElementById('pair-code');
   inp.addEventListener('input',()=>{let s=inp.value.toUpperCase().replace(/[^A-Z2-9]/g,'').slice(0,20);inp.value=s.match(/.{1,5}/g)?.join('-')||s;});
-  form.addEventListener('submit',async(e)=>{e.preventDefault();const b=document.getElementById('pair-submit');const er=document.getElementById('pair-error');b.disabled=true;er.textContent='';try{const r=await api(`${API}/phone-pairing/redeem`,{method:'POST',body:JSON.stringify({code:inp.value,device_name:document.getElementById('device-name').value,client_id:getClientId()})});state.key=r.binding_key;await kvSet('binding_key',state.key);await loadApp();}catch(x){er.textContent=x.status===429?'Prea multe încercări. Așteaptă puțin și încearcă din nou.':'Cod invalid, expirat sau deja folosit.';}finally{b.disabled=false;}});
+  form.addEventListener('submit',async(e)=>{e.preventDefault();const b=document.getElementById('pair-submit');const er=document.getElementById('pair-error');b.disabled=true;er.textContent='';try{await pairWith(inp.value,document.getElementById('device-name').value);}catch(x){if(state.prevKey){state.key=state.prevKey;state.prevKey=null;toast('Codul din QR nu mai este valid; dispozitivul rămâne asociat ca înainte.');await loadApp();return;}er.textContent=x.status===429?'Prea multe încercări. Așteaptă puțin și încearcă din nou.':'Cod invalid, expirat sau deja folosit.';}finally{b.disabled=false;}});
+  document.getElementById('pair-scan')?.addEventListener('click',()=>scanPairQr(inp,form));
+  if(autoCode){inp.value=autoCode;inp.dispatchEvent(new Event('input'));form.requestSubmit();}
+}
+async function pairWith(code,deviceName){
+  const r=await api(`${API}/phone-pairing/redeem`,{method:'POST',body:JSON.stringify({code,device_name:deviceName,client_id:getClientId()})});
+  state.key=r.binding_key;await kvSet('binding_key',state.key);await loadApp();
+  const b=state.bootstrap;if(b&&state.key)toast(`Asociat automat: ${fmtName(b.organization)} — ${fmtName(b.cemetery)}`);
+}
+function pairCodeFromText(t){const m=/(?:[#&?]|^)pair=([A-Za-z0-9-]{10,40})/.exec(String(t||''));return m?m[1]:'';}
+function takePairCodeFromUrl(){const c=pairCodeFromText(location.hash);if(c)history.replaceState(null,'',location.pathname+location.search);return c;}
+async function scanPairQr(inp,form){
+  const video=document.getElementById('pair-video');let stream;
+  try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});}catch(_e){toast('Camera nu este disponibilă. Introdu codul manual.');return;}
+  video.srcObject=stream;video.hidden=false;await video.play().catch(()=>{});
+  const det=new BarcodeDetector({formats:['qr_code']});let live=true;
+  const stop=()=>{live=false;stream.getTracks().forEach(t=>t.stop());video.hidden=true;};
+  const tick=async()=>{if(!live)return;try{const r=await det.detect(video);const code=r.map(x=>pairCodeFromText(x.rawValue)).find(Boolean);if(code){stop();inp.value=code;inp.dispatchEvent(new Event('input'));form.requestSubmit();return;}}catch(_e){}setTimeout(tick,300);};
+  setTimeout(stop,60000);tick();
 }
 function getClientId(){let id=localStorage.getItem('cimitir_mobile_client');if(!id){id=(crypto.randomUUID?.()||`${Date.now()}-${Math.random()}`).replace(/[^A-Za-z0-9._:-]/g,'');localStorage.setItem('cimitir_mobile_client',id);}return id;}
 
@@ -140,7 +158,7 @@ async function openSyncPanel(){
   body.querySelectorAll('[data-rebase]').forEach(b=>b.onclick=async()=>{const o=ob[+b.dataset.rebase];o.state='pending';o.op_id='m-'+newId();o.base_version=o.serverVersion||o.base_version;await saveOutbox(ob);syncNow();});
 }
 
-(async function boot(){if('serviceWorker' in navigator){navigator.serviceWorker.register('/mobile/sw.js',{scope:'/mobile/'}).catch(()=>{});}try{state.key=await kvGet('binding_key');}catch(_e){}if(state.key)await loadApp();else pairingView();})();
+(async function boot(){if('serviceWorker' in navigator){navigator.serviceWorker.register('/mobile/sw.js',{scope:'/mobile/'}).catch(()=>{});}let link=takePairCodeFromUrl();try{state.key=await kvGet('binding_key');}catch(_e){}if(link&&state.key&&!confirm('Acest dispozitiv este deja asociat. Îl reasociezi cu noul cod?'))link='';if(link){state.prevKey=state.key;state.key=null;pairingView('',link);}else if(state.key)await loadApp();else pairingView();})();
 
 /* ---------------- Mobile v2 (Etapele B/C/E): registre, fișă, formulare, offline ---------------- */
 const plotColor=(p)=>p.occupied?'#9f5a52':/rezerv|concesion|vândut|vandut/i.test(`${p.state||''} ${p.availability||''}`)?'#c9993a':'#4f8a68';
@@ -226,6 +244,7 @@ async function openGrave(uid){
   document.getElementById('sheet-x').onclick=()=>back.classList.remove('show');
   body.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openRecordForm(b.dataset.edit,b.dataset.uid||g.uid));
   body.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>openRecordForm(b.dataset.add,null));
+  if(!offline){const sb=body.querySelector('.sheet-body');if(sb){const pb=document.createElement('button');pb.className='edit-btn';pb.setAttribute('data-testid','add-grave-photo');pb.textContent='Adaugă fotografie';pb.onclick=()=>uploadGravePhoto(g);sb.appendChild(pb);}}
 }
 
 const LISTS={locuri:['Locuri de veci','Toate locurile, cu filtru după cod, sector sau stare.'],inhumati:['Înhumați','Persoane înhumate, cu filtru după nume sau loc.'],contracte:['Contracte','Contracte și concesionari.'],plati:['Plăți','Plăți și taxe înregistrate.']};
@@ -236,5 +255,35 @@ async function renderList(v,kind){
   if(!(await mirrorAt()))await refreshMirror();
   draw();
 }
-function renderDocs(v){v.innerHTML=`<div class="page-head"><div><h1>Documente</h1><p>Fotografii și documente asociate locurilor.</p></div></div><div class="sync-notice" data-testid="docs-notice">Încărcarea și vizualizarea documentelor/fotografiilor <b>nu sunt încă implementate</b> în Mobile v2 (necesită stocare de obiecte și drepturi dedicate). Datele locurilor, contractelor, plăților și înhumaților sunt complet funcționale.</div>`;}
+const FI='/api/v1/field-inbox';
+const DOC_LABELS={DOCUMENT:'Document',GRAVE_PHOTO:'Fotografie loc',WORK_PHOTO:'Fotografie lucrare'};
+const DOC_STATUS={PENDING:'În așteptare',ACCEPTED:'Acceptat',REJECTED:'Respins',IMPORTED:'Importat în MAIN'};
+async function renderDocs(v){
+  v.innerHTML=`<div class="page-head"><div><h1>Documente</h1><p>Fotografiile și documentele trimise de acest telefon către MAIN. Adaugă o fotografie din fișa unui loc.</p></div></div><div id="docs-box" class="result-list" data-testid="docs-list"><div class="empty">Se încarcă…</div></div>`;
+  const box=document.getElementById('docs-box');
+  try{
+    const lists=await Promise.all(['DOCUMENT','GRAVE_PHOTO','WORK_PHOTO'].map(t=>api(`${FI}/items?item_type=${t}&limit=100`)));
+    const items=lists.flat().sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+    box.innerHTML=items.length?items.map((x,i)=>`<button class="result" data-i="${i}" data-testid="doc-row" ${['PENDING','ACCEPTED'].includes(x.status)?'':'disabled'}><div><b>${esc(DOC_LABELS[x.item_type]||x.item_type)}</b><small>${esc(x.payload?.caption||x.payload?.doc_type||'')} · ${esc(String(x.created_at||'').slice(0,10))}</small></div><span class="pill">${esc(DOC_STATUS[x.status]||x.status)}</span></button>`).join(''):'<div class="empty">Nicio fotografie sau document trimis încă.</div>';
+    box.querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>openDocFile(items[+b.dataset.i]));
+  }catch(e){box.innerHTML='<div class="empty">Documentele se pot vedea doar cu conexiune la Cloud.</div>';}
+}
+async function openDocFile(item){
+  try{const d=await api(`${FI}/items/${encodeURIComponent(item.uid)}`);const f=(d.files||[]).find(x=>x.status==='READY')||(d.files||[])[0];if(!f){toast('Fișierul nu este disponibil.');return;}
+    const u=await api(`${FI}/items/${encodeURIComponent(item.uid)}/files/${encodeURIComponent(f.uid)}/url?ttl=60`);window.open(u.url,'_blank','noopener');}
+  catch(_e){toast('Fișierul nu poate fi deschis acum.');}
+}
+async function uploadGravePhoto(grave){
+  const inp=document.createElement('input');inp.type='file';inp.accept='image/jpeg,image/png';inp.setAttribute('capture','environment');
+  inp.onchange=async()=>{const f=inp.files&&inp.files[0];if(!f)return;
+    if(!['image/jpeg','image/png'].includes(f.type)){toast('Sunt acceptate doar fotografii JPEG sau PNG.');return;}
+    if(!navigator.onLine){toast('Încărcarea fotografiilor necesită conexiune la Cloud.');return;}
+    try{const idem=(crypto.randomUUID?.()||`${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9._:-]/g,'')+'-photo';
+      const it=await api(`${FI}/items`,{method:'POST',body:JSON.stringify({idempotency_key:idem.padEnd(16,'0'),item_type:'GRAVE_PHOTO',payload:{caption:grave.cod_loc||''},grave_uid:grave.uid})});
+      const fuid=crypto.randomUUID();const buf=await f.arrayBuffer();
+      await api(`${FI}/items/${encodeURIComponent(it.item?.uid||it.uid)}/files`,{method:'POST',body:buf,headers:{'Content-Type':f.type,'X-File-Uid':fuid,'X-File-Name':(f.name||'foto.jpg').replace(/[^\w.\- ]/g,'_').slice(0,100)}});
+      toast('Fotografia a fost trimisă către MAIN.');
+    }catch(_e){toast('Fotografia nu a putut fi trimisă. Reîncearcă cu conexiune.');}
+  };inp.click();
+}
 function renderModules(v){const rows=[['locuri','▦','Locuri','Listă și filtre'],['inhumati','✦','Înhumați','Persoane înhumate'],['contracte','▤','Contracte','Contracte și concesionari'],['plati','▣','Plăți','Taxe și plăți'],['documente','❏','Documente','Fotografii și acte'],['sync','⇅','Sincronizare','Stare, coadă, conflicte']];v.innerHTML=`<div class="page-head"><div><h1>Registre</h1><p>Toate registrele funcționează și offline, din copia locală autorizată.</p></div></div><div class="module-grid">${rows.map(r=>`<button class="module-card" data-go="${r[0]}" data-testid="module-${r[0]}"><span class="ico">${r[1]}</span><strong>${r[2]}</strong><small>${r[3]}</small></button>`).join('')}</div>`;v.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>b.dataset.go==='sync'?openSyncPanel():navigate(b.dataset.go));}

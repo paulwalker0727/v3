@@ -18,6 +18,7 @@ import access_session
 import cimitir_bootstrap as bs
 import cimitir_cloud_admin_client as adc
 import cimitir_cloud_associate as assoc
+import cimitir_qr as qrlink
 import cimitir_registry as reg
 import cimitir_secretstore as ss
 import field_inbox_client as fic
@@ -258,7 +259,11 @@ class CloudAssociateDialog(QDialog):
         self.lbl_code.setStyleSheet("font-size: 24px; font-weight: bold; letter-spacing: 3px;")
         self.lbl_code.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.lbl_left = QLabel("")
+        self.lbl_qr = QLabel()
+        self.lbl_qr.setObjectName("adm_qr")
+        self.lbl_qr.setVisible(False)
         lay.addWidget(self.lbl_code)
+        lay.addWidget(self.lbl_qr)
         lay.addWidget(self.lbl_left)
         self.tbl_dev = QTableWidget(0, 5)
         self.tbl_dev.setHorizontalHeaderLabels(("Nume", "Tip", "Cimitir", "Ultima activitate", "Stare"))
@@ -340,11 +345,29 @@ class CloudAssociateDialog(QDialog):
         def ok(res):
             self._issued = res
             self.lbl_code.setText(res["display"])
+            self._show_qr(res)
             self.btn_copy.setEnabled(True)
             self.btn_revoke_code.setEnabled(True)
             self._timer.start()
             self._tick()
         _run(self, lambda: self._admin.issue_code(org, cem, kind), ok, lambda m, _nc: self.lbl_adm.setText(m))
+
+    def _show_qr(self, res: Dict[str, Any]) -> None:
+        """QR doar pentru codul de telefon: link `<cloud>/mobile/#pair=<cod>`; telefonul se asociază automat la scanare."""
+        self.lbl_qr.setVisible(False)
+        if res.get("kind") != "phone" or not self._admin:
+            return
+        link = res.get("pair_url") or qrlink.pair_url(self._admin.base[:-len("/api/v1/admin")], res.get("code", ""))
+        if not link:
+            return
+        try:
+            from PySide6.QtGui import QPixmap
+            pm = QPixmap()
+            if pm.loadFromData(qrlink.png_bytes(link)):
+                self.lbl_qr.setPixmap(pm)
+                self.lbl_qr.setVisible(True)
+        except Exception:  # noqa: BLE001  (fără generator QR: codul manual rămâne disponibil)
+            pass
 
     def _tick(self) -> None:
         if not self._issued:
@@ -354,6 +377,7 @@ class CloudAssociateDialog(QDialog):
             self._timer.stop()
             self.lbl_left.setText("Codul a expirat. Generează unul nou (regenerare).")
             self.lbl_code.setText("—")
+            self.lbl_qr.setVisible(False)
             self._issued = None
             return
         self.lbl_left.setText(f"Valabil încă {left // 60}:{left % 60:02d}")
@@ -372,6 +396,7 @@ class CloudAssociateDialog(QDialog):
             self._issued = None
             self._timer.stop()
             self.lbl_code.setText("—")
+            self.lbl_qr.setVisible(False)
             self.lbl_left.setText("Cod revocat.")
         _run(self, lambda: self._admin.revoke_code(org, cid), ok, lambda m, _nc: self.lbl_adm.setText(m))
 
