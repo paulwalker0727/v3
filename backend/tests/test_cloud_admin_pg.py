@@ -291,6 +291,8 @@ def test_phone_code_issue_redeem_list_revoke(cw):
     c1 = api(cw, "POST", "/codes", tok, json=body)[1]["result"]
     c2 = api(cw, "POST", "/codes", tok, json=body)[1]["result"]
     assert c1["code"] != c2["code"] and len(c1["code"]) == 20
+    assert c1["pair_url"] == f"{cw['srv'].url}/mobile/#pair={c1['code']}" and c1["qr"].startswith("data:image/svg+xml;base64,")   # link/QR pentru telefon; codul în fragment
+    assert api(cw, "POST", "/codes", tok, json={**body, "kind": "main"})[1]["result"].get("qr") is None
     assert api(cw, "POST", "/codes/revoke", tok, json={"organization_uid": w.org1, "code_id": c2["code_id"]})[0] == 200
     r = httpx.post(cw["srv"].url + "/api/v1/phone-pairing/redeem", json={"code": c2["display"], "device_name": "Telefon X", "client_id": "cid-" + "a" * 10})
     assert r.status_code in (400, 401, 403, 404, 422), r.text                         # cod revocat: respins

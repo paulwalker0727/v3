@@ -118,6 +118,8 @@
     var c = S.code, left = h("span", { "data-testid": "code-countdown" });
     box.replaceChildren(h("h3", { text: c.kind === "main" ? "Cod pentru MAIN (calculator Windows)" : "Cod pentru telefon" }),
       h("div", { class: "code", "data-testid": "issued-code", text: c.display }),
+      c.qr ? h("div", { class: "qr-wrap" }, [h("img", { class: "qr", "data-testid": "pair-qr", alt: "Cod QR pentru asocierea telefonului", src: c.qr }),
+        h("p", { class: "muted", text: "Scanează cu camera telefonului: aplicația se deschide și asocierea se face automat." })]) : "",
       h("div", { class: "row" }, [h("div", {}, [h("span", { class: "muted", text: "Valabil încă: " }), left]),
         h("button", { "data-testid": "copy-code", text: "Copiază codul", on: { click: function () { (navigator.clipboard ? navigator.clipboard.writeText(c.code) : Promise.reject()).then(function () { toast("Cod copiat."); }, function () { toast("Copierea a eșuat; selectează codul manual."); }); } } }),
         h("button", { class: "danger", "data-testid": "revoke-issued-code", text: "Revocă acest cod", on: { click: function () { revokeCode(c.code_id); S.code = null; drawCode(); } } })]),

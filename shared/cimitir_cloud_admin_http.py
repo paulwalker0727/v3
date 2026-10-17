@@ -6,6 +6,7 @@ Sesiunea: cookie HttpOnly + SameSite=Strict (UI web) SAU `Authorization: Bearer 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Callable, Dict, Optional
 
 import anyio
@@ -13,6 +14,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 import cimitir_cloud_admin as ad
+import cimitir_qr as qr
 import cimitir_phone_pairing_http as pph
 
 log = logging.getLogger("cimitir.cloud_admin")
@@ -106,7 +108,16 @@ def create_router(admin: ad.AdminService) -> APIRouter:
     route("POST", "/logout", logout)
     route("GET", "/me", lambda b, c: admin.me(c["identity"]))
     route("POST", "/password", lambda b, c: admin.change_password(c["identity"], c["token"], b.get("old_password"), b.get("new_password")) or {"changed": True})
-    route("POST", "/codes", lambda b, c: admin.issue_code(c["identity"], b.get("organization_uid"), b.get("cemetery_uid"), b.get("kind"), b.get("ttl")), status=201)
+    def issue(b, c):
+        res = admin.issue_code(c["identity"], b.get("organization_uid"), b.get("cemetery_uid"), b.get("kind"), b.get("ttl"))
+        if res.get("kind") == "phone":
+            base = (os.environ.get("CIMITIR_PUBLIC_URL") or "").strip().rstrip("/") or str(c["request"].base_url).rstrip("/")
+            link = qr.pair_url(base, res["code"])
+            if link:
+                res["pair_url"], res["qr"] = link, qr.svg_data_uri(link)
+        return res
+
+    route("POST", "/codes", issue, status=201)
     route("GET", "/codes", lambda b, c: admin.list_codes(c["identity"], c["q"].get("organization_uid", ""), c["q"].get("cemetery_uid")))
     route("POST", "/codes/revoke", lambda b, c: admin.revoke_code(c["identity"], b.get("organization_uid"), b.get("code_id")))
     route("GET", "/devices", lambda b, c: admin.list_devices(c["identity"], c["q"].get("organization_uid", "")))

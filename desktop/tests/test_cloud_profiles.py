@@ -327,11 +327,11 @@ class FakeResp:
 
 class FakeHttp:
     def __init__(self, health=200, info=None, info_status=200):
-        self.calls, self.health, self.info, self.info_status = [], health, info if info is not None else {"cemetery": "cimitir"}, info_status
+        self.calls, self.health, self.info, self.info_status = [], health, info if info is not None else {"ok": True, "result": {"cemetery_uid": "cimitir", "device_type": "MAIN"}}, info_status
 
     def get(self, url, headers=None, timeout=None):
         self.calls.append((url, dict(headers or {})))
-        return FakeResp(self.health) if url.endswith("/api/health") else FakeResp(self.info_status, self.info)
+        return FakeResp(self.health, {"ok": True}) if url.endswith("/api/v1/health") else FakeResp(self.info_status, self.info)
 
     post = put = delete = request = patch = lambda self, *a, **k: (_ for _ in ()).throw(AssertionError("test-ul trebuie să fie read-only"))
 
@@ -344,15 +344,15 @@ def test_api_profile_normal_without_db_password_or_secret_key(store):
     assert rep.ok, rep.text()
     assert [c.name for c in rep.checks] == ["API reachable", "Tenant/device binding", "Cemetery binding"]
     for _, headers in http.calls:
-        assert set(headers) <= {"X-Sync-Key", "X-Sync-Client"}
-    assert all(u.startswith("https://test.example.ro/api/") for u, _ in http.calls)
+        assert set(headers) <= {"Authorization"}
+    assert all(u.startswith("https://test.example.ro/api/v1/") for u, _ in http.calls)
 
 
 def test_api_test_failures(store):
     p = cp.create_profile(fields(), {"sync_key": KEY}, store)
     assert not cp.test_connection(p, "api", store, http=FakeHttp(health=503)).ok
     assert not cp.test_connection(p, "api", store, http=FakeHttp(info_status=401)).ok
-    rep = cp.test_connection(p, "api", store, http=FakeHttp(info={"cemetery": "alt-cimitir"}))
+    rep = cp.test_connection(p, "api", store, http=FakeHttp(info={"ok": True, "result": {"device_type": "MAIN"}}))
     assert not rep.ok and rep.checks[-1].name == "Cemetery binding" and rep.checks[-1].status == "FAIL"
     db.set_setting("cloud_bound_cemetery", "alt")
     assert not cp.test_connection(p, "api", store, http=FakeHttp()).ok  # legat local de alt cimitir
