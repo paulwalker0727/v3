@@ -12,6 +12,7 @@ import os
 import secrets
 import sys
 import time
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,7 +40,8 @@ def main() -> int:
     if svc.status()["initialized"]:
         print("Există deja un administrator: nu modific nimic.")
         return 0
-    out = svc.bootstrap(token, a.email, pw, "Administrator Test (FICTIV)", organization_name="Parohia Test (FICTIV)", cemetery_name="Cimitir Test FICTIV")
+    out = svc.bootstrap(token, a.email, pw, "Administrator Test (FICTIV)", organization_name="Parohia Test (FICTIV)",
+                        cemetery_uid=str(uuid.uuid4()), cemetery_name="Cimitir Test FICTIV")
     print("OK: administrator + organizație + cimitir FICTIVE create:", {k: v for k, v in out.items() if k in ("organization_uid", "cemetery_uid")})
     return 0
 

@@ -330,3 +330,20 @@ def test_full_circuit_main_cloud_mobile_cloud_main(dx):
     assert f.content == d_ph and hashlib.sha256(f.content).hexdigest() == m2["sha256"]
     with adm(dx["pg"]) as c:
         assert c.execute("SELECT count(*) FROM sync_v2_documents").fetchone()[0] == 2
+
+
+# ===================================================================== D. regresie: bootstrap administrator cu organizație NOUĂ și fără cimitir (RLS pe jurnalul de audit)
+def test_admin_bootstrap_new_org_without_cemetery_is_not_half_applied(dx):
+    import secrets
+    import time
+
+    import cimitir_cloud_admin as ad
+    import cimitir_cloud_control_pg as ccp
+    with adm(dx["pg"]) as c:
+        c.execute("TRUNCATE cp_admin_sessions, cp_admin_recovery, cp_admin_credentials CASCADE")
+        c.execute("UPDATE cp_admin_state SET bootstrap_completed_at=NULL, bootstrap_identity_uid=NULL")
+    token = secrets.token_urlsafe(32)
+    env = dict(os.environ, BOOTSTRAP_TOKEN=token, BOOTSTRAP_TOKEN_EXPIRES_AT=str(time.time() + 600))
+    svc = ad.AdminService(ccp.PostgresControlPlane(), environ=env)
+    out = svc.bootstrap(token, f"owner{uuid.uuid4().hex[:6]}@example.invalid", "Parola-Lunga-9!x", "Owner", organization_name="Parohia Nouă (test)")
+    assert out["organization_uid"] and out["cemetery_uid"] is None and svc.status()["initialized"]
