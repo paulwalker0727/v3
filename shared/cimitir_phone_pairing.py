@@ -154,7 +154,7 @@ class PhonePairingService:
         self.cp.begin_request()
         c = self.cp._c(code_hash=h)
         try:
-            row = c.execute("SELECT organization_uid, cemetery_uid FROM device_pairing_codes WHERE code_hash=? AND device_type='MOBILE' AND used_at IS NULL AND expires_at > now()",
+            row = c.execute("SELECT organization_uid, cemetery_uid FROM device_pairing_codes WHERE code_hash=? AND device_type='MOBILE' AND used_at IS NULL AND expires_at > now()" + self.cp.revoked_clause(c),
                             (h,)).fetchone()
             if not row:
                 raise PairingRejected(GENERIC_REJECTION)
@@ -166,7 +166,7 @@ class PhonePairingService:
             try:
                 c.execute("SELECT cp_lock_cemetery(?)", (cem,))
                 n = c.execute("UPDATE device_pairing_codes SET used_at = now(), used_by_binding_uid = ? WHERE code_hash=? AND device_type='MOBILE' AND used_at IS NULL "
-                              "AND expires_at > now()", (binding_uid, h)).rowcount
+                              "AND expires_at > now()" + self.cp.revoked_clause(c), (binding_uid, h)).rowcount
                 if n != 1:
                     raise PairingRejected(GENERIC_REJECTION)
                 if not c.execute("SELECT 1 FROM cemeteries WHERE uid=? AND organization_uid=?", (cem, org)).fetchone():

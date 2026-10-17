@@ -20,6 +20,17 @@ class TransportError(bs.Crash):
     """Conexiune/timeout epuizat: rezultatul cererii este necunoscut."""
 
 
+class ServerIncompatible(TransportError):
+    """Serverul răspunde, dar nu expune API-ul de asociere v1 (ex. HTTP 404 pe /api/v1/bootstrap/*): imagine Cloud veche/greșită sau URL incorect."""
+
+
+def normalize_pairing_code(code: Optional[str]) -> str:
+    """Codurile emise de interfața de administrare sunt grupate (XXXXX-XXXXX-...): se elimină spațiile/cratimele; formatele vechi rămân neschimbate."""
+    import cimitir_phone_pairing as pp
+    raw = (code or "").strip()
+    return pp.normalize_code(raw) or raw
+
+
 class RemoteControlPlane:
     def __init__(self, base_url: str, pairing_code: Optional[str] = None, timeout: float = 5.0, retries: int = 3, backoff: float = 0.2):
         self.base, self.pairing_code, self.key = base_url.rstrip("/"), pairing_code, None
@@ -43,7 +54,7 @@ class RemoteControlPlane:
             return f"Binding {key}"
         if not self.pairing_code:
             raise wire.Unauthenticated("lipsește codul de pairing")
-        return f"Pairing {self.pairing_code}"
+        return f"Pairing {normalize_pairing_code(self.pairing_code)}"
 
     def _call(self, op: str, args: list, kwargs: Optional[dict] = None, key: Optional[str] = None) -> Any:
         url = self.base + wire.API + wire.OPS[op][0]
@@ -67,6 +78,8 @@ class RemoteControlPlane:
             return wire.decode(body["result"])
         cls = wire.CODE_TO_CLASS.get(body.get("code"))
         if cls is None:
+            if r.status_code in (404, 405) and body.get("code") is None:
+                raise ServerIncompatible(f"{op}: serverul Cloud nu expune ruta de asociere ({r.status_code}). Verifică URL-ul și că serverul rulează imaginea cu API-ul /api/v1/bootstrap.")
             raise TransportError(f"{op}: eroare server {r.status_code} {body.get('code')}")
         raise cls(body.get("message", ""))
 
@@ -75,6 +88,26 @@ class RemoteControlPlane:
         if name == "publish_flow_b" and kwargs.get("hook"):
             kwargs["hook"]("publish:after_commit")  # `publish:in_txn` există doar local (în tranzacția serverului)
         return res
+
+    def health(self) -> Dict[str, Any]:
+        r = self._http.get(self.base + wire.API + "/health")
+        try:
+            return {"status": r.status_code, **(r.json() if r.headers.get("content-type", "").startswith("application/json") else {})}
+        except ValueError:
+            return {"status": r.status_code}
+
+    def server_info(self) -> Dict[str, Any]:
+        """GET /api/v1/bootstrap/info (public). ServerIncompatible dacă ruta lipsește."""
+        r = self._http.get(self.base + wire.API + "/bootstrap/info")
+        if r.status_code in (404, 405):
+            raise ServerIncompatible("serverul Cloud nu expune /api/v1/bootstrap/info (HTTP %d): versiune incompatibilă" % r.status_code)
+        try:
+            body = r.json()
+        except ValueError:
+            raise TransportError("răspuns ne-JSON de la server") from None
+        if not body.get("ok"):
+            raise TransportError(f"info: răspuns neașteptat ({r.status_code})")
+        return body
 
     def raw_post(self, path: str, headers: Optional[dict] = None, content: Any = None) -> httpx.Response:
         return self._http.post(self.base + path, headers=headers or {}, content=content)

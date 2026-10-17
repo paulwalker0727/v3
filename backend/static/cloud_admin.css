@@ -1,0 +1,19 @@
+:root{--bg:#0f1720;--card:#17212d;--line:#263445;--tx:#e6edf3;--mut:#8aa0b4;--acc:#3fb68b;--warn:#e0a030;--bad:#e5534b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+.top{display:flex;gap:16px;align-items:center;padding:12px 24px;border-bottom:1px solid var(--line);background:#0b121a}
+.brand{font-weight:700;letter-spacing:.5px;color:var(--acc)}.who{color:var(--mut);margin-left:auto}
+main{max-width:980px;margin:0 auto;padding:24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;margin-bottom:20px}
+h2{margin:0 0 12px;font-size:18px}h3{margin:0 0 8px;font-size:15px;color:var(--mut)}
+label{display:block;margin:10px 0 4px;color:var(--mut);font-size:13px}
+input,select{width:100%;padding:9px 10px;background:#0f1720;border:1px solid var(--line);border-radius:6px;color:var(--tx);font:inherit}
+button{padding:9px 16px;border:0;border-radius:6px;background:var(--acc);color:#04120c;font-weight:600;cursor:pointer;font:inherit;font-weight:600}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--tx)}button.danger{background:var(--bad);color:#fff}
+button:disabled{opacity:.5;cursor:not-allowed}
+.row{margin:12px 0;display:flex;gap:12px;flex-wrap:wrap;align-items:end}.row>*{flex:1;min-width:180px}.row>button{flex:0 0 auto}
+.code{font:700 28px/1.2 Consolas,monospace;letter-spacing:3px;padding:14px;background:#0b121a;border:1px dashed var(--acc);border-radius:8px;margin:12px 0;word-break:break-all}
+.muted{color:var(--mut)}.hidden{display:none}.err{color:var(--bad);margin-top:8px}.ok{color:var(--acc)}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}th{color:var(--mut);font-weight:500}
+.tag{padding:2px 8px;border-radius:10px;font-size:12px;background:#223244}.tag.active{background:#17493a}.tag.revoked,.tag.expired{background:#4a2a28}.tag.used{background:#2f3a4a}
+.toast{position:fixed;right:20px;bottom:20px;background:#0b121a;border:1px solid var(--acc);padding:10px 16px;border-radius:8px}

@@ -52,6 +52,8 @@ def connection() -> tuple:
     URL-ul: profilul Cloud activ, altfel cloud_url din registrul local. Cheia nu apare în loguri/excepții."""
     cfg = cs.get_config()
     url = (cfg["url"] or db.get_setting(SET_REG_URL) or "").strip().rstrip("/")
+    if (db.get_setting("cloud_assoc_unverified") or "") == "1":
+        return url, "", ""                  # asocierea nu a trecut verificarea completă: sincronizarea rămâne blocată
     key = _binding_key_from_registry()
     if key:
         return url, key, "registry"

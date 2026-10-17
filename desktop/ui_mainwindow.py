@@ -314,6 +314,11 @@ class CemeteryUI(QMainWindow):
         act_field_devices.setToolTip("Telefoane / Dispozitive teren: cod de pairing, telefoane asociate, revocare")
         act_field_devices.triggered.connect(self.open_field_devices_window)
         toolbar.addAction(act_field_devices)
+        act_cloud_assoc = QAction("🔗 Asociază cu Cloud", self)
+        act_cloud_assoc.setObjectName("act-cloud-associate")
+        act_cloud_assoc.setToolTip("Administrare → Cloud → Asociază acest calculator; coduri pentru MAIN/telefon; dispozitive asociate")
+        act_cloud_assoc.triggered.connect(self.open_cloud_associate_window)
+        toolbar.addAction(act_cloud_assoc)
         act_backup = QAction("💾 Copii de rezervă", self)
         act_backup.setObjectName("act-backup")
         act_backup.setToolTip("Copie zilnică automată a bazei și restaurare dintr-un clic")
@@ -747,6 +752,15 @@ class CemeteryUI(QMainWindow):
             dlg.exec()
         finally:
             self.refresh_field_badge()
+
+    def open_cloud_associate_window(self):
+        try:
+            from cloud_associate_window import CloudAssociateDialog
+            dlg = CloudAssociateDialog(self)
+        except Exception as e:
+            show_message(self, "Eroare", f"Nu am putut deschide asocierea Cloud: {type(e).__name__}", level="error")
+            return
+        dlg.exec()
 
     def open_field_devices_window(self):
         try:

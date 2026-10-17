@@ -22,6 +22,9 @@ import anyio
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
+import cimitir_cloud_admin as admin_mod
+import cimitir_cloud_admin_http as adminh
+import cimitir_cloud_http as cloud_http
 import cimitir_cloud_wire as wire
 import cimitir_field_inbox_http as fih
 import cimitir_phone_pairing_http as pph
@@ -41,6 +44,7 @@ _CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _STATIC = {"teren.js": "application/javascript", "teren_ui.js": "application/javascript", "teren.css": "text/css"}
 _MOBILE_STATIC = {"mobile_app.js": "application/javascript", "mobile_offline.js": "application/javascript", "mobile_app.css": "text/css", "mobile-icon-192.png": "image/png", "mobile-icon-512.png": "image/png"}
+_ADMIN_STATIC = {"cloud_admin.js": "application/javascript", "cloud_admin.css": "text/css"}
 _SKIP_DOCS = ("carte_identitate", "cerere_doc")
 _DB_TIMEOUT = 3
 
@@ -103,6 +107,9 @@ def create_app(service: Any = None, origins: Optional[list] = None, pairing: Any
     app = fih.create_app(service, origins, pairing)
     app.include_router(mih.create_router(mir.MobileRegistryService(service)))
     app.include_router(sv2h.create_router(sv2.SyncV2Service(service)))
+    app.include_router(cloud_http.create_router(service.cp))               # /api/v1/bootstrap/* (asociere MAIN), pe PostgreSQL
+    admin_service = admin_mod.AdminService(service.cp)
+    app.include_router(adminh.create_router(admin_service))                 # /api/v1/admin/* (sesiune administrativă)
     jenv = _template()
     sys.path.insert(0, str(BACKEND))
     import attachments
@@ -125,6 +132,21 @@ def create_app(service: Any = None, origins: Optional[list] = None, pairing: Any
         cfg = {"standalone": True, "cloud_url": _public_url(), "cemetery_uid": "", "cemetery_label": "", "loc": _page_loc(request.query_params)}
         html = jenv.get_template("phone_capture.html").render(cfg=cfg, doc_types=doc_types)
         return HTMLResponse(html, headers={**_NO_STORE, "Content-Security-Policy": _CSP, "X-Frame-Options": "DENY"})
+
+    @app.get("/admin", include_in_schema=False)
+    def admin_redirect():
+        return RedirectResponse("/admin/", status_code=307, headers=_NO_STORE)
+
+    @app.get("/admin/", include_in_schema=False)
+    def admin_page():
+        html = (BACKEND / "templates" / "cloud_admin.html").read_text(encoding="utf-8")
+        return HTMLResponse(html, headers={**_NO_STORE, "Content-Security-Policy": _CSP, "X-Frame-Options": "DENY"})
+
+    @app.get("/admin-assets/{name}", include_in_schema=False)
+    def admin_static(name: str):
+        if name not in _ADMIN_STATIC:
+            return Response(status_code=404)
+        return FileResponse(BACKEND / "static" / name, media_type=_ADMIN_STATIC[name], headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
     @app.get("/static/{name}", include_in_schema=False)
     def static_file(name: str):
@@ -186,6 +208,18 @@ def preflight(environ: Optional[Dict[str, str]] = None) -> list:
     return issues
 
 
+def schema_issues(db_url: str) -> list:
+    """Migrarea 023 (admin + revocare coduri) trebuie aplicată înainte de pornire; mesajele nu conțin gazde/credențiale."""
+    try:
+        import psycopg
+        with psycopg.connect(db_url, connect_timeout=_DB_TIMEOUT, autocommit=True) as c:
+            ok = c.execute("SELECT to_regprocedure('cp_admin_status()') IS NOT NULL").fetchone()[0]
+        return [] if ok else ["migrarea 023_cloud_admin_auth.sql nu este aplicată (rulează scripts/apply_cloud_admin_migration.py)"]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("schemă: verificarea migrării 023 nu a putut rula acum (%s); health va raporta baza de date", type(exc).__name__)
+        return []
+
+
 def main() -> int:
     import uvicorn
     logging.basicConfig(level=os.environ.get("CIMITIR_LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -194,6 +228,14 @@ def main() -> int:
         for i in issues:
             log.error("configurare: %s", i)
         return 2
+    schema = schema_issues(os.environ["CIMITIR_CP_DATABASE_URL"])
+    if schema:
+        for i in schema:
+            log.error("schemă: %s", i)
+        return 3
+    st = admin_mod.bootstrap_token_state()
+    if st not in ("ok", "missing"):
+        log.warning("BOOTSTRAP_TOKEN neutilizabil (%s): inițializarea primului administrator rămâne dezactivată", st)
     if not validate_trusted_proxies():
         log.warning("%s gol: X-Forwarded-For este ignorat; în spatele unui reverse proxy rate limiting-ul vede IP-ul proxy-ului", pph.ENV_TRUSTED)
     raw_cors = os.environ.get(fih.ENV_CORS, "")
