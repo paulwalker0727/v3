@@ -108,7 +108,8 @@ def create_app(service: Any = None, origins: Optional[list] = None, pairing: Any
     app = fih.create_app(service, origins, pairing)
     app.include_router(mih.create_router(mir.MobileRegistryService(service)))
     sync_service = sv2.SyncV2Service(service)
-    app.include_router(sv2h.create_router(sync_service, sdocs.DocumentService(sync_service, service.media.storage)))
+    media = getattr(service, "media", None)
+    app.include_router(sv2h.create_router(sync_service, sdocs.DocumentService(sync_service, media.storage) if media is not None else None))
     app.include_router(cloud_http.create_router(service.cp))               # /api/v1/bootstrap/* (asociere MAIN), pe PostgreSQL
     admin_service = admin_mod.AdminService(service.cp)
     app.include_router(adminh.create_router(admin_service))                 # /api/v1/admin/* (sesiune administrativă)

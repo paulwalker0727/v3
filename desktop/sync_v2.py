@@ -20,6 +20,7 @@ import database as db
 
 API = "/api/v1/sync-v2"
 SET_LAST_REPORT = "sync_v2_last_report"
+SET_RUNNING = "sync_v2_running"
 SET_SCOPE = "sync_v2_scope"
 BINDING_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{32,}$")
 _ERR = {401: "Cheia de legătură MAIN este invalidă sau revocată.", 403: "Operația nu este permisă pentru acest dispozitiv.",
@@ -114,10 +115,21 @@ def _reset_cursors_if_scope_changed() -> None:
     url, key, _src = connection()
     parts = key.split(".")
     scope = f"{url}|{parts[1] if len(parts) == 3 else ''}"
-    if (db.get_setting(SET_SCOPE) or "") != scope:
+    old = db.get_setting(SET_SCOPE) or ""
+    if old != scope:
         import entity_sync
         for e in ents.ORDER:
             db.set_setting(entity_sync.CURSOR_PREFIX + e, "0")
+        db.set_setting("sync_v2_docs_cursor", "0")
+        if old and old.split("|")[-1] != scope.split("|")[-1]:       # alt CIMITIR (nu doar altă adresă): documentele trebuie retrimise acolo; rândurile locale rămân
+            conn = db.get_connection()
+            try:
+                conn.execute("DELETE FROM sync_v2_docs_state")
+                conn.commit()
+            except Exception:  # noqa: BLE001  (tabel încă inexistent)
+                pass
+            finally:
+                conn.close()
         db.set_setting(SET_SCOPE, scope)
 
 
@@ -160,6 +172,7 @@ def run() -> Dict[str, Any]:
         if not is_binding():
             report["lines"].append("Sincronizarea nu este configurată (profil Cloud cu cheie MAIN).")
             return report
+        db.set_setting(SET_RUNNING, "1")
         db.set_setting(entity_sync.SET_ENABLED, "1")
         entity_sync.set_capable(True)          # Sync v2 este singurul transport în acest mod (nu depinde de „ping" legacy)
         entity_sync.ensure_tracking()
@@ -204,6 +217,7 @@ def run() -> Dict[str, Any]:
         report["lines"].append(f"Refuzat de server: {exc.detail}")
     except Exception as exc:  # noqa: BLE001
         report["lines"].append(f"Eroare neașteptată: {type(exc).__name__}")
+    db.set_setting(SET_RUNNING, "0")
     report["pending"] = len(entity_sync.pending_entity_ops(("pending", "conflict", "error")))
     report["finished"] = datetime.now().isoformat(timespec="seconds")
     db.set_setting(SET_LAST_REPORT, json.dumps({k: v for k, v in report.items() if k != "lines"}))

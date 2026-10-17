@@ -139,3 +139,27 @@ def test_connection(prof: cp.Profile, store: Any = None, http: Any = None):
     if ok and not paired:
         lines.append("MAIN nu este încă asociat cu Cloud-ul: folosește „Asociază acest calculator”.")
     return ok, "\n".join(lines)
+
+
+IND_NONE, IND_SYNCING, IND_CONNECTED, IND_OFFLINE, IND_ERROR = "none", "syncing", "connected", "offline", "error"
+_IND_TEXT = {IND_NONE: "Cloud neconfigurat", IND_SYNCING: "Sincronizare în curs…", IND_CONNECTED: "Conectat · sincronizat",
+             IND_OFFLINE: "Offline · modificările rămân pe acest calculator și se trimit la reconectare", IND_ERROR: "Eroare de sincronizare"}
+
+
+def sync_indicator() -> Dict[str, str]:
+    """Indicator unic pentru bara MAIN: neconfigurat / sincronizare în curs / conectat / offline / eroare (fără cereri de rețea; citește starea locală)."""
+    import database as db
+    import sync_v2
+    if not sync_v2.is_binding():
+        return {"state": IND_NONE, "text": _IND_TEXT[IND_NONE], "detail": ""}
+    rep = sync_v2.last_report()
+    if (db.get_setting(sync_v2.SET_RUNNING) or "") == "1":
+        state = IND_SYNCING
+    elif rep.get("state") == "offline" or (db.get_setting("cloud_online") or "") == "0":
+        state = IND_OFFLINE
+    elif rep.get("state") in ("error", "partial", "conflict") or not rep.get("ok", True):
+        state = IND_ERROR
+    else:
+        state = IND_CONNECTED
+    detail = (db.get_setting("cloud_sync_last_error") or "")[:200] if state == IND_ERROR else ""
+    return {"state": state, "text": _IND_TEXT[state], "detail": detail}

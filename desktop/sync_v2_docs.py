@@ -251,7 +251,11 @@ def sync_documents() -> Dict[str, Any]:
     except cs.RetryLater as exc:
         out["lines"].append(f"Documente: offline ({exc}); se reiau la reconectare.")
     except cs.Rejected as exc:
-        out["lines"].append(f"Documente: refuzat de server ({exc.detail}).")
+        if exc.status == 404:      # server Cloud mai vechi, fără modulul de documente: registrele se sincronizează normal
+            out["ok"] = True
+            out["lines"].append("Documente: serverul Cloud nu are încă modulul de documente (actualizează Cloud-ul).")
+        else:
+            out["lines"].append(f"Documente: refuzat de server ({exc.detail}).")
     except Exception as exc:  # noqa: BLE001
         out["lines"].append(f"Documente: eroare neașteptată ({type(exc).__name__}).")
     return out

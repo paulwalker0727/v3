@@ -111,7 +111,7 @@ def create_router(admin: ad.AdminService) -> APIRouter:
     def issue(b, c):
         res = admin.issue_code(c["identity"], b.get("organization_uid"), b.get("cemetery_uid"), b.get("kind"), b.get("ttl"))
         if res.get("kind") == "phone":
-            base = (os.environ.get("CIMITIR_PUBLIC_URL") or "").strip().rstrip("/") or str(c["request"].base_url).rstrip("/")
+            base = pph.public_base_url(c["request"])
             link = qr.pair_url(base, res["code"])
             if link:
                 res["pair_url"], res["qr"] = link, qr.svg_data_uri(link)

@@ -110,6 +110,27 @@ def client_source(request: Request) -> str:
     return resolve_client_ip(peer, request.headers.getlist("x-forwarded-for"), trusted_proxies())
 
 
+_HOST_RE = __import__("re").compile(r"^[A-Za-z0-9.-]{1,253}(:\d{1,5})?$")
+
+
+def public_base_url(request: Request) -> str:
+    """Adresa publică pentru QR/linkuri: 1) CIMITIR_PUBLIC_URL; 2) X-Forwarded-Proto/Host DOAR de la un proxy declarat în CIMITIR_PAIRING_TRUSTED_PROXIES (Cloudflare/nginx/Caddy);
+    3) adresa cererii. Anteturile de la clienți nedeclarați sunt ignorate (nu se poate falsifica linkul din QR)."""
+    from urllib.parse import urlparse
+    u = (os.environ.get("CIMITIR_PUBLIC_URL") or "").strip().rstrip("/")
+    p = urlparse(u)
+    if p.scheme in ("http", "https") and p.hostname and not p.username:
+        return u
+    peer = _ip(request.client.host if request.client else "")
+    trusted = trusted_proxies()
+    if peer is not None and trusted and any(peer in n for n in trusted):
+        host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+        proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+        if host and _HOST_RE.match(host) and proto in ("http", "https"):
+            return f"{proto}://{host}"
+    return str(request.base_url).rstrip("/")
+
+
 def create_router(service: pp.PhonePairingService) -> APIRouter:
     router = APIRouter(prefix=PREFIX)
 
