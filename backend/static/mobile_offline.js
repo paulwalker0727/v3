@@ -4,8 +4,8 @@ const ENTITIES = ['locuri_de_veci', 'concesionari', 'contracte', 'inhumati', 'pl
 
 export function dbOpen() {
   return new Promise((resolve, reject) => {
-    const r = indexedDB.open(DB, 2);
-    r.onupgradeneeded = () => { for (const s of ['kv', 'rows']) if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s); };
+    const r = indexedDB.open(DB, 3);
+    r.onupgradeneeded = () => { for (const s of ['kv', 'rows', 'photos']) if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s); };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
   });

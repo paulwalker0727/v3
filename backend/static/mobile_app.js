@@ -1,4 +1,5 @@
 import {dbOpen,kvGet,kvSet,kvDel,mirrorSync,mirrorClear,mirrorAt,offlineGrave,offlineMap,offlineSearch,offlineList} from './mobile_offline.js';
+import {enqueue,flush as flushPhotos,queueList,queueCounts,retryErrors,dropPhoto} from './mobile_photos.js';
 const API = '/api/v1';
 const app = document.getElementById('mobile-app');
 let state = { key: null, bootstrap: null, summary: null, dataStatus: null, view: 'dashboard', map: null, selected: null };
@@ -19,11 +20,11 @@ async function api(path, options={}){
 function toast(msg){document.querySelector('.toast')?.remove();const n=document.createElement('div');n.className='toast';n.textContent=msg;document.body.appendChild(n);setTimeout(()=>n.remove(),3200);}
 
 function pairingView(message='',autoCode=''){
-  app.innerHTML=`<div class="auth-wrap"><section class="auth-card"><div class="brand-mark">✦</div><h1>Cimitir Mobile</h1><p>Asociază acest dispozitiv o singură dată. Codul se generează din MAIN → <b>Cloud / Telefoane</b>.</p><form id="pair-form"><div class="field"><label>Cod pairing</label><input id="pair-code" class="pair-code" maxlength="28" autocomplete="one-time-code" inputmode="text" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" required></div><div class="field"><label>Numele dispozitivului</label><input id="device-name" maxlength="64" value="${/Android/i.test(navigator.userAgent)?'Telefon / tabletă Android':'Dispozitiv mobil'}"></div><button class="primary" id="pair-submit">Asociază dispozitivul</button>${'BarcodeDetector' in window?'<button type="button" class="secondary" id="pair-scan" data-testid="pair-scan">Scanează codul QR</button><video id="pair-video" class="pair-video" playsinline muted hidden></video>':''}<div class="error" id="pair-error">${esc(message)}</div></form><p class="micro">Cheia tehnică este păstrată local și nu este afișată în interfața normală.</p></section></div>`;
+  app.innerHTML=`<div class="auth-wrap"><section class="auth-card"><div class="brand-mark">✦</div><h1>Cimitir Mobile</h1><p>Asociază acest dispozitiv o singură dată. Codul se generează din MAIN → <b>Cloud / Telefoane</b>.</p><form id="pair-form"><div class="field"><label>Cod pairing</label><input id="pair-code" class="pair-code" maxlength="28" autocomplete="one-time-code" inputmode="text" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" required></div><div class="field"><label>Numele dispozitivului</label><input id="device-name" maxlength="64" value="${/Android/i.test(navigator.userAgent)?'Telefon / tabletă Android':'Dispozitiv mobil'}"></div><button class="primary" id="pair-submit">Asociază dispozitivul</button><button type="button" class="secondary" id="pair-scan" data-testid="pair-scan">Scanează codul QR</button><video id="pair-video" class="pair-video" playsinline muted hidden></video><div class="error" id="pair-error">${esc(message)}</div></form><p class="micro">Cheia tehnică este păstrată local și nu este afișată în interfața normală.</p></section></div>`;
   const form=document.getElementById('pair-form');
   const inp=document.getElementById('pair-code');
   inp.addEventListener('input',()=>{let s=inp.value.toUpperCase().replace(/[^A-Z2-9]/g,'').slice(0,20);inp.value=s.match(/.{1,5}/g)?.join('-')||s;});
-  form.addEventListener('submit',async(e)=>{e.preventDefault();const b=document.getElementById('pair-submit');const er=document.getElementById('pair-error');b.disabled=true;er.textContent='';try{await pairWith(inp.value,document.getElementById('device-name').value);}catch(x){if(state.prevKey){state.key=state.prevKey;state.prevKey=null;toast('Codul din QR nu mai este valid; dispozitivul rămâne asociat ca înainte.');await loadApp();return;}er.textContent=x.status===429?'Prea multe încercări. Așteaptă puțin și încearcă din nou.':'Cod invalid, expirat sau deja folosit.';}finally{b.disabled=false;}});
+  form.addEventListener('submit',async(e)=>{e.preventDefault();const b=document.getElementById('pair-submit');const er=document.getElementById('pair-error');b.disabled=true;er.textContent='';try{await pairWith(inp.value,document.getElementById('device-name').value);}catch(x){if(state.prevKey){state.key=state.prevKey;state.prevKey=null;toast('Codul din QR nu mai este valid; dispozitivul rămâne asociat ca înainte.');await loadApp();return;}er.textContent=x.status===429?'Prea multe încercări. Așteaptă puțin și încearcă din nou.':!x.status?'Fără conexiune la server. Verifică internetul și adresa Cloud, apoi reîncearcă.':'Codul este invalid, a expirat, a fost revocat sau a fost deja folosit. Generează un cod nou din MAIN.';}finally{b.disabled=false;}});
   document.getElementById('pair-scan')?.addEventListener('click',()=>scanPairQr(inp,form));
   if(autoCode){inp.value=autoCode;inp.dispatchEvent(new Event('input'));form.requestSubmit();}
 }
@@ -34,13 +35,18 @@ async function pairWith(code,deviceName){
 }
 function pairCodeFromText(t){const m=/(?:[#&?]|^)pair=([A-Za-z0-9-]{10,40})/.exec(String(t||''));return m?m[1]:'';}
 function takePairCodeFromUrl(){const c=pairCodeFromText(location.hash);if(c)history.replaceState(null,'',location.pathname+location.search);return c;}
+async function loadJsQr(){if(window.jsQR)return window.jsQR;await new Promise((res,rej)=>{const sc=document.createElement('script');sc.src='/mobile-assets/jsQR.js';sc.onload=res;sc.onerror=rej;document.head.appendChild(sc);});return window.jsQR;}
 async function scanPairQr(inp,form){
   const video=document.getElementById('pair-video');let stream;
-  try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});}catch(_e){toast('Camera nu este disponibilă. Introdu codul manual.');return;}
+  try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});}catch(_e){toast('Camera nu este disponibilă sau accesul a fost refuzat. Introdu codul manual sau scanează QR-ul cu camera telefonului.');return;}
   video.srcObject=stream;video.hidden=false;await video.play().catch(()=>{});
-  const det=new BarcodeDetector({formats:['qr_code']});let live=true;
-  const stop=()=>{live=false;stream.getTracks().forEach(t=>t.stop());video.hidden=true;};
-  const tick=async()=>{if(!live)return;try{const r=await det.detect(video);const code=r.map(x=>pairCodeFromText(x.rawValue)).find(Boolean);if(code){stop();inp.value=code;inp.dispatchEvent(new Event('input'));form.requestSubmit();return;}}catch(_e){}setTimeout(tick,300);};
+  let detect;
+  if('BarcodeDetector' in window){const det=new BarcodeDetector({formats:['qr_code']});detect=async()=>(await det.detect(video)).map(x=>x.rawValue);}
+  else{const jq=await loadJsQr().catch(()=>null);if(!jq){stream.getTracks().forEach(t=>t.stop());video.hidden=true;toast('Scanarea QR nu este disponibilă pe acest browser. Folosește camera nativă a telefonului.');return;}
+    const cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true});
+    detect=async()=>{if(!video.videoWidth)return[];cv.width=video.videoWidth;cv.height=video.videoHeight;cx.drawImage(video,0,0);const im=cx.getImageData(0,0,cv.width,cv.height);const r=jq(im.data,im.width,im.height);return r?[r.data]:[];};}
+  let live=true;const stop=()=>{live=false;stream.getTracks().forEach(t=>t.stop());video.hidden=true;};
+  const tick=async()=>{if(!live)return;try{const code=(await detect()).map(pairCodeFromText).find(Boolean);if(code){stop();inp.value=code;inp.dispatchEvent(new Event('input'));form.requestSubmit();return;}}catch(_e){}setTimeout(tick,250);};
   setTimeout(stop,60000);tick();
 }
 function getClientId(){let id=localStorage.getItem('cimitir_mobile_client');if(!id){id=(crypto.randomUUID?.()||`${Date.now()}-${Math.random()}`).replace(/[^A-Za-z0-9._:-]/g,'');localStorage.setItem('cimitir_mobile_client',id);}return id;}
@@ -50,7 +56,7 @@ function shell(){
   app.innerHTML=`<div class="shell"><aside class="sidebar"><div class="side-brand"><div class="brand-mark">✦</div><div><div class="side-title">Cimitir Mobile</div><div class="side-sub">${esc(cem)}</div></div></div><nav class="nav">${navBtn('dashboard','⌂','Acasă')}${navBtn('map','⌖','Hartă')}${navBtn('search','⌕','Căutare')}${navBtn('locuri','▦','Locuri')}${navBtn('inhumati','✦','Înhumați')}${navBtn('contracte','▤','Contracte')}${navBtn('plati','▣','Plăți')}${navBtn('documente','❏','Documente')}</nav><div class="side-foot"><div><span class="online-dot"></span>Cloud conectat</div><button class="logout-link" id="unpair">Dezasociază acest dispozitiv</button></div></aside><div class="main"><header class="topbar"><div><div class="top-title">${esc(cem)}</div></div><div class="top-meta"><span class="net-pill" id="net-pill"></span><button class="sync-btn" id="sync-btn" data-testid="sync-button"></button><span class="device-chip">${esc(dev)}</span></div></header><main class="content" id="view"></main></div></div><nav class="bottom-nav">${bottomBtn('dashboard','⌂','Acasă')}${bottomBtn('map','⌖','Hartă')}${bottomBtn('search','⌕','Caută')}${bottomBtn('modules','▦','Registre')}</nav><div class="sheet-backdrop" id="sheet"><div class="sheet" id="sheet-body"></div></div>`;
   document.querySelectorAll('[data-view]').forEach((b)=>b.addEventListener('click',()=>navigate(b.dataset.view)));
   document.getElementById('sync-btn')?.addEventListener('click',openSyncPanel);renderSyncBtn();renderNet();
-  document.getElementById('unpair')?.addEventListener('click',async()=>{if(confirm('Dezasociezi acest dispozitiv? Va fi necesar un cod nou pentru reconectare.')){await kvDel('binding_key');await mirrorClear();state.key=null;pairingView();}});
+  document.getElementById('unpair')?.addEventListener('click',async()=>{const np=(await queueCounts().catch(()=>({total:0}))).total;if(confirm(np?`Atenție: ${np} fotografii nu au fost încă trimise și se vor pierde. Dezasociezi acest dispozitiv?`:'Dezasociezi acest dispozitiv? Va fi necesar un cod nou pentru reconectare.')){await kvDel('binding_key');await mirrorClear();await clearLocalPhotos();state.key=null;pairingView();}});
 }
 function navBtn(v,i,l){return `<button data-view="${v}" class="${state.view===v?'active':''}"><span class="ico">${i}</span>${l}</button>`}
 function bottomBtn(v,i,l){return `<button data-view="${v}" class="${state.view===v?'active':''}"><span class="ico">${i}</span><span>${l}</span></button>`}
@@ -119,7 +125,7 @@ const newId=()=>((crypto.randomUUID?.()||`${Date.now().toString(16)}${Math.rando
 async function outbox(){return (await kvGet('outbox').catch(()=>null))||[];}
 async function saveOutbox(o){await kvSet('outbox',o);renderSyncBtn();}
 async function loadSyncInfo(){try{state.syncInfo=await api(`${API}/sync-v2/status`);await kvSet('sync_info',state.syncInfo);}catch(e){if(e.status===401)throw e;state.syncInfo=state.syncInfo||await kvGet('sync_info').catch(()=>null);}state.lastSync=state.lastSync||await kvGet('last_sync').catch(()=>null);}
-async function renderSyncBtn(){const b=document.getElementById('sync-btn');if(!b)return;const ob=await outbox();const pending=ob.filter(o=>o.state==='pending').length,bad=ob.filter(o=>o.state==='conflict'||o.state==='error').length;const ls=state.lastSync||{};b.dataset.state=state.syncing?'busy':bad?'bad':ls.offline?'offline':pending?'pending':'ok';b.textContent=state.syncing?'Se sincronizează…':bad?`Sincronizează · ${bad} de rezolvat`:pending?`Sincronizează · ${pending} în coadă`:ls.offline?'Offline · reîncearcă':'Sincronizează';b.disabled=!!state.syncing;}
+async function renderSyncBtn(){const b=document.getElementById('sync-btn');if(!b)return;const ob=await outbox();const pending=ob.filter(o=>o.state==='pending').length,bad=ob.filter(o=>o.state==='conflict'||o.state==='error').length;const ls=state.lastSync||{};const ph=await queueCounts().catch(()=>({pending:0,error:0}));const pendingAll=pending+ph.pending,badAll=bad+ph.error;b.dataset.state=state.syncing?'busy':badAll?'bad':ls.offline?'offline':pendingAll?'pending':'ok';b.textContent=state.syncing?'Se sincronizează…':badAll?`Sincronizează · ${badAll} de rezolvat`:pendingAll?`Sincronizează · ${pendingAll} în coadă${ph.pending?` (${ph.pending} foto)`:''}`:ls.offline?'Offline · reîncearcă':'Sincronizează';b.disabled=!!state.syncing;}
 async function syncNow(){
   if(state.syncing)return;state.syncing=true;renderSyncBtn();
   const res={at:Date.now(),applied:0,conflicts:0,errors:0,retry:0,offline:false,error:''};
@@ -136,6 +142,7 @@ async function syncNow(){
         else{o.state='error';o.reason=x.reason;res.errors++;}}
       await saveOutbox(ob);
     }
+    const ph=await flushPhotos(api,API);res.photos=ph.sent;res.errors+=ph.errors;if(ph.offline){res.offline=true;res.error='Fără conexiune la internet. Fotografiile rămân în coadă.';}
     state.summary=await api(`${API}/mobile/summary`);state.dataStatus=await api(`${API}/mobile/data-status`).catch(()=>null);state.map=null;
     await loadSyncInfo();await kvSet('summary_cache',state.summary);await refreshMirror();
   }catch(e){
@@ -244,7 +251,7 @@ async function openGrave(uid){
   document.getElementById('sheet-x').onclick=()=>back.classList.remove('show');
   body.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openRecordForm(b.dataset.edit,b.dataset.uid||g.uid));
   body.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>openRecordForm(b.dataset.add,null));
-  if(!offline){const sb=body.querySelector('.sheet-body');if(sb){const pb=document.createElement('button');pb.className='edit-btn';pb.setAttribute('data-testid','add-grave-photo');pb.textContent='Adaugă fotografie';pb.onclick=()=>uploadGravePhoto(g);sb.appendChild(pb);}}
+  const sb=body.querySelector('.sheet-body');if(sb){sb.appendChild(docsSection(g,d));}
 }
 
 const LISTS={locuri:['Locuri de veci','Toate locurile, cu filtru după cod, sector sau stare.'],inhumati:['Înhumați','Persoane înhumate, cu filtru după nume sau loc.'],contracte:['Contracte','Contracte și concesionari.'],plati:['Plăți','Plăți și taxe înregistrate.']};
@@ -255,35 +262,48 @@ async function renderList(v,kind){
   if(!(await mirrorAt()))await refreshMirror();
   draw();
 }
-const FI='/api/v1/field-inbox';
-const DOC_LABELS={DOCUMENT:'Document',GRAVE_PHOTO:'Fotografie loc',WORK_PHOTO:'Fotografie lucrare'};
-const DOC_STATUS={PENDING:'În așteptare',ACCEPTED:'Acceptat',REJECTED:'Respins',IMPORTED:'Importat în MAIN'};
+const DOC_TYPE_LABEL={fotografie_loc:'Fotografie loc',contract_concesiune:'Contract',chitanta:'Chitanță',alt_document:'Document',aviz_constructie:'Aviz'};
+const canUpload=()=>(state.syncInfo?.capabilities||[]).includes('upload_documents');
+async function clearLocalPhotos(){try{for(const it of await queueList())await dropPhoto(it.id);}catch(_e){}try{await caches.delete('cimitir-mobile-docs');}catch(_e){}}
+async function listCloudDocs(){const out=[];let since=0;for(let i=0;i<10;i++){const r=await api(`${API}/sync-v2/documents?since=${since}&limit=500`);out.push(...r.documents.filter(x=>!x.deleted));since=r.cursor;if(!r.more)break;}return out;}
+async function docBlobUrl(doc){
+  const key=`/__doc/${doc.sha256}`;let cache=null;try{cache=await caches.open('cimitir-mobile-docs');}catch(_e){}
+  let res=cache?await cache.match(key):null;
+  if(!res){const r=await fetch(`${API}/sync-v2/documents/${encodeURIComponent(doc.uid)}/file`,{headers:{Authorization:`Binding ${state.key}`},cache:'no-store'});if(!r.ok){const e=new Error('Documentul nu poate fi deschis acum.');e.status=r.status;throw e;}
+    const blob=await r.blob();if(cache)await cache.put(key,new Response(blob.slice(0),{headers:{'Content-Type':doc.mime}}));return URL.createObjectURL(blob);}
+  return URL.createObjectURL(await res.blob());
+}
+async function openDoc(doc){try{const u=await docBlobUrl(doc);if(doc.mime==='application/pdf'){window.open(u,'_blank','noopener');return;}
+  const back=document.createElement('div');back.className='photo-viewer';back.setAttribute('data-testid','photo-viewer');back.innerHTML=`<img alt="${esc(doc.filename)}" src="${u}"><button type="button">Închide</button>`;back.onclick=()=>{back.remove();URL.revokeObjectURL(u);};document.body.appendChild(back);}
+  catch(e){toast(e.status?e.message:'Documentul nu a fost încă memorat pe acest telefon; deschide-l o dată cu internet.');}}
+async function pickPhoto(entity_uid,caption,capture){
+  return new Promise((resolve)=>{const inp=document.createElement('input');inp.type='file';inp.accept='image/jpeg,image/png,application/pdf';if(capture)inp.setAttribute('capture','environment');
+    inp.onchange=async()=>{const f=inp.files&&inp.files[0];if(!f){resolve(null);return;}const r=await enqueue(f,{entity_uid,caption}).catch(()=>({ok:false,error:'Fișierul nu a putut fi salvat pe telefon.'}));
+      toast(!r.ok?r.error:r.duplicate?'Această fotografie este deja în coadă.':navigator.onLine?'Fotografie salvată; se trimite…':'Fotografie salvată pe telefon; se trimite când revine internetul.');
+      renderSyncBtn();if(r.ok&&navigator.onLine)syncNow();resolve(r);};inp.click();});
+}
+function docsSection(g,d){
+  const sec=document.createElement('section');sec.className='detail-card';sec.setAttribute('data-testid','grave-documents');
+  const kids=new Set([g.uid,...(d.contracts||[]).map(x=>x.uid),...(d.burials||[]).map(x=>x.uid),...(d.payments||[]).map(x=>x.uid),...(d.permits||[]).map(x=>x.uid)]);
+  const draw=async()=>{
+    const q=(await queueList().catch(()=>[])).filter(x=>x.entity_uid===g.uid);let cloud=[],offline=false;
+    try{cloud=(await listCloudDocs()).filter(x=>kids.has(x.entity_uid));}catch(_e){offline=true;}
+    sec.innerHTML=`<h3>Documente și fotografii · ${cloud.length+q.length}</h3>${q.map(x=>`<div class="kv" data-testid="photo-unsynced"><div><b>${esc(x.filename)}</b><div class="micro">${x.state==='error'?esc(x.error||'Eroare'):'Nesincronizată · se trimite când există internet'}</div></div><span class="pill warn">${x.state==='error'?'Eroare':'În coadă'}</span></div>`).join('')}${cloud.map((x,i)=>`<button class="result" data-di="${i}" data-testid="grave-doc-row"><div><b>${esc(DOC_TYPE_LABEL[x.doc_type]||x.doc_type||'Document')}</b><small>${esc(x.filename)}</small></div><span class="pill">${x.origin==='MOBILE'?'Telefon':'MAIN'}</span></button>`).join('')}${!cloud.length&&!q.length?`<div class="micro">${offline?'Documentele se pot vedea doar cu conexiune la Cloud.':'Niciun document sau fotografie.'}</div>`:''}${canUpload()?'<div class="btn-row"><button class="edit-btn" data-testid="add-grave-photo">Fotografiază</button><button class="edit-btn" data-testid="add-grave-gallery">Alege din galerie</button></div>':''}`;
+    sec.querySelectorAll('[data-di]').forEach(b=>b.onclick=()=>openDoc(cloud[+b.dataset.di]));
+    sec.querySelector('[data-testid=add-grave-photo]')?.addEventListener('click',async()=>{await pickPhoto(g.uid,g.cod_loc||'',true);draw();});
+    sec.querySelector('[data-testid=add-grave-gallery]')?.addEventListener('click',async()=>{await pickPhoto(g.uid,g.cod_loc||'',false);draw();});
+  };
+  draw();return sec;
+}
 async function renderDocs(v){
-  v.innerHTML=`<div class="page-head"><div><h1>Documente</h1><p>Fotografiile și documentele trimise de acest telefon către MAIN. Adaugă o fotografie din fișa unui loc.</p></div></div><div id="docs-box" class="result-list" data-testid="docs-list"><div class="empty">Se încarcă…</div></div>`;
-  const box=document.getElementById('docs-box');
-  try{
-    const lists=await Promise.all(['DOCUMENT','GRAVE_PHOTO','WORK_PHOTO'].map(t=>api(`${FI}/items?item_type=${t}&limit=100`)));
-    const items=lists.flat().sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
-    box.innerHTML=items.length?items.map((x,i)=>`<button class="result" data-i="${i}" data-testid="doc-row" ${['PENDING','ACCEPTED'].includes(x.status)?'':'disabled'}><div><b>${esc(DOC_LABELS[x.item_type]||x.item_type)}</b><small>${esc(x.payload?.caption||x.payload?.doc_type||'')} · ${esc(String(x.created_at||'').slice(0,10))}</small></div><span class="pill">${esc(DOC_STATUS[x.status]||x.status)}</span></button>`).join(''):'<div class="empty">Nicio fotografie sau document trimis încă.</div>';
-    box.querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>openDocFile(items[+b.dataset.i]));
-  }catch(e){box.innerHTML='<div class="empty">Documentele se pot vedea doar cu conexiune la Cloud.</div>';}
+  v.innerHTML='<div class="page-head"><div><h1>Documente</h1><p>Documentele și fotografiile cimitirului (din MAIN și de pe telefoane). Fotografiile făcute fără internet se trimit automat la reconectare.</p></div></div><div id="docs-box" class="result-list" data-testid="docs-list"><div class="empty">Se încarcă…</div></div>';
+  const box=document.getElementById('docs-box');const q=await queueList().catch(()=>[]);let cloud=[],offline=false;
+  try{cloud=await listCloudDocs();}catch(_e){offline=true;}
+  cloud.sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+  const pend=q.map(x=>`<div class="result" data-testid="doc-unsynced"><div><b>${esc(x.filename)}</b><small>${x.state==='error'?esc(x.error||'Eroare'):'Nesincronizată'} · ${esc(new Date(x.created).toLocaleString('ro-RO'))}</small></div><span class="pill warn">${x.state==='error'?'Eroare':'În coadă'}</span></div>`).join('');
+  box.innerHTML=pend+(cloud.length?cloud.map((x,i)=>`<button class="result" data-i="${i}" data-testid="doc-row"><div><b>${esc(DOC_TYPE_LABEL[x.doc_type]||x.doc_type||'Document')}</b><small>${esc(x.filename)} · ${esc(String(x.created_at||'').slice(0,10))}</small></div><span class="pill">${x.origin==='MOBILE'?'Telefon':'MAIN'}</span></button>`).join(''):(q.length?'':`<div class="empty">${offline?'Documentele se pot vedea doar cu conexiune la Cloud.':'Niciun document sau fotografie încă.'}</div>`));
+  box.querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>openDoc(cloud[+b.dataset.i]));
+  if(q.some(x=>x.state==='error')){const rb=document.createElement('button');rb.className='secondary';rb.textContent='Reîncearcă fotografiile cu eroare';rb.onclick=async()=>{await retryErrors();syncNow();};box.prepend(rb);}
 }
-async function openDocFile(item){
-  try{const d=await api(`${FI}/items/${encodeURIComponent(item.uid)}`);const f=(d.files||[]).find(x=>x.status==='READY')||(d.files||[])[0];if(!f){toast('Fișierul nu este disponibil.');return;}
-    const u=await api(`${FI}/items/${encodeURIComponent(item.uid)}/files/${encodeURIComponent(f.uid)}/url?ttl=60`);window.open(u.url,'_blank','noopener');}
-  catch(_e){toast('Fișierul nu poate fi deschis acum.');}
-}
-async function uploadGravePhoto(grave){
-  const inp=document.createElement('input');inp.type='file';inp.accept='image/jpeg,image/png';inp.setAttribute('capture','environment');
-  inp.onchange=async()=>{const f=inp.files&&inp.files[0];if(!f)return;
-    if(!['image/jpeg','image/png'].includes(f.type)){toast('Sunt acceptate doar fotografii JPEG sau PNG.');return;}
-    if(!navigator.onLine){toast('Încărcarea fotografiilor necesită conexiune la Cloud.');return;}
-    try{const idem=(crypto.randomUUID?.()||`${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9._:-]/g,'')+'-photo';
-      const it=await api(`${FI}/items`,{method:'POST',body:JSON.stringify({idempotency_key:idem.padEnd(16,'0'),item_type:'GRAVE_PHOTO',payload:{caption:grave.cod_loc||''},grave_uid:grave.uid})});
-      const fuid=crypto.randomUUID();const buf=await f.arrayBuffer();
-      await api(`${FI}/items/${encodeURIComponent(it.item?.uid||it.uid)}/files`,{method:'POST',body:buf,headers:{'Content-Type':f.type,'X-File-Uid':fuid,'X-File-Name':(f.name||'foto.jpg').replace(/[^\w.\- ]/g,'_').slice(0,100)}});
-      toast('Fotografia a fost trimisă către MAIN.');
-    }catch(_e){toast('Fotografia nu a putut fi trimisă. Reîncearcă cu conexiune.');}
-  };inp.click();
-}
+setInterval(()=>{if(state.key&&navigator.onLine!==false&&!state.syncing)queueCounts().then(c=>{if(c.pending)syncNow();}).catch(()=>{});},45000);
 function renderModules(v){const rows=[['locuri','▦','Locuri','Listă și filtre'],['inhumati','✦','Înhumați','Persoane înhumate'],['contracte','▤','Contracte','Contracte și concesionari'],['plati','▣','Plăți','Taxe și plăți'],['documente','❏','Documente','Fotografii și acte'],['sync','⇅','Sincronizare','Stare, coadă, conflicte']];v.innerHTML=`<div class="page-head"><div><h1>Registre</h1><p>Toate registrele funcționează și offline, din copia locală autorizată.</p></div></div><div class="module-grid">${rows.map(r=>`<button class="module-card" data-go="${r[0]}" data-testid="module-${r[0]}"><span class="ico">${r[1]}</span><strong>${r[2]}</strong><small>${r[3]}</small></button>`).join('')}</div>`;v.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>b.dataset.go==='sync'?openSyncPanel():navigate(b.dataset.go));}

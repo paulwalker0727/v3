@@ -44,7 +44,7 @@ _CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _STATIC = {"teren.js": "application/javascript", "teren_ui.js": "application/javascript", "teren.css": "text/css"}
-_MOBILE_STATIC = {"mobile_app.js": "application/javascript", "mobile_offline.js": "application/javascript", "mobile_app.css": "text/css", "mobile-icon-192.png": "image/png", "mobile-icon-512.png": "image/png"}
+_MOBILE_STATIC = {"mobile_app.js": "application/javascript", "mobile_offline.js": "application/javascript", "mobile_photos.js": "application/javascript", "jsQR.js": "application/javascript", "mobile_app.css": "text/css", "mobile-icon-192.png": "image/png", "mobile-icon-512.png": "image/png"}
 _ADMIN_STATIC = {"cloud_admin.js": "application/javascript", "cloud_admin.css": "text/css"}
 _SKIP_DOCS = ("carte_identitate", "cerere_doc")
 _DB_TIMEOUT = 3
