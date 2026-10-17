@@ -224,7 +224,9 @@ class AdminService:
             except psycopg.errors.InvalidParameterValue:
                 raise BadRequest("denumirea organizației este obligatorie pentru o organizație nouă") from None
             res = json.loads(row) if isinstance(row, str) else row
-            self.cp._audit(c, res["identity_uid"], "admin_bootstrap", res["organization_uid"], res.get("cemetery_uid"))
+            # fără cimitir, politica RLS a jurnalului nu permite încă o organizație nouă (contextul tenant lipsește): se jurnalizează fără organizație, cu uid în detalii
+            self.cp._audit(c, res["identity_uid"], "admin_bootstrap", res["organization_uid"] if res.get("cemetery_uid") else None, res.get("cemetery_uid"),
+                           organization_uid=res["organization_uid"])
         finally:
             c.close()
         return {"identity_uid": res["identity_uid"], "organization_uid": res["organization_uid"], "cemetery_uid": res.get("cemetery_uid"), "email": email}

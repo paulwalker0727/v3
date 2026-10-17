@@ -32,6 +32,7 @@ import cimitir_mobile_http as mih
 import cimitir_mobile_registry as mir
 import cimitir_sync_v2 as sv2
 import cimitir_sync_v2_http as sv2h
+import cimitir_sync_v2_docs as sdocs
 
 log = logging.getLogger("cimitir.cloud_app")
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +44,7 @@ _CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _STATIC = {"teren.js": "application/javascript", "teren_ui.js": "application/javascript", "teren.css": "text/css"}
-_MOBILE_STATIC = {"mobile_app.js": "application/javascript", "mobile_offline.js": "application/javascript", "mobile_app.css": "text/css", "mobile-icon-192.png": "image/png", "mobile-icon-512.png": "image/png"}
+_MOBILE_STATIC = {"mobile_app.js": "application/javascript", "mobile_offline.js": "application/javascript", "mobile_photos.js": "application/javascript", "jsQR.js": "application/javascript", "mobile_app.css": "text/css", "mobile-icon-192.png": "image/png", "mobile-icon-512.png": "image/png"}
 _ADMIN_STATIC = {"cloud_admin.js": "application/javascript", "cloud_admin.css": "text/css"}
 _SKIP_DOCS = ("carte_identitate", "cerere_doc")
 _DB_TIMEOUT = 3
@@ -106,7 +107,9 @@ def create_app(service: Any = None, origins: Optional[list] = None, pairing: Any
     service = service or fi.build_service_from_env()
     app = fih.create_app(service, origins, pairing)
     app.include_router(mih.create_router(mir.MobileRegistryService(service)))
-    app.include_router(sv2h.create_router(sv2.SyncV2Service(service)))
+    sync_service = sv2.SyncV2Service(service)
+    media = getattr(service, "media", None)
+    app.include_router(sv2h.create_router(sync_service, sdocs.DocumentService(sync_service, media.storage) if media is not None else None))
     app.include_router(cloud_http.create_router(service.cp))               # /api/v1/bootstrap/* (asociere MAIN), pe PostgreSQL
     admin_service = admin_mod.AdminService(service.cp)
     app.include_router(adminh.create_router(admin_service))                 # /api/v1/admin/* (sesiune administrativă)

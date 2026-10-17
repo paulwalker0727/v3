@@ -2,10 +2,22 @@
 const DB = 'cimitir-mobile-v2';
 const ENTITIES = ['locuri_de_veci', 'concesionari', 'contracte', 'inhumati', 'plati', 'amenajari_avize'];
 
+const SENSITIVE = ['cnp', 'bi_ci', 'owner_cnp', 'owner_id_card_serie_number'];
+function stripSensitive(v) {
+  if (Array.isArray(v)) return v.forEach(stripSensitive);
+  if (v && typeof v === 'object') { for (const k of Object.keys(v)) { if (SENSITIVE.includes(k)) delete v[k]; else stripSensitive(v[k]); } }
+}
+function purgeSensitive(store) {
+  const c = store.openCursor();
+  c.onsuccess = () => { const cur = c.result; if (!cur) return; const v = cur.value; stripSensitive(v); cur.update(v); cur.continue(); };
+}
 export function dbOpen() {
   return new Promise((resolve, reject) => {
-    const r = indexedDB.open(DB, 2);
-    r.onupgradeneeded = () => { for (const s of ['kv', 'rows']) if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s); };
+    const r = indexedDB.open(DB, 3);
+    r.onupgradeneeded = (e) => {
+      for (const s of ['kv', 'rows', 'photos']) if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s);
+      if (e.oldVersion > 0 && e.oldVersion < 3) purgeSensitive(r.transaction.objectStore('rows'));      // copii vechi ale datelor personale (CNP/act identitate) se șterg la actualizare
+    };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
   });
