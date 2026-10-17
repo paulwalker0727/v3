@@ -1,0 +1,393 @@
+"""cloud_associate_window.py — „Administrare → Cloud → Asociază acest calculator” + „Coduri și dispozitive”. Fereastra doar apelează `cimitir_cloud_associate` / `cimitir_cloud_admin_client`.
+
+Cheia definitivă nu apare niciodată în UI: se salvează direct în SecretStore (DPAPI). Parola de administrator nu se păstrează (doar tokenul de sesiune, în memorie).
+"""
+from __future__ import annotations
+
+import time
+from typing import Any, Callable, Dict, List, Optional
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import (
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
+    QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+)
+
+import access_session
+import cimitir_bootstrap as bs
+import cimitir_cloud_admin_client as adc
+import cimitir_cloud_associate as assoc
+import cimitir_registry as reg
+import cimitir_secretstore as ss
+import field_inbox_client as fic
+from field_worker import run_task
+
+
+def _run(owner, fn, ok, fail):
+    """Ca run_task, dar mesajele AssociationError/AdminApiError (fără secrete, în română) ajung în UI."""
+    def wrapped():
+        try:
+            return fn()
+        except (assoc.AssociationError, adc.AdminApiError) as exc:
+            raise fic.FieldCloudError(str(exc)) from None
+    return run_task(owner, wrapped, ok, fail)
+
+
+def default_url() -> str:
+    try:
+        import cloud_sync
+        u = (cloud_sync.get_config().get("url") or "").strip()
+        if u:
+            return u
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import database as db
+        return (db.get_setting("cloud_url") or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def local_choices(catalog=None) -> List[Dict[str, str]]:
+    cat = catalog or reg.RegistryCatalog()
+    orgs = {o["uid"]: o["display_name"] for o in cat.list_organizations()}
+    return [{"cemetery_uid": c["uid"], "label": f"{orgs.get(c['organization_uid'], '?')} — {c['name']}"} for c in cat.list_cemeteries()]
+
+
+class CloudAssociateDialog(QDialog):
+    def __init__(self, parent=None, catalog=None, store=None, can_manage: Optional[Callable[[], bool]] = None, rcp_factory=None):
+        super().__init__(parent)
+        self.setWindowTitle("Cloud — asociere și coduri")
+        self.setMinimumSize(900, 640)
+        self._cat = catalog or reg.RegistryCatalog()
+        self._store = store or ss.default_store()
+        self._can = can_manage or (lambda: access_session.require("manage_config", self, "asocierea cu Cloud-ul"))
+        self._factory = rcp_factory
+        self._plan: Optional[Dict[str, Any]] = None
+        self._code_ok = False
+        self._admin: Optional[adc.AdminClient] = None
+        self._me: Optional[Dict[str, Any]] = None
+        self._issued: Optional[Dict[str, Any]] = None
+        lay = QVBoxLayout(self)
+        tabs = QTabWidget()
+        tabs.addTab(self._build_assoc(), "Asociază acest calculator")
+        tabs.addTab(self._build_codes(), "Coduri și dispozitive (administrator)")
+        lay.addWidget(tabs)
+
+    # ================================================================== tab 1
+    def _build_assoc(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        form = QFormLayout()
+        self.ed_url = QLineEdit(default_url())
+        self.ed_url.setObjectName("assoc_url")
+        self.ed_url.setPlaceholderText("https://adresa-cloud.exemplu.ro")
+        self.btn_check = QPushButton("Verifică conexiunea")
+        self.btn_check.setObjectName("assoc_check")
+        row = QHBoxLayout()
+        row.addWidget(self.ed_url, 1)
+        row.addWidget(self.btn_check)
+        form.addRow("Adresa Cloud (URL):", row)
+        self.cmb_local = QComboBox()
+        self.cmb_local.setObjectName("assoc_local")
+        for c in local_choices(self._cat):
+            self.cmb_local.addItem(c["label"], c["cemetery_uid"])
+        cur = reg.current_binding()
+        if cur:
+            i = self.cmb_local.findData(cur.cemetery_uid)
+            self.cmb_local.setCurrentIndex(max(i, 0))
+        form.addRow("Organizație / cimitir local:", self.cmb_local)
+        self.ed_code = QLineEdit()
+        self.ed_code.setObjectName("assoc_code")
+        self.ed_code.setPlaceholderText("Codul temporar primit de la administrator")
+        self.btn_verify = QPushButton("Verifică codul")
+        self.btn_verify.setObjectName("assoc_verify")
+        row2 = QHBoxLayout()
+        row2.addWidget(self.ed_code, 1)
+        row2.addWidget(self.btn_verify)
+        form.addRow("Cod de asociere:", row2)
+        lay.addLayout(form)
+        self.txt_summary = QPlainTextEdit()
+        self.txt_summary.setReadOnly(True)
+        self.txt_summary.setObjectName("assoc_summary")
+        lay.addWidget(self.txt_summary, 1)
+        self.chk_confirm = QCheckBox("Confirm: asociez acest calculator cu Cloud-ul conform rezumatului de mai sus")
+        self.chk_confirm.setObjectName("assoc_confirm")
+        self.chk_confirm.setEnabled(False)
+        lay.addWidget(self.chk_confirm)
+        btns = QHBoxLayout()
+        self.btn_go = QPushButton("Asociază")
+        self.btn_go.setObjectName("assoc_go")
+        self.btn_go.setEnabled(False)
+        self.btn_resume = QPushButton("Reia asocierea")
+        self.btn_abort = QPushButton("Anulează asocierea")
+        self.btn_unbind = QPushButton("Dezasociază")
+        for b in (self.btn_go, self.btn_resume, self.btn_abort, self.btn_unbind):
+            btns.addWidget(b)
+        lay.addLayout(btns)
+        self.btn_check.clicked.connect(self._check_api)
+        self.btn_verify.clicked.connect(self._verify_code)
+        self.chk_confirm.toggled.connect(lambda on: self.btn_go.setEnabled(bool(on and self._plan)))
+        self.btn_go.clicked.connect(self._execute)
+        self.btn_resume.clicked.connect(self._resume)
+        self.btn_abort.clicked.connect(self._abort)
+        self.btn_unbind.clicked.connect(self._unbind)
+        QTimer.singleShot(0, self._refresh_state)
+        return w
+
+    def _association(self) -> assoc.Association:
+        cem = self.cmb_local.currentData()
+        if not cem:
+            raise assoc.AssociationError("Nu există niciun cimitir local selectat.", "local")
+        binding = self._cat.binding_for(cem)
+        return assoc.Association(binding, self._store, bs.installation_uid(self._cat), self.ed_url.text(), rcp_factory=self._factory)
+
+    def _say(self, text: str) -> None:
+        self.txt_summary.setPlainText(text)
+
+    def _guarded(self, fn: Callable[[], Any], ok: Callable[[Any], None]) -> None:
+        if not self._can():
+            return
+        try:
+            a = self._association()
+        except assoc.AssociationError as exc:
+            self._say(str(exc))
+            return
+
+        _run(self, lambda: fn(a), ok, lambda m, _nc: self._say(m))
+
+    def _refresh_state(self) -> None:
+        try:
+            a = self._association()
+            info = a.incomplete()
+            self.btn_resume.setEnabled(bool(info))
+            self.btn_abort.setEnabled(bool(info))
+            self.btn_unbind.setEnabled(a.local.sync_state in bs.SYNC_ACTIVE_STATES)
+            st = a.local.sync_state
+            self._say(f"Stare locală: {st}" + (f"\nAsociere întreruptă ({info['state']}, faza {info['phase']}): reia sau anulează." if info else ""))
+        except Exception:  # noqa: BLE001
+            self.btn_resume.setEnabled(False)
+
+    def _check_api(self) -> None:
+        self._guarded(lambda a: a.check_api(), lambda r: self._say(f"{r['message']}\nHTTPS: {'da' if r['https'] else 'NU (doar localhost)'}\nBază de date: {r['database']} · stocare: {r['storage']}"))
+
+    def _verify_code(self) -> None:
+        def ok(plan):
+            self._plan = plan["plan"]
+            self.chk_confirm.setEnabled(True)
+            self._say("Cod valid. Rezumat operațiune:\n\n" + "\n".join(f"• {k}: {v}" for k, v in plan["summary"].items()) + "\n\nBifează confirmarea pentru a continua.")
+        code = self.ed_code.text().strip()
+
+        def work(a):
+            a.verify_code(code)
+            return a.plan(code)
+        self._plan = None
+        self.chk_confirm.setChecked(False)
+        self.chk_confirm.setEnabled(False)
+        self._guarded(work, ok)
+
+    def _execute(self) -> None:
+        plan, code = self._plan, self.ed_code.text().strip()
+        if not plan or not self.chk_confirm.isChecked():
+            return
+        self.btn_go.setEnabled(False)
+
+        def ok(res):
+            self._plan = None
+            self.ed_code.clear()
+            v = res["verification"]
+            self._say(v["message"] + "\n\n" + "\n".join(f"✔ {k}: {s}" for k, s in v["checks"].items()))
+            self._refresh_buttons()
+
+        def fail_refresh(a):
+            return a.execute(plan, code, True)
+        self._guarded(fail_refresh, ok)
+
+    def _refresh_buttons(self) -> None:
+        QTimer.singleShot(0, lambda: (self.btn_unbind.setEnabled(True), self.btn_resume.setEnabled(False), self.btn_abort.setEnabled(False)))
+
+    def _resume(self) -> None:
+        self._guarded(lambda a: a.resume(self.ed_code.text().strip()),
+                      lambda r: (self._say(r.get("verification", {}).get("message", "Asociere reluată.")), self._refresh_state()))
+
+    def _abort(self) -> None:
+        if QMessageBox.question(self, "Anulează asocierea", "Se revocă legătura începută și se șterge cheia. Datele locale rămân. Continui?") != QMessageBox.Yes:
+            return
+        self._guarded(lambda a: a.abort(), lambda r: (self._say(r["message"]), self._refresh_state()))
+
+    def _unbind(self) -> None:
+        if QMessageBox.question(self, "Dezasociază", "Calculatorul nu va mai sincroniza cu Cloud-ul. Continui?") != QMessageBox.Yes:
+            return
+        self._guarded(lambda a: a.disassociate(), lambda r: (self._say(r["message"]), self._refresh_state()))
+
+    # ================================================================== tab 2
+    def _build_codes(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        form = QFormLayout()
+        self.ed_mail = QLineEdit()
+        self.ed_mail.setObjectName("adm_email")
+        self.ed_pass = QLineEdit()
+        self.ed_pass.setEchoMode(QLineEdit.Password)
+        self.ed_pass.setObjectName("adm_pass")
+        self.btn_login = QPushButton("Autentifică-te ca administrator")
+        form.addRow("Email administrator:", self.ed_mail)
+        form.addRow("Parolă:", self.ed_pass)
+        lay.addLayout(form)
+        lay.addWidget(self.btn_login)
+        self.cmb_org = QComboBox()
+        self.cmb_cem = QComboBox()
+        row = QHBoxLayout()
+        row.addWidget(self.cmb_org)
+        row.addWidget(self.cmb_cem)
+        lay.addLayout(row)
+        r2 = QHBoxLayout()
+        self.btn_main = QPushButton("Generează cod pentru MAIN")
+        self.btn_main.setObjectName("adm_issue_main")
+        self.btn_phone = QPushButton("Generează cod pentru telefon")
+        self.btn_phone.setObjectName("adm_issue_phone")
+        self.btn_copy = QPushButton("Copiază codul")
+        self.btn_revoke_code = QPushButton("Revocă codul")
+        for b in (self.btn_main, self.btn_phone, self.btn_copy, self.btn_revoke_code):
+            r2.addWidget(b)
+            b.setEnabled(False)
+        lay.addLayout(r2)
+        self.lbl_code = QLabel("—")
+        self.lbl_code.setObjectName("adm_code")
+        self.lbl_code.setStyleSheet("font-size: 24px; font-weight: bold; letter-spacing: 3px;")
+        self.lbl_code.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_left = QLabel("")
+        lay.addWidget(self.lbl_code)
+        lay.addWidget(self.lbl_left)
+        self.tbl_dev = QTableWidget(0, 5)
+        self.tbl_dev.setHorizontalHeaderLabels(("Nume", "Tip", "Cimitir", "Ultima activitate", "Stare"))
+        self.tbl_dev.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.tbl_dev.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tbl_dev.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        lay.addWidget(self.tbl_dev, 1)
+        self.btn_rev_dev = QPushButton("Revocă dispozitivul selectat")
+        self.btn_rev_dev.setEnabled(False)
+        lay.addWidget(self.btn_rev_dev)
+        self.lbl_adm = QLabel("")
+        lay.addWidget(self.lbl_adm)
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._tick)
+        self.btn_login.clicked.connect(self._login)
+        self.btn_main.clicked.connect(lambda: self._issue("main"))
+        self.btn_phone.clicked.connect(lambda: self._issue("phone"))
+        self.btn_copy.clicked.connect(self._copy)
+        self.btn_revoke_code.clicked.connect(self._revoke_code)
+        self.btn_rev_dev.clicked.connect(self._revoke_device)
+        self.cmb_org.currentIndexChanged.connect(self._org_changed)
+        return w
+
+    def _client(self) -> adc.AdminClient:
+        if self._admin is None:
+            self._admin = adc.AdminClient(assoc.normalize_url(self.ed_url.text()))
+        return self._admin
+
+    def _login(self) -> None:
+        email, pw = self.ed_mail.text().strip(), self.ed_pass.text()
+        self.ed_pass.clear()
+
+        def work():
+            self._admin = None
+            return self._client().login(email, pw)
+
+        def ok(me):
+            self._me = me
+            self.cmb_org.clear()
+            for o in me["organizations"]:
+                self.cmb_org.addItem(o["name"] or o["organization_uid"], o["organization_uid"])
+            for b in (self.btn_main, self.btn_phone):
+                b.setEnabled(True)
+            self.lbl_adm.setText(f"Autentificat: {me['email']}")
+            self._org_changed()
+        _run(self, work, ok, lambda m, _nc: self.lbl_adm.setText(m))
+
+    def _org_changed(self) -> None:
+        self.cmb_cem.clear()
+        org = next((o for o in (self._me or {}).get("organizations", []) if o["organization_uid"] == self.cmb_org.currentData()), None)
+        for c in (org or {}).get("cemeteries", []):
+            self.cmb_cem.addItem(f"{c['name']} ({c['status']})", c["uid"])
+        self._reload_devices()
+
+    def _reload_devices(self) -> None:
+        org = self.cmb_org.currentData()
+        if not org or not self._admin:
+            return
+
+        def ok(devs):
+            self.tbl_dev.setRowCount(0)
+            for d in devs:
+                i = self.tbl_dev.rowCount()
+                self.tbl_dev.insertRow(i)
+                for c, v in enumerate((d["device_name"], "MAIN" if d["kind"] == "main" else "Telefon", d["cemetery_name"], (d["last_seen_at"] or "—")[:16], d["state"])):
+                    cell = QTableWidgetItem(v)
+                    if c == 0:
+                        cell.setData(Qt.UserRole, (d["binding_uid"], d["state"]))
+                    self.tbl_dev.setItem(i, c, cell)
+            self.btn_rev_dev.setEnabled(bool(devs))
+        _run(self, lambda: self._admin.list_devices(org), ok, lambda m, _nc: self.lbl_adm.setText(m))
+
+    def _issue(self, kind: str) -> None:
+        org, cem = self.cmb_org.currentData(), self.cmb_cem.currentData()
+        if not (org and cem and self._admin):
+            return
+
+        def ok(res):
+            self._issued = res
+            self.lbl_code.setText(res["display"])
+            self.btn_copy.setEnabled(True)
+            self.btn_revoke_code.setEnabled(True)
+            self._timer.start()
+            self._tick()
+        _run(self, lambda: self._admin.issue_code(org, cem, kind), ok, lambda m, _nc: self.lbl_adm.setText(m))
+
+    def _tick(self) -> None:
+        if not self._issued:
+            return
+        left = int(self._issued["expires_at"] - time.time())
+        if left <= 0:
+            self._timer.stop()
+            self.lbl_left.setText("Codul a expirat. Generează unul nou (regenerare).")
+            self.lbl_code.setText("—")
+            self._issued = None
+            return
+        self.lbl_left.setText(f"Valabil încă {left // 60}:{left % 60:02d}")
+
+    def _copy(self) -> None:
+        if self._issued:
+            QGuiApplication.clipboard().setText(self._issued["code"])
+            self.lbl_adm.setText("Cod copiat în clipboard.")
+
+    def _revoke_code(self) -> None:
+        if not (self._issued and self._admin):
+            return
+        org, cid = self.cmb_org.currentData(), self._issued["code_id"]
+
+        def ok(_r):
+            self._issued = None
+            self._timer.stop()
+            self.lbl_code.setText("—")
+            self.lbl_left.setText("Cod revocat.")
+        _run(self, lambda: self._admin.revoke_code(org, cid), ok, lambda m, _nc: self.lbl_adm.setText(m))
+
+    def _revoke_device(self) -> None:
+        it = self.tbl_dev.item(self.tbl_dev.currentRow(), 0) if self.tbl_dev.currentRow() >= 0 else None
+        if not it or not self._admin or it.data(Qt.UserRole)[1] == "revoked":
+            return
+        if QMessageBox.question(self, "Revocă dispozitivul", f"„{it.text()}” nu va mai putea sincroniza. Continui?") != QMessageBox.Yes:
+            return
+        org, bu = self.cmb_org.currentData(), it.data(Qt.UserRole)[0]
+        _run(self, lambda: self._admin.revoke_device(org, bu), lambda _r: self._reload_devices(), lambda m, _nc: self.lbl_adm.setText(m))
+
+    def closeEvent(self, ev) -> None:  # noqa: N802
+        if self._admin:
+            try:
+                self._admin.close()
+            except Exception:  # noqa: BLE001
+                pass
+        super().closeEvent(ev)

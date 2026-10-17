@@ -27,13 +27,14 @@ from psycopg.types.string import TextLoader
 
 import cimitir_cloud_control as cc
 import cimitir_manifest as mf
+import cimitir_phone_pairing as pp
 
 PROTECTED_PROJECT_REFS = ("txuxkjgftopznvmooexq",)
 TEST_PROJECT_REF = "nhhczdmcocbobptogvsw"
 CLOUD_REF_ENV = "CIMITIR_CLOUD_PROJECT_REF"      # deploy cloud: singurul proiect Supabase (neprotejat) acceptat de serverul public
 _CTX_KEYS = {"platform": "cp.platform", "org": "cp.org", "cems": "cp.cems", "principal": "cp.principal", "binding_uid": "cp.binding_uid",
              "key_hash": "cp.key_hash", "code_hash": "cp.code_hash", "installation": "cp.installation", "run_id": "cp.run_id",
-             "pair_buckets": "cp.pair_buckets"}
+             "pair_buckets": "cp.pair_buckets", "device_type": "cp.device_type", "admin_email": "cp.admin_email"}
 _TABLES = {"bootstrap_runs": "cp_bootstrap_runs", "staging_sessions": "cp_staging_sessions", "staging_batches": "cp_staging_batches",
            "staging_rows": "cp_staging_rows", "staging_media_blobs": "cp_staging_media_blobs", "staging_media_chunks": "cp_staging_media_chunks",
            "registry_rows": "cp_registry_rows", "registry_row_data": "cp_registry_row_data", "media_objects": "cp_media_objects",
@@ -334,7 +335,7 @@ class PostgresControlPlane(cc.LocalControlPlane):
             self._require(c, actor, "issue_code", organization_uid)
             if cemetery_uid and self._cemetery_org(c, cemetery_uid) != organization_uid:
                 raise cc.ScopeError("cimitir inexistent")
-            code = secrets.token_urlsafe(12)
+            code = pp.new_code()
             c.execute("INSERT INTO device_pairing_codes (code_hash, organization_uid, cemetery_uid, created_by, expires_at) VALUES (?,?,?,?,to_timestamp(?))",
                       (cc._h(code), organization_uid, cemetery_uid, actor, self.clock() + cc.CODE_TTL))
             self._audit(c, actor, "issue_code", organization_uid, cemetery_uid, kind="pair" if cemetery_uid else "provision")
@@ -345,12 +346,21 @@ class PostgresControlPlane(cc.LocalControlPlane):
     _CODE_SQL = ("SELECT code_hash, organization_uid, cemetery_uid, created_by AS issued_by, EXTRACT(EPOCH FROM expires_at)::float8 AS expires_at, "
                  "EXTRACT(EPOCH FROM used_at)::float8 AS used_at, used_bootstrap_id FROM device_pairing_codes WHERE code_hash=? AND device_type='MAIN'")
 
+    _revoked_col: Optional[bool] = None
+
+    def revoked_clause(self, c) -> str:
+        """` AND revoked_at IS NULL` doar dacă migrarea 023 e aplicată (scheme mai vechi rămân funcționale)."""
+        if self._revoked_col is None:
+            self._revoked_col = bool(c.execute("SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='device_pairing_codes' "
+                                               "AND column_name='revoked_at'").fetchone())
+        return " AND revoked_at IS NULL" if self._revoked_col else ""
+
     def _code_row(self, c, code: str, installation_uid: str, allow_used_by: Optional[str] = None):
         c.set_ctx(installation=installation_uid, code_hash=cc._h(code or ""), org=None, cems=None, platform=None)
         fails = c.execute("SELECT n FROM failed_redeems WHERE installation_uid=?", (installation_uid,)).fetchone()
         if fails and fails["n"] >= cc.MAX_FAILED_REDEEMS:
             raise cc.CodeError("prea multe încercări greșite; cere un cod nou")
-        row = c.execute(self._CODE_SQL, (cc._h(code or ""),)).fetchone()
+        row = c.execute(self._CODE_SQL + self.revoked_clause(c), (cc._h(code or ""),)).fetchone()
         ok = row is not None and row["expires_at"] > self.clock() and (
             row["used_at"] is None or (allow_used_by is not None and row["used_bootstrap_id"] == allow_used_by))
         if not ok:
@@ -361,7 +371,7 @@ class PostgresControlPlane(cc.LocalControlPlane):
     def code_row(self, secret: str):
         c = self._c(code_hash=cc._h(secret))
         try:
-            row = c.execute(self._CODE_SQL, (cc._h(secret),)).fetchone()
+            row = c.execute(self._CODE_SQL + self.revoked_clause(c), (cc._h(secret),)).fetchone()
             return row
         finally:
             c.close()

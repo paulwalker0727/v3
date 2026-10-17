@@ -105,14 +105,27 @@ def save_config(url: str, key: str, auto: bool, publish_burials: Optional[bool] 
 
 def is_configured() -> bool:
     cfg = get_config()
-    return bool(cfg["url"] and cfg["key"])
+    if cfg["url"] and cfg["key"]:
+        return True
+    try:
+        import sync_v2
+        return sync_v2.is_binding()     # cheia MAIN Binding din legătura (pairing) salvată în SecretStore
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def url_is_secure(url: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme == "https":
         return True
-    return parsed.scheme == "http" and (parsed.hostname in _LOCAL_HOSTS or (db.get_setting(SET_INSECURE) or "") == "1")
+    if parsed.scheme != "http":
+        return False
+    if parsed.hostname in _LOCAL_HOSTS:
+        return True
+    if (db.get_setting(SET_INSECURE) or "") != "1":
+        return False
+    import sync_v2
+    return not sync_v2.is_binding()      # cheia MAIN Binding nu circulă niciodată necriptat (nici cu opțiunea „http permis")
 
 
 _KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]{32,}$")
@@ -221,8 +234,14 @@ def _mark_online(flag: bool) -> None:
         pass
 
 
+_BINDING_SHAPE = re.compile(r"^[A-Za-z0-9_-]{1,64}\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.")
+
+
 def _request(method: str, path: str, **kwargs) -> requests.Response:
     cfg = get_config()
+    import sync_v2
+    if _BINDING_SHAPE.match(cfg["key"] or "") or sync_v2.is_binding():
+        raise Rejected(0, "Cheia MAIN Binding se folosește doar cu API-ul /api/v1/sync-v2, nu cu rutele vechi /api/sync.")
     if not url_is_secure(cfg["url"]):
         raise Rejected(0, "Adresa serverului trebuie să fie HTTPS.")
     kwargs.setdefault("timeout", TIMEOUT)
@@ -324,6 +343,15 @@ def _bind_cemetery(server_cemetery_id: str) -> None:
 def ping() -> Tuple[bool, str]:
     if not is_configured():
         return False, "Adresa serverului sau cheia de sincronizare lipsesc."
+    import sync_v2
+    if sync_v2.is_binding():
+        try:
+            st = sync_v2.request("GET", "status").json()["result"]
+        except RetryLater as exc:
+            return False, str(exc)
+        except Rejected as exc:
+            return False, "Cheie MAIN Binding invalidă sau revocată (401)." if exc.status == 401 else f"Refuzat: {exc.detail}"
+        return True, f"Conexiune reușită (Sync v2)."
     try:
         info = _request("GET", "/ping").json()
         _bind_cemetery(info["cemetery_id"])
@@ -699,6 +727,9 @@ def sync_all() -> Dict[str, Any]:
         return {"ok": False, "lines": ["Sincronizarea nu este configurată (adresă server + cheie)."], "cereri_noi": 0,
                 "pending": 0}
     ensure_tables()
+    import sync_v2
+    if sync_v2.is_binding():   # profil Cloud cu cheie MAIN (Binding): Sync v2 prin /api/v1/sync-v2
+        return sync_v2.run()
     for queue in (queue_map, queue_map_image, queue_statuses):
         try:
             queue()

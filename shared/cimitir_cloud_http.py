@@ -11,7 +11,7 @@ import os
 import time
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 import cimitir_cloud_control as cc
@@ -136,12 +136,11 @@ def _error(exc: BaseException, secret: str) -> JSONResponse:
     return JSONResponse({"ok": False, "code": "INTERNAL", "message": "eroare internă"}, status_code=500)
 
 
-def create_app(control_db: str, fault: Optional[Dict[str, Any]] = None, clock: Callable[[], float] = time.time) -> FastAPI:
-    """`fault` (doar pentru teste, injectat de lansatorul de test): {"op", "nth", "mode": "kill"|"delay", "delay"} — acționează DUPĂ commit, ÎNAINTE de răspuns."""
+def create_router(cp, fault: Optional[Dict[str, Any]] = None) -> APIRouter:
+    """Rutele contractului v1 (tabelul OPS) peste ORICE plan de control (SQLite simulator sau PostgreSQL). `fault`: doar teste."""
     import asyncio
 
     import anyio
-    cp = cc.open_control_plane(control_db, clock=clock)
 
     def serve(header, op, args, kw):
         cp.begin_request()
@@ -149,7 +148,7 @@ def create_app(control_db: str, fault: Optional[Dict[str, Any]] = None, clock: C
             return _dispatch(cp, _authenticate(cp, header, op), op, args, kw)
         finally:
             cp.begin_request()
-    app = FastAPI(title="Cimitir cloud simulator transport", docs_url=None, redoc_url=None, openapi_url=None)
+    router = APIRouter()
     seen: Dict[str, int] = {}
 
     def make(op: str):
@@ -176,7 +175,20 @@ def create_app(control_db: str, fault: Optional[Dict[str, Any]] = None, clock: C
         return handler
 
     for op, (path, _auth) in wire.OPS.items():
-        app.add_api_route(wire.API + path, make(op), methods=["POST"], name=op)
+        router.add_api_route(wire.API + path, make(op), methods=["POST"], name=op)
+
+    @router.get(wire.API + "/bootstrap/info")
+    def info():
+        """Public, fără secrete: permite clientului MAIN să verifice că serverul expune API-ul de asociere (nu doar /health)."""
+        return JSONResponse({"ok": True, "bootstrap_api": 1, "ops": sorted(wire.OPS), "server_time": time.time()}, headers={"Cache-Control": "no-store"})
+
+    return router
+
+
+def create_app(control_db: str, fault: Optional[Dict[str, Any]] = None, clock: Callable[[], float] = time.time) -> FastAPI:
+    cp = cc.open_control_plane(control_db, clock=clock)
+    app = FastAPI(title="Cimitir cloud simulator transport", docs_url=None, redoc_url=None, openapi_url=None)
+    app.include_router(create_router(cp, fault))
 
     @app.get(wire.API + "/health")
     def health():

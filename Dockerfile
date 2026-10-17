@@ -14,10 +14,15 @@ COPY backend/requirements-cloud.txt backend/requirements-cloud.txt
 RUN pip install -r backend/requirements-cloud.txt
 
 COPY shared/ shared/
+COPY scripts/cloud_admin_recovery.py scripts/cloud_admin_recovery.py
 COPY backend/attachments.py backend/attachments.py
 COPY backend/templates/phone_capture.html backend/templates/phone_capture.html
+COPY backend/templates/mobile_app.html backend/templates/mobile_app.html
+COPY backend/templates/cloud_admin.html backend/templates/cloud_admin.html
 COPY backend/templates/partials/teren_capture.html backend/templates/partials/teren_capture.html
 COPY backend/static/teren.js backend/static/teren_ui.js backend/static/teren.css backend/static/
+COPY backend/static/cloud_admin.js backend/static/cloud_admin.css backend/static/
+COPY backend/static/mobile_app.js backend/static/mobile_offline.js backend/static/mobile_app.css backend/static/mobile_manifest.webmanifest backend/static/mobile_sw.js backend/static/mobile-icon-192.png backend/static/mobile-icon-512.png backend/static/
 
 RUN useradd --system --no-create-home --uid 10001 cimitir
 USER 10001

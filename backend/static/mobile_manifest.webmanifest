@@ -1,0 +1,17 @@
+{
+  "name": "Cimitir Mobile",
+  "short_name": "Cimitir",
+  "description": "Administrare mobilă pentru cimitir",
+  "lang": "ro",
+  "id": "/mobile/",
+  "start_url": "/mobile/",
+  "scope": "/mobile/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f6f2",
+  "theme_color": "#183b2d",
+  "icons": [
+    {"src": "/mobile-assets/mobile-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/mobile-assets/mobile-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
