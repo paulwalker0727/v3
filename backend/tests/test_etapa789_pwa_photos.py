@@ -21,6 +21,7 @@ from test_sync_v2_main_e2e import Server, H
 from test_sync_v2_pwa import _seed_phone
 
 pw = pytest.importorskip("playwright.sync_api")
+TMO = float(os.environ.get("CIMITIR_TEST_HTTP_TIMEOUT", "10"))   # mai mare pe Supabase LIVE (latență rețea)
 pytestmark = pytest.mark.skipif(not os.environ.get("CIMITIR_TEST_PG_ADMIN_URL"), reason="PostgreSQL local de test indisponibil")
 PHOTO = b"\x89PNG\r\n\x1a\n" + b"teren-offline" * 60
 MAIN_PNG = b"\x89PNG\r\n\x1a\n" + b"din-main" * 30
@@ -36,14 +37,14 @@ def web(fw, monkeypatch):
     srv = Server(cca.create_app(service=fw["svc"]), port); srv.start()
     url, main = f"http://127.0.0.1:{port}", fw["T"]["A"]["main"]
     loc = uuid.uuid4().hex
-    r = requests.post(f"{url}/api/v1/sync-v2/push", headers=H(main), timeout=10, json={"ops": [
+    r = requests.post(f"{url}/api/v1/sync-v2/push", headers=H(main), timeout=TMO, json={"ops": [
         {"op_id": "s-" + uuid.uuid4().hex, "entity": "locuri_de_veci", "uid": loc, "action": "upsert", "base_version": 0, "data": {"cod_loc": "PH-1", "points": [[0, 0], [9, 0], [9, 9]]}}]}).json()
     assert r["result"]["results"][0]["status"] == "applied"
     meta = {"uid": uuid.uuid4().hex, "entity": "locuri_de_veci", "entity_uid": loc, "doc_type": "fotografie_loc", "kind": "photo", "filename": "din-main.png", "mime": "image/png",
             "size": len(MAIN_PNG), "sha256": hashlib.sha256(MAIN_PNG).hexdigest()}
-    assert requests.post(f"{url}/api/v1/sync-v2/documents/declare", json=meta, headers=H(main), timeout=10).status_code == 200
-    assert requests.put(f"{url}/api/v1/sync-v2/documents/{meta['uid']}/content", data=MAIN_PNG, headers=H(main), timeout=10).status_code == 200
-    requests.put(f"{url}/api/v1/sync-v2/devices/{fw['T']['A']['phone_b']}/capabilities", headers=H(main), timeout=10,
+    assert requests.post(f"{url}/api/v1/sync-v2/documents/declare", json=meta, headers=H(main), timeout=TMO).status_code == 200
+    assert requests.put(f"{url}/api/v1/sync-v2/documents/{meta['uid']}/content", data=MAIN_PNG, headers=H(main), timeout=TMO).status_code == 200
+    requests.put(f"{url}/api/v1/sync-v2/devices/{fw['T']['A']['phone_b']}/capabilities", headers=H(main), timeout=TMO,
                  json={"capabilities": ["view_map", "read_registers", "upload_documents"]}).raise_for_status()
     yield {**fw, "srv": srv, "url": url}
     srv.stop()
@@ -51,7 +52,7 @@ def web(fw, monkeypatch):
 
 def cloud_docs(w):
     with adm(w["pg"]) as c:
-        return c.execute("SELECT filename, origin, status FROM sync_v2_documents ORDER BY created_at").fetchall()
+        return c.execute("SELECT filename, origin, status FROM sync_v2_documents WHERE status='READY' ORDER BY created_at").fetchall()
 
 
 def test_offline_photo_queue_resumes_without_duplicates_and_main_doc_visible(web, tmp_path):
@@ -86,8 +87,8 @@ def test_offline_photo_queue_resumes_without_duplicates_and_main_doc_visible(web
         assert txt.count("Nesincronizată") == 1, txt                                              # copia identică și fișierul fals nu intră în coadă
         assert "(1 foto)" in page.inner_text("[data-testid=sync-button]")
         assert len(cloud_docs(w)) == 1
-        ctx.set_offline(False)
-        ctx.route("**/api/**", lambda r: r.abort())                                                # pagina se încarcă, API-ul nu răspunde (Cloud căzut)
+        ctx.route("**/api/**", lambda r: r.abort())
+        ctx.set_offline(False)                                                # pagina se încarcă, API-ul nu răspunde (Cloud căzut)
         page.reload()                                                                             # coada supraviețuiește repornirii aplicației
         page.wait_for_selector("[data-testid=sync-button]")
         page.wait_for_timeout(800)
@@ -122,3 +123,21 @@ def test_offline_photo_queue_resumes_without_duplicates_and_main_doc_visible(web
         page.wait_for_function("!document.querySelector('[data-testid=sync-button]').textContent.includes('foto')")
         b.close()
     assert len(cloud_docs(w)) == 2
+
+
+def test_old_offline_copy_with_personal_data_is_purged_on_upgrade(web):
+    w = web
+    with pw.sync_playwright() as p:
+        b = p.chromium.launch()
+        page = b.new_context(service_workers="block").new_page()
+        page.goto(f"{w['url']}/mobile-assets/mobile_offline.js")
+        page.evaluate("""() => new Promise((res, rej) => { const r = indexedDB.open('cimitir-mobile-v2', 2);
+            r.onupgradeneeded = () => { for (const s of ['kv', 'rows']) r.result.createObjectStore(s); };
+            r.onsuccess = () => { const tx = r.result.transaction('rows', 'readwrite'); tx.objectStore('rows').put({uid: 'u1', data: {nume: 'Ionescu', cnp: '1800101123456', bi_ci: 'XB123456'}, nested: [{owner_cnp: '2750505654321'}]}, 'concesionari:u1');
+                tx.oncomplete = () => { r.result.close(); res(); }; tx.onerror = () => rej(tx.error); }; })""")
+        page.goto(f"{w['url']}/mobile/")
+        page.wait_for_selector("body")
+        dump = page.evaluate("""() => new Promise((res, rej) => { const r = indexedDB.open('cimitir-mobile-v2');
+            r.onsuccess = () => { const q = r.result.transaction('rows').objectStore('rows').getAll(); q.onsuccess = () => res(JSON.stringify(q.result)); q.onerror = () => rej(q.error); }; })""")
+        b.close()
+    assert "Ionescu" in dump and not any(x in dump for x in ("1800101123456", "XB123456", "2750505654321", "cnp", "bi_ci"))

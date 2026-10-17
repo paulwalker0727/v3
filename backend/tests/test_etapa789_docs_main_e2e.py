@@ -24,6 +24,7 @@ from test_etapa6b_field_storage import sup  # noqa: F401
 from test_etapa6c_field_inbox_pg import fw  # noqa: F401
 from test_sync_v2_main_e2e import RUN, H, Server, main_run, pg
 
+TMO = float(os.environ.get("CIMITIR_TEST_HTTP_TIMEOUT", "10"))   # mai mare pe Supabase LIVE (latență rețea)
 pytestmark = pytest.mark.skipif(not os.environ.get("CIMITIR_TEST_PG_ADMIN_URL"), reason="PostgreSQL local de test indisponibil")
 PNG = b"\x89PNG\r\n\x1a\n" + b"foto-main" * 50
 PDF = b"%PDF-1.4\ncontract scanat\n%%EOF"
@@ -46,7 +47,7 @@ def dworld(fw):
 
 
 def docs_of(w, key):
-    r = requests.get(f"{w['url']}/api/v1/sync-v2/documents", headers=H(key), timeout=10)
+    r = requests.get(f"{w['url']}/api/v1/sync-v2/documents", headers=H(key), timeout=TMO)
     assert r.status_code == 200, r.text
     return r.json()["result"]["documents"]
 
@@ -89,20 +90,20 @@ def test_main_documents_reach_cloud_and_phone_then_phone_photo_returns_to_main(d
     # telefonul (rol limitat) vede fotografia locului, fără contractul concesionarului? (concesionari = read_registers => da)
     phone_docs = docs_of(w, phone)
     assert {d["sha256"] for d in phone_docs} == {hashlib.sha256(PNG).hexdigest(), hashlib.sha256(PDF).hexdigest()}
-    f = requests.get(f"{w['url']}/api/v1/sync-v2/documents/{[d for d in phone_docs if d['kind'] == 'photo'][0]['uid']}/file", headers=H(phone), timeout=10)
+    f = requests.get(f"{w['url']}/api/v1/sync-v2/documents/{[d for d in phone_docs if d['kind'] == 'photo'][0]['uid']}/file", headers=H(phone), timeout=TMO)
     assert f.status_code == 200 and f.content == PNG
     # a doua sincronizare nu retrimite nimic
     again = main_run(w, "rep = cloud_sync.sync_all(); out['rep'] = rep.get('ok'); out['pushed'] = (rep.get('documents') or {}).get('push')")
     assert again["rep"] is False and again["pushed"]["sent"] == 0 and again["pushed"]["error"] == 1      # doar fișierul fals rămâne raportat; nimic retrimis
     assert len(docs_of(w, main)) == 2
     # telefonul încarcă o fotografie (cu drept) -> MAIN o primește
-    r = requests.put(f"{w['url']}/api/v1/sync-v2/devices/{phone_b}/capabilities", json={"capabilities": ["view_map", "read_registers", "upload_documents"]}, headers=H(main), timeout=10)
+    r = requests.put(f"{w['url']}/api/v1/sync-v2/devices/{phone_b}/capabilities", json={"capabilities": ["view_map", "read_registers", "upload_documents"]}, headers=H(main), timeout=TMO)
     assert r.status_code == 200, r.text
     uid = uuid.uuid4().hex
     body = {"uid": uid, "entity": "locuri_de_veci", "entity_uid": out["loc_uid"], "doc_type": "fotografie_loc", "kind": "photo", "filename": "telefon.png", "mime": "image/png",
             "size": len(PHONE_PNG), "sha256": hashlib.sha256(PHONE_PNG).hexdigest(), "caption": "Din teren"}
-    assert requests.post(f"{w['url']}/api/v1/sync-v2/documents/declare", json=body, headers=H(phone), timeout=10).status_code == 200
-    assert requests.put(f"{w['url']}/api/v1/sync-v2/documents/{uid}/content", data=PHONE_PNG, headers=H(phone), timeout=10).status_code == 200
+    assert requests.post(f"{w['url']}/api/v1/sync-v2/documents/declare", json=body, headers=H(phone), timeout=TMO).status_code == 200
+    assert requests.put(f"{w['url']}/api/v1/sync-v2/documents/{uid}/content", data=PHONE_PNG, headers=H(phone), timeout=TMO).status_code == 200
     back = main_run(w, "rep = cloud_sync.sync_all(); out['ok'] = rep.get('ok')\n"
                        "rows = q(\"SELECT cod_loc, file_path, caption, media_id FROM photos WHERE media_id=?\", (%r,))\n"
                        "out['rows'] = rows; out['bytes'] = open(rows[0]['file_path'],'rb').read().hex() if rows else ''\n"
