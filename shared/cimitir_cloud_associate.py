@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
 
@@ -234,6 +235,60 @@ class Association:
         res = self.execute(planned["plan"], code, True)
         steps["report"], steps["verification"] = res["report"], res["verification"]
         return steps
+
+    # ------------------------------------------------------------------ cerere de înregistrare (fără parolă de administrator Cloud pe acest calculator)
+    SET_REGREQ = "cloud_regreq_id"
+
+    def request_registration(self, organization_name: str, cemetery_name: str, confirmed: bool) -> Dict[str, Any]:
+        """MAIN trimite automat UID-urile; administratorul Cloud confirmă în /admin/. Secretul cererii rămâne doar în SecretStore."""
+        if confirmed is not True:
+            raise AssociationError("Trimiterea cererii necesită confirmarea explicită a utilizatorului.", "confirm")
+        self.check_api()
+        secret = secrets.token_urlsafe(32)
+        cl = adc.AdminClient(self.url)
+        try:
+            res = self._admin_call(cl.request_registration, secret, self.binding.organization_uid, organization_name, self.binding.cemetery_uid, cemetery_name, self.device_name)
+        finally:
+            cl.close()
+        self.store.set(f"regreq/{res['request_id']}", secret)
+        self.local.put(**{self.SET_REGREQ: res["request_id"]})
+        return {"request_id": res["request_id"], "short_id": res["short_id"], "message": f"Cerere trimisă (ID {res['short_id']}). Administratorul Cloud o confirmă în /admin/; aplicația continuă automat."}
+
+    def pending_request(self) -> Optional[str]:
+        return self.local.get(self.SET_REGREQ) or None
+
+    def cancel_request(self) -> None:
+        rid = self.pending_request()
+        if rid:
+            self.store.delete(f"regreq/{rid}")
+            self.local.clear(self.SET_REGREQ)
+
+    def complete_registration(self, cemetery_name: str = "") -> Dict[str, Any]:
+        """Interoghează cererea. `pending` ⇒ așteaptă; `approved` ⇒ rulează automat verificarea codului, planul și asocierea (protecțiile Flux A rămân)."""
+        rid = self.pending_request()
+        if not rid:
+            raise AssociationError("Nu există nicio cerere de înregistrare trimisă.", "none")
+        secret = self.store.get(f"regreq/{rid}")
+        if not secret:
+            self.local.clear(self.SET_REGREQ)
+            raise AssociationError("Secretul cererii nu mai există în SecretStore; trimite o cerere nouă.", "none")
+        cl = adc.AdminClient(self.url)
+        try:
+            st = self._admin_call(cl.registration_status, rid, secret)
+        finally:
+            cl.close()
+        if st["state"] == "pending":
+            return {"state": "pending", "message": "Se așteaptă confirmarea administratorului Cloud în /admin/."}
+        if st["state"] in ("rejected", "expired", "consumed") or not st.get("code"):
+            self.cancel_request()
+            raise AssociationError({"rejected": "Cererea a fost respinsă de administratorul Cloud.", "expired": "Cererea a expirat (24 h); trimite una nouă."}.get(
+                st["state"], "Cererea a fost deja folosită; trimite una nouă."), "request_" + st["state"])
+        code = st["code"]
+        self.verify_code(code)
+        planned = self.plan(code, cemetery_name)
+        res = self.execute(planned["plan"], code, True)
+        self.cancel_request()
+        return {"state": "associated", "verification": res["verification"], "message": res["verification"]["message"]}
 
     # ------------------------------------------------------------------ întrerupere / reluare / anulare
     def incomplete(self) -> Optional[Dict[str, Any]]:

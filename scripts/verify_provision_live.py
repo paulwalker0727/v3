@@ -128,6 +128,38 @@ def main() -> int:
         return "dispozitivul de test a fost revocat"
     if ok:
         check("F", "revocare dispozitiv", revoke)
+    def request_flow():
+        org2 = cat_org2 = None
+        cat = S["cat"]
+        org2 = cat.create_organization("parohie", tag + "-REQ")
+        cem2 = cat.create_cemetery(org2, "test-cerere")
+        b2 = cat.binding_for(cem2)
+        reg.prepare_registry_db(b2)
+        a2 = assoc.Association(b2, S["store"], S["inst"], url)
+        try:
+            a2.request_registration(tag + "-REQ", "test-cerere", False)
+            raise AssertionError("cerere trimisă fără confirmare")
+        except assoc.AssociationError as exc:
+            assert exc.kind == "confirm"
+        r = a2.request_registration(tag + "-REQ", "test-cerere", True)
+        assert a2.registry_in_cloud(admin)["action"] == "provision_all", "cererea a scris în Cloud înainte de confirmare"
+        assert a2.complete_registration("test-cerere")["state"] == "pending"
+        mine = [q for q in admin.list_requests() if q["request_id"] == r["request_id"]]
+        assert len(mine) == 1 and mine[0]["organization_uid"] == org2 and mine[0]["cemetery_uid"] == cem2 and not mine[0]["organization_exists"]
+        try:
+            assoc.Association(b2, S["store"], S["inst"], url).request_registration(tag, "x", True)
+            raise AssertionError("duplicat acceptat")
+        except assoc.AssociationError as exc:
+            assert "admin_conflict" in exc.kind or "conflict" in exc.kind.lower(), exc.kind
+        admin.decide_request(r["request_id"], True)
+        out = a2.complete_registration("test-cerere")
+        assert out["state"] == "associated" and out["verification"]["sync_enabled"] and bs.LocalRegistry(b2).sync_state == "BOUND"
+        for d in admin.list_devices(org2):
+            if d["state"] == "active":
+                admin.revoke_device(org2, d["binding_uid"])
+        return "cerere → confirmare admin → cod MAIN automat → asociere; duplicat respins; dispozitiv revocat"
+    if ok:
+        check("G", "cerere de înregistrare din MAIN confirmată de administrator", request_flow)
     admin.close()
     return v.finish(a.label)
 

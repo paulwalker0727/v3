@@ -71,6 +71,10 @@ class BootstrapClosed(AdminError):
     status, code = 409, "BOOTSTRAP_CLOSED"
 
 
+class Conflict(AdminError):
+    status, code = 409, "CONFLICT"
+
+
 class SchemaOutdated(AdminError):
     status, code = 501, "SCHEMA_OUTDATED"
 
@@ -178,6 +182,8 @@ class AdminService:
         self._boot_ip = _Limiter(10, 900, clock)
         self._boot_all = _Limiter(30, 3600, clock)
         self._rec_ip = _Limiter(10, 900, clock)
+        self._req_ip = _Limiter(10, 900, clock)
+        self._poll_ip = _Limiter(240, 900, clock)
 
     def _e(self):
         return os.environ if self.env is None else self.env
@@ -515,6 +521,102 @@ class AdminService:
             c.close()
         return {"organization_uid": org, "cemetery_uid": cem, "organization_created": res["organization_created"],
                 "cemetery_created": res["cemetery_created"], "cemetery_status": res["cemetery_status"]}
+
+    # ------------------------------------------------------------------ cereri de înregistrare trimise de MAIN (migrarea 026)
+    _OLD = "Cloud-ul nu are migrarea 026 (cereri de înregistrare); administratorul serverului rulează scripts/apply_cloud_provision_migration.py"
+
+    def request_registration(self, secret: Any, org: Any, org_name: Any, cemetery_uid: Any, cemetery_name: Any, label: Any = "", ip: str = "") -> Dict[str, Any]:
+        """Public (fără sesiune): MAIN trimite UID-urile; nu se scrie nimic în organizații/cimitire până la confirmarea administratorului."""
+        self._req_ip.hit(ip or "?")
+        if not isinstance(secret, str) or not (32 <= len(secret) <= 200):
+            raise BadRequest("secret de cerere invalid")
+        org, cem = _uuid(org, "UID organizație"), _uuid(cemetery_uid, "UID cimitir")
+        t = lambda v, n: v.strip()[:n] if isinstance(v, str) else ""  # noqa: E731
+        c = self._conn()
+        try:
+            try:
+                rid = c.execute("SELECT cp_regreq_create(?, ?::uuid, ?, ?::uuid, ?, ?)", (_h(secret), org, t(org_name, 200), cem, t(cemetery_name, 200), t(label, 120))).fetchone()[0]
+            except psycopg.errors.InsufficientPrivilege:
+                raise BadRequest("cimitirul aparține deja altei organizații (UID-urile nu se modifică)") from None
+            except psycopg.errors.InvalidParameterValue:
+                raise BadRequest("denumirea organizației este obligatorie pentru o organizație nouă") from None
+            except psycopg.errors.ProgramLimitExceeded:
+                raise Locked("prea multe cereri în așteptare; reîncearcă mai târziu") from None
+            except psycopg.errors.RaiseException as exc:
+                if "duplicate_pending" in str(exc):
+                    raise Conflict("există deja o cerere în așteptare pentru acest cimitir; confirmă-o în /admin/ sau așteaptă expirarea (24 h)") from None
+                raise
+            except psycopg.errors.UndefinedFunction:
+                raise SchemaOutdated(self._OLD) from None
+        finally:
+            c.close()
+        return {"request_id": str(rid), "short_id": str(rid)[:8].upper(), "state": "pending"}
+
+    def list_requests(self, identity: str) -> List[Dict[str, Any]]:
+        c = self._conn()
+        try:
+            try:
+                rows = c.execute("SELECT cp_regreq_list(?::uuid)", (identity,)).fetchone()[0]
+            except psycopg.errors.UndefinedFunction:
+                raise SchemaOutdated(self._OLD) from None
+        finally:
+            c.close()
+        return json.loads(rows) if isinstance(rows, str) else rows
+
+    def decide_request(self, identity: str, request_id: Any, approve: Any) -> Dict[str, Any]:
+        rid = _uuid(request_id, "identificator cerere")
+        c = self._conn()
+        try:
+            try:
+                row = c.execute("SELECT cp_regreq_decide(?::uuid, ?::uuid, ?)", (identity, rid, bool(approve))).fetchone()[0]
+            except psycopg.errors.NoDataFound:
+                raise NotFound("cererea nu mai este în așteptare (expirată sau deja procesată)") from None
+            except psycopg.errors.InsufficientPrivilege as exc:
+                m = str(exc)
+                raise Forbidden("nu ești Owner al organizației din cerere" if "not_owner" in m else "contul nu are dreptul de a crea organizații noi" if "not_provisioner" in m
+                                else "cimitirul aparține altei organizații" if "cemetery_other_org" in m else "operație refuzată") from None
+            except psycopg.errors.UndefinedFunction:
+                raise SchemaOutdated(self._OLD) from None
+            res = json.loads(row) if isinstance(row, str) else row
+            if approve:
+                c.set_ctx(org=res["organization_uid"], cems="*", principal=identity)
+                self.cp._audit(c, identity, "admin_registry_request_approved", res["organization_uid"], res["cemetery_uid"], request_id=rid)
+        finally:
+            c.close()
+        return res
+
+    def poll_request(self, request_id: Any, secret: Any, ip: str = "") -> Dict[str, Any]:
+        """Public, protejat de secretul cererii. La prima interogare după aprobare emite codul MAIN (o singură dată), ca aprobator; codul nu se stochează."""
+        self._poll_ip.hit(ip or "?")
+        rid = _uuid(request_id, "identificator cerere")
+        if not isinstance(secret, str) or not (32 <= len(secret) <= 200):
+            raise BadRequest("secret de cerere invalid")
+        sh = _h(secret)
+        c = self._conn()
+        try:
+            try:
+                st = c.execute("SELECT cp_regreq_poll(?::uuid, ?)", (rid, sh)).fetchone()[0]
+            except psycopg.errors.NoDataFound:
+                raise NotFound("cerere inexistentă") from None
+            st = json.loads(st) if isinstance(st, str) else st
+            if st["state"] != "approved":
+                return {"state": st["state"]}
+            claim = c.execute("SELECT cp_regreq_claim(?::uuid, ?)", (rid, sh)).fetchone()[0]
+        finally:
+            c.close()
+        if not claim:
+            return {"state": "consumed"}
+        claim = json.loads(claim) if isinstance(claim, str) else claim
+        try:
+            issued = self.issue_code(str(claim["decided_by"]), claim["organization_uid"], claim["cemetery_uid"], "main")
+        except Exception:
+            c = self._conn()
+            try:
+                c.execute("SELECT cp_regreq_unclaim(?::uuid, ?)", (rid, sh))
+            finally:
+                c.close()
+            raise
+        return {"state": "approved", "code": issued["code"], "organization_uid": claim["organization_uid"], "cemetery_uid": claim["cemetery_uid"], "expires_at": issued["expires_at"]}
 
     def create_cemetery(self, identity: str, org: str, name: Any, cemetery_uid: Any = None) -> Dict[str, Any]:
         org = _uuid(org, "UID organizație")

@@ -72,7 +72,7 @@
     var me = S.me;
     document.getElementById("who").textContent = me.email;
     document.getElementById("btn-logout").classList.remove("hidden");
-    if (!me.organizations.length) { app.replaceChildren(h("div", { class: "card" }, [h("p", { text: "Contul nu are nicio organizație." })])); return; }
+    if (!me.organizations.length) { app.replaceChildren(h("div", { class: "card" }, [h("p", { "data-testid": "no-orgs", text: "Contul nu are nicio organizație." })]), requestsCard(), manualCard()); loadRequests(); return; }
     if (!S.org) S.org = me.organizations[0].organization_uid;
     var org = curOrg();
     if (!S.cem || !org.cemeteries.some(function (c) { return c.uid === S.cem; })) S.cem = org.cemeteries.length ? org.cemeteries[0].uid : null;
@@ -100,8 +100,49 @@
         api("POST", "/password", { old_password: document.getElementById("pw-old").value, new_password: document.getElementById("pw-new").value })
           .then(function (j) { if (j.ok) toast("Parola a fost schimbată."); else showErr("issue-err", j); });
       } } })])]);
-    app.replaceChildren(box, h("div", { class: "card", id: "codes-card" }), h("div", { class: "card", id: "devices-card" }), cemNew, pw);
-    drawCode(); loadCodes(); loadDevices();
+    app.replaceChildren(requestsCard(), box, h("div", { class: "card", id: "codes-card" }), h("div", { class: "card", id: "devices-card" }), cemNew, manualCard(), pw);
+    drawCode(); loadCodes(); loadDevices(); loadRequests();
+  }
+
+  function requestsCard() { return h("div", { class: "card", id: "requests-card", "data-testid": "requests-card" }); }
+
+  function loadRequests() {
+    api("GET", "/registry-requests").then(function (j) {
+      var card = document.getElementById("requests-card"); if (!card) return;
+      if (!j.ok) { card.replaceChildren(h("h2", { text: "Cereri de înregistrare de la MAIN" }), h("p", { class: "err", "data-testid": "requests-err", text: j.message || "Eroare" })); return; }
+      var rows = j.result.map(function (r) {
+        var what = (r.organization_exists ? "organizație existentă" : "organizație NOUĂ") + " · " + (r.cemetery_exists ? "cimitir existent" : "cimitir NOU");
+        return h("tr", { "data-testid": "request-row" }, [h("td", { "data-testid": "request-short-id", text: r.short_id }), h("td", { text: (r.organization_name || "—") + " / " + (r.cemetery_name || "—") }),
+          h("td", { class: "muted", text: what }), h("td", { class: "muted", text: r.device_label || "—" }),
+          h("td", { class: "muted", text: r.organization_uid.slice(0, 8) + "… / " + r.cemetery_uid.slice(0, 8) + "…" }),
+          h("td", {}, [h("button", { "data-testid": "approve-request-" + r.short_id, text: "Confirmă", on: { click: function () { decide(r, true, what); } } }),
+            h("button", { class: "danger", "data-testid": "reject-request-" + r.short_id, text: "Respinge", on: { click: function () { decide(r, false, what); } } })])]);
+      });
+      card.replaceChildren(h("h2", { text: "Cereri de înregistrare de la MAIN" }),
+        rows.length ? h("table", {}, [h("tr", {}, ["ID", "Organizație / cimitir", "Efect", "Calculator", "UID-uri (originale)", ""].map(function (t) { return h("th", { text: t }); }))].concat(rows))
+          : h("p", { class: "muted", "data-testid": "requests-empty", text: "Nicio cerere în așteptare. În MAIN: Asociază cu Cloud → Trimite cererea de înregistrare." }),
+        h("button", { class: "ghost", "data-testid": "requests-refresh", text: "Reîmprospătează", on: { click: loadRequests } }));
+    });
+  }
+
+  function decide(r, approve, what) {
+    var msg = approve ? "Confirmi înregistrarea în Cloud (" + what + ") pentru „" + (r.organization_name || r.organization_uid) + " / " + (r.cemetery_name || r.cemetery_uid) + "” cu UID-urile originale trimise de MAIN?"
+                      : "Respingi cererea " + r.short_id + "?";
+    if (!confirm(msg)) return;
+    api("POST", "/registry-requests/decide", { request_id: r.request_id, approve: approve }).then(function (j) {
+      toast(j.ok ? (approve ? "Registru înregistrat. MAIN continuă asocierea automat." : "Cerere respinsă.") : (j.message || "Eroare"));
+      if (j.ok && approve) loadMe(); else loadRequests();
+    });
+  }
+
+  function manualCard() {
+    return h("div", { class: "card" }, [h("details", { "data-testid": "manual-provision" }, [h("summary", { text: "Avansat: înregistrare manuală cu UID-uri (doar dacă MAIN nu poate trimite cererea)" }),
+      h("div", { class: "row" }, [field("mp-org-uid", "UID organizație"), field("mp-org-name", "Denumire organizație (necesară dacă e nouă)"), field("mp-cem-uid", "UID cimitir"), field("mp-cem-name", "Denumire cimitir")]),
+      h("button", { "data-testid": "mp-submit", text: "Înregistrează în Cloud", on: { click: function () {
+        if (!confirm("Înregistrezi în Cloud organizația/cimitirul cu aceste UID-uri? Operația nu modifică înregistrări existente.")) return;
+        api("POST", "/provision", { organization_uid: val("mp-org-uid"), organization_name: val("mp-org-name"), cemetery_uid: val("mp-cem-uid"), cemetery_name: val("mp-cem-name") })
+          .then(function (j) { if (j.ok) { toast("Înregistrat (" + (j.result.organization_created ? "organizație nouă" : "organizație existentă") + ", " + (j.result.cemetery_created ? "cimitir nou" : "cimitir existent") + ")."); loadMe(); } else showErr("mp-err", j); });
+      } } }), errBox("mp-err")])]);
   }
 
   function issue(kind) {

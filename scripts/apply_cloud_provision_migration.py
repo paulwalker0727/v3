@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Aplică DOAR migrarea 025 (provizionarea registrului MAIN în Cloud) pe un Cloud TEST existent, după verificarea schemei. Nu reaplică 001–024. Fără ștergeri de date.
+"""Aplică DOAR migrările 025 (provizionare registru) și 026 (cereri de înregistrare din MAIN) pe un Cloud TEST existent, după verificarea schemei. Nu reaplică 001–024. Fără ștergeri de date.
 
 Mediu (valorile NU se afișează):  CIMITIR_CP_ADMIN_DATABASE_URL = URL administrativ (owner-ul tabelelor; NU rolul runtime cimitir_cp_app)
   --project-ref <ref>   obligatoriu pentru Supabase: trebuie să coincidă cu ref-ul din URL; proiectul PROD este refuzat
   --check-only          raport read-only: migrări/funcții/tabele/rol runtime/RLS + numărul de rânduri (nu modifică nimic)
-  --rollback            rulează 025_admin_provision_registry_ROLLBACK.sql (elimină doar funcțiile; datele create rămân)
+  --rollback            rulează rollback-urile 026 și 025 (elimină funcțiile și tabelul de cereri; organizațiile/cimitirele create rămân)
 Cere 023 aplicată. O singură tranzacție; numărul de rânduri din tabelele de control trebuie să rămână identic. Idempotent.
 """
 from __future__ import annotations
@@ -20,9 +20,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from apply_cloud_admin_migration import ref_of  # noqa: E402
 from cimitir_cloud_control_pg import PROTECTED_PROJECT_REFS  # noqa: E402
 
-MIG = ROOT / "backend" / "cimitir" / "pg_migrations" / "025_admin_provision_registry.sql"
-ROLLBACK = ROOT / "backend" / "cimitir" / "pg_rollbacks" / "025_admin_provision_registry_ROLLBACK.sql"
+_M, _R = ROOT / "backend" / "cimitir" / "pg_migrations", ROOT / "backend" / "cimitir" / "pg_rollbacks"
+MIGS = (_M / "025_admin_provision_registry.sql", _M / "026_registry_requests.sql")
+ROLLBACKS = (_R / "026_registry_requests_ROLLBACK.sql", _R / "025_admin_provision_registry_ROLLBACK.sql")
 FUNCS = ("cp_admin_is_provisioner(uuid)", "cp_admin_registry_lookup(uuid,uuid,uuid)", "cp_admin_provision(uuid,uuid,text,uuid,text)")
+FUNCS26 = ("cp_regreq_create(text,uuid,text,uuid,text,text)", "cp_regreq_list(uuid)", "cp_regreq_decide(uuid,uuid,boolean)", "cp_regreq_poll(uuid,text)", "cp_regreq_claim(uuid,text)")
 NEED = ("organizations", "cemeteries", "identities", "cp_org_roles", "cp_admin_state", "cp_admin_credentials", "cp_platform_admins")
 COUNT = ("organizations", "cemeteries", "devices", "device_cemetery_bindings", "identities", "cp_org_roles", "cp_admin_credentials")
 OPTIONAL_COUNT = ("sync_v2_documents",)
@@ -34,6 +36,7 @@ def report(c) -> dict:
         "SELECT rolname, rolcanlogin, rolbypassrls, rolsuper FROM pg_roles WHERE rolname LIKE 'cimitir%'").fetchall()}
     out["023_aplicata"] = bool(c.execute("SELECT to_regprocedure('cp_admin_status()') IS NOT NULL").fetchone()[0])
     out["025_aplicata"] = all(c.execute("SELECT to_regprocedure(%s) IS NOT NULL", (f,)).fetchone()[0] for f in FUNCS)
+    out["026_aplicata"] = all(c.execute("SELECT to_regprocedure(%s) IS NOT NULL", (f,)).fetchone()[0] for f in FUNCS26) and c.execute("SELECT to_regclass('cp_registry_requests')").fetchone()[0] is not None
     out["rls"] = {t: bool((c.execute("SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass(%s)", (t,)).fetchone() or [False])[0])
                   for t in ("organizations", "cemeteries", "cp_org_roles", "sync_v2_documents") if c.execute("SELECT to_regclass(%s)", (t,)).fetchone()[0]}
     out["randuri"] = {t: c.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in COUNT + OPTIONAL_COUNT if c.execute("SELECT to_regclass(%s)", (t,)).fetchone()[0]}
@@ -69,18 +72,19 @@ def main() -> int:
             return 1
         before = rep["randuri"]
         try:
-            c.execute((ROLLBACK if a.rollback else MIG).read_text(encoding="utf-8"))
+            for f in (ROLLBACKS if a.rollback else MIGS):
+                c.execute(f.read_text(encoding="utf-8"))
             now = report(c)
             if now["randuri"] != before:
                 raise RuntimeError(f"numărul de rânduri s-a schimbat: {before} -> {now['randuri']}")
-            if not a.rollback and not now["025_aplicata"]:
-                raise RuntimeError("funcțiile 025 lipsesc după aplicare")
+            if not a.rollback and not (now["025_aplicata"] and now["026_aplicata"]):
+                raise RuntimeError("funcțiile 025/026 lipsesc după aplicare")
             c.commit()
         except Exception as exc:  # noqa: BLE001
             c.rollback()
             print(f"EȘEC (ROLLBACK tranzacție, nimic modificat): {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
             return 1
-    print("OK: rollback aplicat." if a.rollback else "OK: migrarea 025 a fost aplicată.")
+    print("OK: rollback 026+025 aplicat." if a.rollback else "OK: migrările 025 și 026 sunt aplicate.")
     return 0
 
 

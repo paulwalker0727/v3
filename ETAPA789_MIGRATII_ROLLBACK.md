@@ -42,3 +42,9 @@ Nu se salvează în repo. Variabile: `CIMITIR_CP_ADMIN_DATABASE_URL` (doar pentr
 - Autorizarea e în baza de date (SECURITY DEFINER): administrator activ; organizație existentă ⇒ rol Owner; organizație nouă ⇒ administratorul inițial al instalării sau Platform Admin; cimitir cu UID aparținând altei organizații ⇒ refuz.
 - Aplicare pe un Cloud existent: `python scripts/apply_cloud_provision_migration.py --project-ref <REF> --check-only`, apoi aceeași comandă fără `--check-only` (o tranzacție; verifică că numărul de rânduri rămâne identic; cere 023).
 - Rollback: `--rollback` (rulează `pg_rollbacks/025_admin_provision_registry_ROLLBACK.sql`; elimină doar funcțiile, organizațiile/cimitirele create rămân). Fără 025, Cloud-ul pornește, dar endpoint-urile `/admin/registry` și `/admin/provision` răspund 501 `SCHEMA_OUTDATED`, iar asocierea manuală cu cod funcționează ca înainte.
+
+## 026 — cereri de înregistrare din MAIN (`026_registry_requests.sql`)
+- Tabel nou `cp_registry_requests` (RLS activată, FĂRĂ politici/grant-uri pentru `cimitir_cp_app`) + funcții SECURITY DEFINER `cp_regreq_*`. Nu modifică tabele existente.
+- MAIN trimite UID-urile (cerere fără sesiune, protejată de un secret al cererii; în DB doar sha256). Cererile văd/decid: Owner-ul organizației existente sau (organizație nouă) administratorul inițial/Platform Admin. Max. 20 cereri în așteptare, expiră în 24 h, un singur duplicat în așteptare per cimitir.
+- Codul MAIN nu se stochează: la prima interogare după aprobare, serverul îl emite (ca aprobator) o singură dată.
+- Aplicare: `scripts/apply_cloud_provision_migration.py --project-ref <REF>` (aplică 025+026 într-o tranzacție; `--check-only` mai întâi). Rollback: `--rollback` (elimină funcțiile și tabelul de cereri; registrele create rămân). Fără 026: `/admin/registry-requests*` răspunde 501 `SCHEMA_OUTDATED`; asocierea cu parolă Cloud sau cu cod continuă să funcționeze.

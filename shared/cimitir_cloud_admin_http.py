@@ -125,5 +125,10 @@ def create_router(admin: ad.AdminService) -> APIRouter:
     route("GET", "/registry", lambda b, c: admin.registry_status(c["identity"], c["q"].get("organization_uid"), c["q"].get("cemetery_uid")))
     route("POST", "/provision", lambda b, c: admin.provision_registry(
         c["identity"], b.get("organization_uid"), b.get("organization_name"), b.get("cemetery_uid"), b.get("cemetery_name")), status=201)
+    route("POST", "/registry-requests", lambda b, c: admin.request_registration(
+        b.get("secret"), b.get("organization_uid"), b.get("organization_name"), b.get("cemetery_uid"), b.get("cemetery_name"), b.get("device_label", ""), c["ip"]), auth=False, status=201)
+    route("POST", "/registry-requests/status", lambda b, c: admin.poll_request(b.get("request_id"), b.get("secret"), c["ip"]), auth=False)
+    route("GET", "/registry-requests", lambda b, c: admin.list_requests(c["identity"]))
+    route("POST", "/registry-requests/decide", lambda b, c: admin.decide_request(c["identity"], b.get("request_id"), b.get("approve")))
     route("POST", "/cemeteries", lambda b, c: admin.create_cemetery(c["identity"], b.get("organization_uid"), b.get("name"), b.get("cemetery_uid")), status=201)
     return router

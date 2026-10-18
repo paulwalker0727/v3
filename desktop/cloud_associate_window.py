@@ -124,6 +124,19 @@ class CloudAssociateDialog(QDialog):
         self.btn_auto_go.setEnabled(False)
         form.addRow(self.chk_auto)
         form.addRow(self.btn_auto_go)
+        self.chk_req = QCheckBox("Confirm: trimit către Cloud UID-urile și denumirile registrului local, pentru confirmarea administratorului Cloud (fără parolă pe acest calculator)")
+        self.chk_req.setObjectName("assoc_req_confirm")
+        self.btn_req = QPushButton("Trimite cererea de înregistrare")
+        self.btn_req.setObjectName("assoc_req_send")
+        self.btn_req_cancel = QPushButton("Anulează cererea")
+        self.btn_req_cancel.setObjectName("assoc_req_cancel")
+        self.btn_req_cancel.setEnabled(False)
+        form.addRow(QLabel("— varianta fără parolă Cloud aici: cerere confirmată de administrator în /admin/ —"))
+        form.addRow(self.chk_req)
+        row_r = QHBoxLayout()
+        row_r.addWidget(self.btn_req)
+        row_r.addWidget(self.btn_req_cancel)
+        form.addRow(row_r)
         form.addRow(QLabel("— sau, varianta manuală, cu un cod primit de la administrator —"))
         self.ed_code = QLineEdit()
         self.ed_code.setObjectName("assoc_code")
@@ -157,6 +170,11 @@ class CloudAssociateDialog(QDialog):
         self.btn_auto_check.clicked.connect(self._auto_check)
         self.chk_auto.toggled.connect(lambda on: self.btn_auto_go.setEnabled(bool(on and self._auto_state)))
         self.btn_auto_go.clicked.connect(self._auto_go)
+        self.btn_req.clicked.connect(self._req_send)
+        self.btn_req_cancel.clicked.connect(self._req_cancel)
+        self._req_timer = QTimer(self)
+        self._req_timer.setInterval(4000)
+        self._req_timer.timeout.connect(self._req_poll)
         self.btn_verify.clicked.connect(self._verify_code)
         self.chk_confirm.toggled.connect(lambda on: self.btn_go.setEnabled(bool(on and self._plan)))
         self.btn_go.clicked.connect(self._execute)
@@ -257,6 +275,69 @@ class CloudAssociateDialog(QDialog):
             self.chk_auto.setChecked(False)
             self._refresh_buttons()
         self._guarded(work, ok)
+
+    def _req_send(self) -> None:
+        if not self.chk_req.isChecked():
+            self._say("Bifează confirmarea pentru a trimite cererea.")
+            return
+
+        def work(a):
+            org_name, cem_name = self._names(a)
+            return a.request_registration(org_name, cem_name, True)
+
+        def ok(res):
+            self._say(res["message"])
+            self.btn_req.setEnabled(False)
+            self.btn_req_cancel.setEnabled(True)
+            self._req_timer.start()
+        self._guarded(work, ok)
+
+    def _req_poll(self) -> None:
+        if getattr(self, "_req_busy", False):
+            return
+        self._req_busy = True
+
+        def work(a):
+            return a.complete_registration(self._names(a)[1])
+
+        def done(res):
+            self._req_busy = False
+            if res["state"] == "pending":
+                return
+            self._req_timer.stop()
+            v = res["verification"]
+            self._say(v["message"] + "\n\n" + "\n".join(f"✔ {k}: {s}" for k, s in v["checks"].items()))
+            self.btn_req.setEnabled(True)
+            self.btn_req_cancel.setEnabled(False)
+            self.chk_req.setChecked(False)
+            self._refresh_buttons()
+
+        def fail(msg, _nc):
+            self._req_busy = False
+            self._req_timer.stop()
+            self.btn_req.setEnabled(True)
+            self.btn_req_cancel.setEnabled(False)
+            self._say(msg)
+        if not self._can():
+            self._req_busy = False
+            return
+        try:
+            a = self._association()
+        except assoc.AssociationError as exc:
+            self._req_busy = False
+            self._say(str(exc))
+            return
+        _run(self, lambda: work(a), done, fail)
+
+    def _req_cancel(self) -> None:
+        self._req_timer.stop()
+        try:
+            self._association().cancel_request()
+        except Exception:  # noqa: BLE001
+            pass
+        self.btn_req.setEnabled(True)
+        self.btn_req_cancel.setEnabled(False)
+        self._say("Cererea a fost anulată local. Administratorul Cloud o poate respinge sau ea expiră în 24 h.")
 
     def _check_api(self) -> None:
         self._guarded(lambda a: a.check_api(), lambda r: self._say(f"{r['message']}\nHTTPS: {'da' if r['https'] else 'NU (doar localhost)'}\nBază de date: {r['database']} · stocare: {r['storage']}"))

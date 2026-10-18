@@ -239,8 +239,8 @@ def main() -> int:
     try:
         import psycopg
         with psycopg.connect(os.environ["CIMITIR_CP_DATABASE_URL"], connect_timeout=_DB_TIMEOUT, autocommit=True) as c:
-            if not c.execute("SELECT to_regprocedure('cp_admin_provision(uuid,uuid,text,uuid,text)') IS NOT NULL").fetchone()[0]:
-                log.warning("migrarea 025 nu este aplicată: provizionarea automată a registrului din MAIN este indisponibilă (scripts/apply_cloud_provision_migration.py)")
+            if not c.execute("SELECT to_regprocedure('cp_admin_provision(uuid,uuid,text,uuid,text)') IS NOT NULL AND to_regprocedure('cp_regreq_create(text,uuid,text,uuid,text,text)') IS NOT NULL").fetchone()[0]:
+                log.warning("migrările 025/026 nu sunt aplicate: provizionarea și cererile de înregistrare din MAIN sunt indisponibile (scripts/apply_cloud_provision_migration.py)")
     except Exception:  # noqa: BLE001
         pass
     st = admin_mod.bootstrap_token_state()
