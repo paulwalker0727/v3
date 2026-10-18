@@ -27,6 +27,8 @@ git checkout etapa789-asociere-finala
    - Varianta manuală (cod primit de la administrator) rămâne disponibilă în același ecran.
 4. Indicatorul arată: Conectat · Offline · Eroare · Sincronizare în curs. Documentele și fotografiile se sincronizează automat (acte de identitate/cereri NU).
 
+Timeout-ul HTTP către Cloud este 20 s; se poate schimba cu variabila `CIMITIR_CLOUD_HTTP_TIMEOUT` (3–120).
+
 ## 4. Telefon (PWA)
 Administratorul generează codul/QR în `/admin/`; pe telefon: camera nativă (deschide linkul `…/mobile/#pair=…`) **sau** `Scanează codul QR` în aplicație. Pentru încărcarea de fotografii,
 dispozitivul trebuie să aibă dreptul `Încărcare documente`. Datele personale (CNP, act de identitate) nu ajung pe telefon decât dacă administratorul acordă explicit `view_pii`.

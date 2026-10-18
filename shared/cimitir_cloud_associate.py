@@ -12,6 +12,7 @@ Protecțiile din cimitir_bootstrap (BLOCKED_ACTIVE_EMPTY, verify_empty, plan_has
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
@@ -31,6 +32,14 @@ class AssociationError(Exception):
     def __init__(self, message: str, kind: str = "error"):
         super().__init__(message)
         self.kind = kind
+
+
+def http_timeout() -> float:
+    """Timeout HTTP către Cloud (s): 20 implicit (PostgreSQL/Storage la distanță cer mai mult de 5 s); CIMITIR_CLOUD_HTTP_TIMEOUT îl poate schimba (3–120)."""
+    try:
+        return min(max(float(os.environ.get("CIMITIR_CLOUD_HTTP_TIMEOUT", "20")), 3.0), 120.0)
+    except ValueError:
+        return 20.0
 
 
 def normalize_url(raw: str) -> str:
@@ -71,7 +80,7 @@ class Association:
     def __init__(self, binding, store, inst: str, url: str, device_name: str = "MAIN", rcp_factory: Optional[Callable[[str], Any]] = None):
         self.binding, self.store, self.inst, self.device_name = binding, store, inst, device_name or "MAIN"
         self.url = normalize_url(url)
-        self._factory = rcp_factory or (lambda base: client.RemoteControlPlane(base, retries=2))
+        self._factory = rcp_factory or (lambda base: client.RemoteControlPlane(base, retries=2, timeout=http_timeout()))
         self.local = bs.LocalRegistry(binding)
 
     def _rcp(self):
