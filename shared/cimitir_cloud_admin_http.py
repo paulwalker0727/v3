@@ -122,5 +122,8 @@ def create_router(admin: ad.AdminService) -> APIRouter:
     route("POST", "/codes/revoke", lambda b, c: admin.revoke_code(c["identity"], b.get("organization_uid"), b.get("code_id")))
     route("GET", "/devices", lambda b, c: admin.list_devices(c["identity"], c["q"].get("organization_uid", "")))
     route("POST", "/devices/revoke", lambda b, c: admin.revoke_device(c["identity"], b.get("organization_uid"), b.get("binding_uid")))
+    route("GET", "/registry", lambda b, c: admin.registry_status(c["identity"], c["q"].get("organization_uid"), c["q"].get("cemetery_uid")))
+    route("POST", "/provision", lambda b, c: admin.provision_registry(
+        c["identity"], b.get("organization_uid"), b.get("organization_name"), b.get("cemetery_uid"), b.get("cemetery_name")), status=201)
     route("POST", "/cemeteries", lambda b, c: admin.create_cemetery(c["identity"], b.get("organization_uid"), b.get("name"), b.get("cemetery_uid")), status=201)
     return router

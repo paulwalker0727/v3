@@ -117,6 +117,10 @@ def main() -> int:
         force_selector = False
         init_db()
         auth.init_auth()
+        if auth.first_run_required():
+            from first_run_wizard import FirstRunWizard
+            if FirstRunWizard().exec() != QDialog.Accepted:
+                return 0
 
         # audit: app start (dacă modulul security vechi există, altfel skip)
         try:

@@ -61,6 +61,13 @@ class AdminClient:
     def me(self) -> Dict[str, Any]:
         return self._req("GET", "/me")
 
+    def registry_status(self, organization_uid: str, cemetery_uid: str) -> Dict[str, Any]:
+        return self._req("GET", "/registry", params={"organization_uid": organization_uid, "cemetery_uid": cemetery_uid})
+
+    def provision(self, organization_uid: str, organization_name: str, cemetery_uid: str, cemetery_name: str) -> Dict[str, Any]:
+        return self._req("POST", "/provision", {"organization_uid": organization_uid, "organization_name": organization_name,
+                                                "cemetery_uid": cemetery_uid, "cemetery_name": cemetery_name})
+
     def issue_code(self, organization_uid: str, cemetery_uid: str, kind: str, ttl: Optional[int] = None) -> Dict[str, Any]:
         return self._req("POST", "/codes", {"organization_uid": organization_uid, "cemetery_uid": cemetery_uid, "kind": kind, "ttl": ttl})
 

@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
 
 import cimitir_bootstrap as bs
+import cimitir_cloud_admin_client as adc
 import cimitir_cloud_client as client
 import cimitir_cloud_control as cc
 import cimitir_plan_guard as pg
@@ -189,6 +190,41 @@ class Association:
         self.local.clear(SET_UNVERIFIED, SET_PENDING_PLAN)
         return {"binding_uid": row["binding_uid"], "checks": checks, "sync_enabled": True,
                 "message": "Asociere finalizată și verificată. Sincronizarea este activă."}
+
+    # ------------------------------------------------------------------ asociere automată cu administratorul Cloud (provizionare + cod + asociere)
+    @staticmethod
+    def _admin_call(fn, *args):
+        try:
+            return fn(*args)
+        except adc.AdminApiError as exc:
+            raise AssociationError(str(exc), "admin_" + exc.code.lower()) from None
+
+    def registry_in_cloud(self, admin) -> Dict[str, Any]:
+        """Pasul „verifică UID-urile locale și existența registrului în Cloud”: nu scrie nimic. `action`: ready | provision_cemetery | provision_all | forbidden | conflict."""
+        return self._admin_call(admin.registry_status, self.binding.organization_uid, self.binding.cemetery_uid)
+
+    def associate_with_admin(self, admin, organization_name: str, cemetery_name: str, confirmed: bool) -> Dict[str, Any]:
+        """Circuit complet după confirmarea explicită: (provizionare dacă lipsește, păstrând UID-urile) → cod MAIN → verificare → plan → asociere → verificare → sync activ.
+        Nu ocolește nicio protecție: codul rămâne emis de un Owner, iar Flux A/plan_hash/verify_empty rulează neschimbate."""
+        if confirmed is not True:
+            raise AssociationError("Asocierea necesită confirmarea explicită a utilizatorului.", "confirm")
+        steps: Dict[str, Any] = {"api": self.check_api()}
+        org, cem = self.binding.organization_uid, self.binding.cemetery_uid
+        st = self.registry_in_cloud(admin)
+        if st["action"] in ("forbidden", "conflict"):
+            raise AssociationError(st["message"], st["action"])
+        if st["action"] in ("provision_all", "provision_cemetery"):
+            steps["provision"] = self._admin_call(admin.provision, org, organization_name, cem, cemetery_name)
+            st = self.registry_in_cloud(admin)
+            if st["action"] != "ready":
+                raise AssociationError("Provizionarea nu a produs un registru valid în Cloud: " + st["message"], "provision")
+        steps["registry"] = {"action": "ready", "organization_uid": org, "cemetery_uid": cem}
+        code = self._admin_call(admin.issue_code, org, cem, "main")["code"]
+        steps["code"] = self.verify_code(code)
+        planned = self.plan(code, cemetery_name)
+        res = self.execute(planned["plan"], code, True)
+        steps["report"], steps["verification"] = res["report"], res["verification"]
+        return steps
 
     # ------------------------------------------------------------------ întrerupere / reluare / anulare
     def incomplete(self) -> Optional[Dict[str, Any]]:

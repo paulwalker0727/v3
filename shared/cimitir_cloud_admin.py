@@ -71,6 +71,10 @@ class BootstrapClosed(AdminError):
     status, code = 409, "BOOTSTRAP_CLOSED"
 
 
+class SchemaOutdated(AdminError):
+    status, code = 501, "SCHEMA_OUTDATED"
+
+
 # ------------------------------------------------------------------ parole
 def _b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
@@ -452,6 +456,65 @@ class AdminService:
         except cc.ScopeError:
             raise NotFound("legătură inexistentă") from None
         return {"binding_uid": bu, "revoked": True}
+
+    # ------------------------------------------------------------------ provizionarea registrului MAIN (UID-uri originale, migrarea 025)
+    def registry_status(self, identity: str, org: Any, cemetery_uid: Any) -> Dict[str, Any]:
+        """Starea registrului local în Cloud, fără a scrie nimic: există organizația/cimitirul? are administratorul drepturi? poate provizionă?"""
+        org, cem = _uuid(org, "UID organizație"), _uuid(cemetery_uid, "UID cimitir")
+        c = self._conn()
+        try:
+            try:
+                st = c.execute("SELECT cp_admin_registry_lookup(?::uuid, ?::uuid, ?::uuid)", (identity, org, cem)).fetchone()[0]
+            except psycopg.errors.InsufficientPrivilege:
+                raise Forbidden("contul nu este administrator activ") from None
+            except psycopg.errors.UndefinedFunction:
+                raise SchemaOutdated("Cloud-ul nu are migrarea 025 (provizionare registru); administratorul serverului rulează scripts/apply_cloud_provision_migration.py") from None
+        finally:
+            c.close()
+        st = json.loads(st) if isinstance(st, str) else st
+        if st["cemetery_in_other_organization"]:
+            action, msg = "conflict", "Cimitirul cu acest UID există deja în Cloud, dar în altă organizație. Nu se poate asocia (UID-urile nu se modifică)."
+        elif st["organization_exists"] and not st["is_owner"]:
+            action, msg = "forbidden", "Organizația există în Cloud, dar contul dumneavoastră nu este Owner al ei."
+        elif st["organization_exists"] and st["cemetery_in_organization"]:
+            action, msg = "ready", "Registrul există în Cloud (același UID de organizație și cimitir). Se poate genera cod de asociere."
+        elif st["organization_exists"]:
+            action, msg = "provision_cemetery", "Organizația există în Cloud; cimitirul lipsește și va fi creat cu UID-ul original."
+        elif st["can_provision_organization"]:
+            action, msg = "provision_all", "Registrul nu există în Cloud. Organizația și cimitirul pot fi create automat, cu UID-urile originale."
+        else:
+            action, msg = "forbidden", "Registrul nu există în Cloud, iar contul dumneavoastră nu are dreptul de a crea organizații noi (cere administratorului instalării Cloud)."
+        return {**st, "action": action, "message": msg, "organization_uid": org, "cemetery_uid": cem}
+
+    def provision_registry(self, identity: str, org: Any, org_name: Any, cemetery_uid: Any, cemetery_name: Any) -> Dict[str, Any]:
+        org, cem = _uuid(org, "UID organizație"), _uuid(cemetery_uid, "UID cimitir")
+        on = (org_name or "").strip()[:200] if isinstance(org_name, str) else ""
+        cn = (cemetery_name or "").strip()[:200] if isinstance(cemetery_name, str) else ""
+        c = self._conn()
+        try:
+            try:
+                row = c.execute("SELECT cp_admin_provision(?::uuid, ?::uuid, ?, ?::uuid, ?)", (identity, org, on, cem, cn)).fetchone()[0]
+            except psycopg.errors.InsufficientPrivilege as exc:
+                m = str(exc)
+                if "cemetery_other_org" in m:
+                    raise BadRequest("cimitirul aparține deja altei organizații (UID-urile nu se modifică)") from None
+                if "not_owner" in m:
+                    raise Forbidden("nu ești Owner al organizației existente în Cloud") from None
+                if "not_provisioner" in m:
+                    raise Forbidden("contul nu are dreptul de a crea organizații noi în Cloud") from None
+                raise Forbidden("operație refuzată") from None
+            except psycopg.errors.InvalidParameterValue:
+                raise BadRequest("denumirea organizației este obligatorie pentru o organizație nouă") from None
+            except psycopg.errors.UndefinedFunction:
+                raise SchemaOutdated("Cloud-ul nu are migrarea 025 (provizionare registru); administratorul serverului rulează scripts/apply_cloud_provision_migration.py") from None
+            res = json.loads(row) if isinstance(row, str) else row
+            c.set_ctx(org=org, cems="*", principal=identity)
+            self.cp._audit(c, identity, "admin_provision_registry", org, cem, organization_created=bool(res["organization_created"]),
+                           cemetery_created=bool(res["cemetery_created"]))
+        finally:
+            c.close()
+        return {"organization_uid": org, "cemetery_uid": cem, "organization_created": res["organization_created"],
+                "cemetery_created": res["cemetery_created"], "cemetery_status": res["cemetery_status"]}
 
     def create_cemetery(self, identity: str, org: str, name: Any, cemetery_uid: Any = None) -> Dict[str, Any]:
         org = _uuid(org, "UID organizație")
