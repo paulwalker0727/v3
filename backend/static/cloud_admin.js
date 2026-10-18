@@ -77,7 +77,7 @@
     var org = curOrg();
     if (!S.cem || !org.cemeteries.some(function (c) { return c.uid === S.cem; })) S.cem = org.cemeteries.length ? org.cemeteries[0].uid : null;
     var orgSel = h("select", { id: "sel-org", "data-testid": "select-organization", on: { change: function (e) { S.org = e.target.value; S.cem = null; S.code = null; renderDash(); } } },
-      me.organizations.map(function (o) { return h("option", { value: o.organization_uid, text: o.name || o.organization_uid }); }));
+      me.organizations.slice().sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); }).map(function (o) { return h("option", { value: o.organization_uid, text: o.name || o.organization_uid }); }));
     orgSel.value = S.org;
     var cemSel = h("select", { id: "sel-cem", "data-testid": "select-cemetery", on: { change: function (e) { S.cem = e.target.value; S.code = null; renderDash(); } } },
       org.cemeteries.map(function (c) { return h("option", { value: c.uid, text: c.name + " (" + c.status + ")" }); }));
@@ -115,7 +115,7 @@
         return h("tr", { "data-testid": "request-row" }, [h("td", { "data-testid": "request-short-id", text: r.short_id }), h("td", { text: (r.organization_name || "—") + " / " + (r.cemetery_name || "—") }),
           h("td", { class: "muted", text: what }), h("td", { class: "muted", text: r.device_label || "—" }),
           h("td", { class: "muted", text: r.organization_uid.slice(0, 8) + "… / " + r.cemetery_uid.slice(0, 8) + "…" }),
-          h("td", {}, [h("button", { "data-testid": "approve-request-" + r.short_id, text: "Confirmă", on: { click: function () { decide(r, true, what); } } }),
+          h("td", { class: "act" }, [h("button", { "data-testid": "approve-request-" + r.short_id, text: "Confirmă", on: { click: function () { decide(r, true, what); } } }),
             h("button", { class: "danger", "data-testid": "reject-request-" + r.short_id, text: "Respinge", on: { click: function () { decide(r, false, what); } } })])]);
       });
       card.replaceChildren(h("h2", { text: "Cereri de înregistrare de la MAIN" }),
@@ -131,7 +131,7 @@
     if (!confirm(msg)) return;
     api("POST", "/registry-requests/decide", { request_id: r.request_id, approve: approve }).then(function (j) {
       toast(j.ok ? (approve ? "Registru înregistrat. MAIN continuă asocierea automat." : "Cerere respinsă.") : (j.message || "Eroare"));
-      if (j.ok && approve) loadMe(); else loadRequests();
+      if (j.ok && approve) { S.org = j.result.organization_uid; S.cem = j.result.cemetery_uid; S.code = null; loadMe(); } else loadRequests();
     });
   }
 
@@ -141,7 +141,7 @@
       h("button", { "data-testid": "mp-submit", text: "Înregistrează în Cloud", on: { click: function () {
         if (!confirm("Înregistrezi în Cloud organizația/cimitirul cu aceste UID-uri? Operația nu modifică înregistrări existente.")) return;
         api("POST", "/provision", { organization_uid: val("mp-org-uid"), organization_name: val("mp-org-name"), cemetery_uid: val("mp-cem-uid"), cemetery_name: val("mp-cem-name") })
-          .then(function (j) { if (j.ok) { toast("Înregistrat (" + (j.result.organization_created ? "organizație nouă" : "organizație existentă") + ", " + (j.result.cemetery_created ? "cimitir nou" : "cimitir existent") + ")."); loadMe(); } else showErr("mp-err", j); });
+          .then(function (j) { if (j.ok) { S.org = j.result.organization_uid; S.cem = j.result.cemetery_uid; S.code = null; toast("Înregistrat (" + (j.result.organization_created ? "organizație nouă" : "organizație existentă") + ", " + (j.result.cemetery_created ? "cimitir nou" : "cimitir existent") + ")."); loadMe(); } else showErr("mp-err", j); });
       } } }), errBox("mp-err")])]);
   }
 

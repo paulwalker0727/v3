@@ -122,6 +122,9 @@ def test_visibility_follows_ownership_and_rls(ca):
     assert [c["uid"] for o in me["organizations"] if o["organization_uid"] == w.org1 for c in o["cemeteries"]].count(cem_in_org1) == 1
     with pytest.raises(adc.AdminApiError):
         ca["admin"].decide_request(str(uuid.uuid4()), True)                                     # cerere inexistentă
+    with pytest.raises(adc.AdminApiError) as eb:
+        ca["admin"]._req("POST", "/registry-requests/decide", {"request_id": rid_new, "approve": "false"})   # „approve” trebuie să fie boolean real
+    assert eb.value.status == 400
     owner2.close(); adm_only.close(); cl.close()
 
 

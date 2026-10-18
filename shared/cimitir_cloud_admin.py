@@ -565,6 +565,8 @@ class AdminService:
 
     def decide_request(self, identity: str, request_id: Any, approve: Any) -> Dict[str, Any]:
         rid = _uuid(request_id, "identificator cerere")
+        if not isinstance(approve, bool):
+            raise BadRequest("câmpul „approve” trebuie să fie true sau false")
         c = self._conn()
         try:
             try:
