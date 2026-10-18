@@ -20,34 +20,27 @@ python scripts\apply_cloud_provision_migration.py --project-ref jqtdeuzkqtzfsdoh
 ```
 Rollback (doar dacă e nevoie): `... --rollback`.
 
-## 2. Cloud în Docker (port 8084)
-Fișier `D:\v3-test\.env.cloud-test` (NU în Git):
-```
-CIMITIR_CP_DATABASE_URL=postgresql://cimitir_cp_app.jqtdeuzkqtzfsdohvxmy:<PAROLA_RUNTIME>@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require
-CIMITIR_CLOUD_PROJECT_REF=jqtdeuzkqtzfsdohvxmy
-SUPABASE_URL=https://jqtdeuzkqtzfsdohvxmy.supabase.co
-SUPABASE_SECRET_KEY=<service_role / secret key>
-SUPABASE_BUCKET=cimitir-private-test
-CIMITIR_PUBLIC_URL=http://192.168.x.x:8084
-```
-(`192.168.x.x` = IP-ul laptopului în Wi-Fi, ca telefonul să ajungă la el; pentru HTTPS/cameră pe telefon vezi `TEST_TELEFON_ANDROID_IPHONE.md`.)
+## 2. Cloud în Docker — container nou de test (NU se șterge/modifică niciun container existent)
+Pașii exacți (build cu tag nou, canary pe portul 8085, mediul copiat din containerul existent) sunt în **`INSTALARE_TEST_WINDOWS_DOCKER.md`**, secțiunile 3–4. Rezumat:
 ```powershell
-docker build -f deploy\cloud\Dockerfile -t cimitir-cloud:admin-provision-ui .
-docker rm -f cimitir-cloud-etapa789-test 2>$null
-docker run -d --name cimitir-cloud-etapa789-test -p 8084:8080 --env-file .env.cloud-test cimitir-cloud:admin-provision-ui
-curl http://localhost:8084/api/v1/health          # așteptat: ok, database UP, storage configured
+cd D:\v3-main\deploy\windows
+.\laptop_cloud_test.ps1 status
+.\laptop_cloud_test.ps1 build  -Tag etapa789-ui-1
+.\laptop_cloud_test.ps1 canary -Tag etapa789-ui-1 -Source cimitir-cloud-etapa789-test -CanaryPort 8085
+curl http://127.0.0.1:8085/api/v1/health          # așteptat: ok, database UP, storage configured
 ```
+În restul documentului, „Cloud” = `http://127.0.0.1:8085` (nu 8084).
 | # | Verificare | Rezultat |
 |---|---|---|
-| 2.1 | `/api/v1/health` = 200, `database: up`, `storage: configured` | |
-| 2.2 | `http://localhost:8084/admin/` → login cu administratorul Cloud TEST | |
+| 2.1 | `http://127.0.0.1:8085/api/v1/health` = 200, `database: up`, `storage: configured` | |
+| 2.2 | `http://127.0.0.1:8085/admin/` → login cu administratorul Cloud TEST | |
 | 2.3 | Cardul „Cereri de înregistrare de la MAIN” apare (gol, fără eroare 501) | |
 
 ## 3. MAIN (Windows) — registru NOU de la zero
 1. Pornește aplicația cu un director de date curat: `set CIMITIR_DATA_DIR=D:\cimitir-test-nou` apoi `python desktop\main.py`.
 2. Creează organizația (ex. `ParohiaTest2`) și cimitirul (ex. `test2`). **Notează numele, nu UID-urile.**
 3. **Configurare inițială** → alege administrator local + parolă (≥12 caractere). `admin/admin123` NU trebuie să funcționeze.
-4. Autentifică-te local → 🔗 **Asociază cu Cloud** → adresa `http://localhost:8084`.
+4. Autentifică-te local → 🔗 **Asociază cu Cloud** → adresa `http://127.0.0.1:8085`.
 
 | # | Verificare | Rezultat |
 |---|---|---|
@@ -87,7 +80,7 @@ python scripts\test_data_inventory.py show --project-ref jqtdeuzkqtzfsdohvxmy --
 
 ## 5. Verificare automată LIVE (aceleași operații, registru fictiv)
 ```powershell
-$env:CLOUD_URL="http://localhost:8084"; $env:CIMITIR_LIVE_ADMIN_EMAIL="admin.test@example.invalid"; $env:CIMITIR_LIVE_ADMIN_PASSWORD="<parola>"
+$env:CLOUD_URL="http://127.0.0.1:8085"; $env:CIMITIR_LIVE_ADMIN_EMAIL="admin.test@example.invalid"; $env:CIMITIR_LIVE_ADMIN_PASSWORD="<parola>"
 python scripts\verify_provision_live.py --yes-write-test-data      # ≈2–3 min pe Supabase; așteptat: PASS=9 FAIL=0
 ```
 
