@@ -44,6 +44,6 @@ Windows real (UI PySide6, DPAPI, `.bat`, instalator), imaginea/containerul dumne
 ## Probleme rămase / riscuri
 1. **Circuitul real de pe laptopul dvs. (MAIN Windows + Docker + ParohiaTest) este NETESTAT** ⇒ NU declar READY TO MERGE. Pași: reconstruiți imaginea cu ramura, în MAIN: Asociază cu Cloud → administrator Cloud → Provizionează și asociază; apoi QR telefon și fotografii. Fotografiere pe telefon real: NETESTAT.
 2. Dreptul de a crea organizații noi: doar administratorul inițial al instalării Cloud sau Platform Admin. Verificat pe Supabase TEST: `admin.test@example.invalid` este administratorul inițial.
-3. Parola rolurilor `postgres`/`cimitir_cp_app`, parola administratorului Cloud și cheia `service_role` au fost comunicate în chat (nu sunt în repo/patch): rotiți-le acum că testele LIVE s-au încheiat. Parola administratorului Cloud și cea a rolurilor de bază de date sunt aceeași valoare: schimbați-le.
+3. Parola rolurilor `postgres`/`cimitir_cp_app`, parola administratorului Cloud și cheia `service_role` au fost comunicate în chat (nu sunt în repo/patch): rotiți-le acum că testele LIVE s-au încheiat.
 4. Instalările existente cu `admin/admin123` păstrează conturile (sunt forțate la schimbarea parolei la autentificare); nu le șterg automat.
 5. Fotografiile de pe telefon intră prin `sync_v2_documents` (nu prin aprobarea manuală Field Inbox) — decizie preexistentă de confirmat.
