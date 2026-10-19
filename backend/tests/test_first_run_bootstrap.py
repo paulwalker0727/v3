@@ -178,15 +178,16 @@ def test_bootstrap_never_runs_when_an_admin_already_exists(empty_pg, tmp_path, m
     assert not ok and "dezactivat" in msg
 
 
-def test_sqlite_local_desktop_mode_keeps_legacy_defaults(tmp_path, monkeypatch):
-    """Comportamentul desktop/offline rămâne: SQLite local creează conturile implicite (cu schimbare obligatorie)."""
+def test_sqlite_local_desktop_mode_creates_no_default_accounts(tmp_path, monkeypatch):
+    """Instalările comerciale (și SQLite local) NU mai creează admin/user implicit: primul administrator vine din asistentul de configurare inițială."""
     for k, v in {"CIMITIR_MODE": "local", "CIMITIR_DB_ENGINE": "sqlite", "CIMITIR_IGNORE_PROJECT_ENV": "1"}.items():
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("CIMITIR_ALLOW_DEFAULT_USERS", raising=False)
     server = _load_server(tmp_path / "data")
     import cimitir_auth as auth
     auth.init_auth()
-    assert {u["username"] for u in auth.list_users()} == {"admin", "user"}
-    assert _login(TestClient(server.app), "admin", "admin123").headers["location"] == "/admin/schimba-parola"
-    monkeypatch.setenv("CIMITIR_MODE", "online")   # online + SQLite: fără conturi implicite
+    assert auth.list_users() == [] and auth.first_run_required() and auth.default_users_allowed() is False
+    assert auth.setup_first_admin("primar.admin", "Parola-Definitiva-2026!", "Parola-Definitiva-2026!")[0] is True
+    assert _login(TestClient(server.app), "primar.admin", "Parola-Definitiva-2026!").headers["location"] != "/admin/schimba-parola"
+    monkeypatch.setenv("CIMITIR_MODE", "online")
     assert auth.default_users_allowed() is False

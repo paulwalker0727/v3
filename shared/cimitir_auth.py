@@ -222,12 +222,22 @@ _USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,40}$")
 
 
 def default_users_allowed() -> bool:
-    """Conturile implicite admin/admin123 + user/user123 se creează DOAR în modul local pe SQLite (desktop/dezvoltare/teste).
-    Pe un server online sau pe PostgreSQL NU se creează niciodată (excepție explicită, doar pentru dezvoltare: CIMITIR_ALLOW_DEFAULT_USERS=1)."""
+    """Conturile implicite admin/admin123 + user/user123 NU se mai creează în instalările comerciale (nici local/SQLite): primul administrator se
+    creează prin asistentul de configurare inițială. Excepție explicită, doar pentru dezvoltare/teste: CIMITIR_ALLOW_DEFAULT_USERS=1."""
     cimitir_config.load_env()
-    if os.environ.get(ENV_ALLOW_DEFAULT, "").strip() == "1":
-        return True
-    return cimitir_config.db_engine() == "sqlite" and cimitir_config.mode() == "local"
+    return os.environ.get(ENV_ALLOW_DEFAULT, "").strip() == "1"
+
+
+def first_run_required() -> bool:
+    """True dacă registrul activ nu are niciun administrator local: trebuie rulat asistentul de configurare inițială."""
+    return not admin_exists()
+
+
+def setup_first_admin(username: str, password: str, confirm: str) -> Tuple[bool, str]:
+    """Asistentul de configurare inițială: parola o alege utilizatorul, deci nu mai e nevoie de schimbare forțată la primul login."""
+    if (password or "") != (confirm or ""):
+        return False, "Parolele nu coincid."
+    return create_first_admin(username, password, must_change=False)
 
 
 def admin_exists() -> bool:
@@ -252,7 +262,7 @@ def validate_first_admin(username: str, password: str) -> str:
     return ""
 
 
-def create_first_admin(username: str, password: str) -> Tuple[bool, str]:
+def create_first_admin(username: str, password: str, must_change: bool = True) -> Tuple[bool, str]:
     """Creează primul administrator. Refuză dacă există deja un admin. Contul trebuie să-și schimbe parola la primul login."""
     if admin_exists():
         return False, "Există deja un administrator; bootstrap-ul este dezactivat."
@@ -262,8 +272,9 @@ def create_first_admin(username: str, password: str) -> Tuple[bool, str]:
     uid = create_user(username.strip(), password, ROLE_ADMIN)
     if not uid or not admin_exists():
         return False, "Contul nu a putut fi creat (nume deja folosit?)."
-    set_must_change(uid, True)
-    return True, "Primul administrator a fost creat; la primul login i se cere schimbarea parolei."
+    if must_change:
+        set_must_change(uid, True)
+    return True, ("Primul administrator a fost creat; la primul login i se cere schimbarea parolei." if must_change else "Primul administrator local a fost creat.")
 
 
 def bootstrap_from_env() -> str:

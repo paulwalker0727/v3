@@ -12,11 +12,14 @@ Protecțiile din cimitir_bootstrap (BLOCKED_ACTIVE_EMPTY, verify_empty, plan_has
 from __future__ import annotations
 
 import json
+import os
 import re
+import secrets
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
 
 import cimitir_bootstrap as bs
+import cimitir_cloud_admin_client as adc
 import cimitir_cloud_client as client
 import cimitir_cloud_control as cc
 import cimitir_plan_guard as pg
@@ -30,6 +33,14 @@ class AssociationError(Exception):
     def __init__(self, message: str, kind: str = "error"):
         super().__init__(message)
         self.kind = kind
+
+
+def http_timeout() -> float:
+    """Timeout HTTP către Cloud (s): 20 implicit (PostgreSQL/Storage la distanță cer mai mult de 5 s); CIMITIR_CLOUD_HTTP_TIMEOUT îl poate schimba (3–120)."""
+    try:
+        return min(max(float(os.environ.get("CIMITIR_CLOUD_HTTP_TIMEOUT", "20")), 3.0), 120.0)
+    except ValueError:
+        return 20.0
 
 
 def normalize_url(raw: str) -> str:
@@ -70,7 +81,7 @@ class Association:
     def __init__(self, binding, store, inst: str, url: str, device_name: str = "MAIN", rcp_factory: Optional[Callable[[str], Any]] = None):
         self.binding, self.store, self.inst, self.device_name = binding, store, inst, device_name or "MAIN"
         self.url = normalize_url(url)
-        self._factory = rcp_factory or (lambda base: client.RemoteControlPlane(base, retries=2))
+        self._factory = rcp_factory or (lambda base: client.RemoteControlPlane(base, retries=2, timeout=http_timeout()))
         self.local = bs.LocalRegistry(binding)
 
     def _rcp(self):
@@ -189,6 +200,95 @@ class Association:
         self.local.clear(SET_UNVERIFIED, SET_PENDING_PLAN)
         return {"binding_uid": row["binding_uid"], "checks": checks, "sync_enabled": True,
                 "message": "Asociere finalizată și verificată. Sincronizarea este activă."}
+
+    # ------------------------------------------------------------------ asociere automată cu administratorul Cloud (provizionare + cod + asociere)
+    @staticmethod
+    def _admin_call(fn, *args):
+        try:
+            return fn(*args)
+        except adc.AdminApiError as exc:
+            raise AssociationError(str(exc), "admin_" + exc.code.lower()) from None
+
+    def registry_in_cloud(self, admin) -> Dict[str, Any]:
+        """Pasul „verifică UID-urile locale și existența registrului în Cloud”: nu scrie nimic. `action`: ready | provision_cemetery | provision_all | forbidden | conflict."""
+        return self._admin_call(admin.registry_status, self.binding.organization_uid, self.binding.cemetery_uid)
+
+    def associate_with_admin(self, admin, organization_name: str, cemetery_name: str, confirmed: bool) -> Dict[str, Any]:
+        """Circuit complet după confirmarea explicită: (provizionare dacă lipsește, păstrând UID-urile) → cod MAIN → verificare → plan → asociere → verificare → sync activ.
+        Nu ocolește nicio protecție: codul rămâne emis de un Owner, iar Flux A/plan_hash/verify_empty rulează neschimbate."""
+        if confirmed is not True:
+            raise AssociationError("Asocierea necesită confirmarea explicită a utilizatorului.", "confirm")
+        steps: Dict[str, Any] = {"api": self.check_api()}
+        org, cem = self.binding.organization_uid, self.binding.cemetery_uid
+        st = self.registry_in_cloud(admin)
+        if st["action"] in ("forbidden", "conflict"):
+            raise AssociationError(st["message"], st["action"])
+        if st["action"] in ("provision_all", "provision_cemetery"):
+            steps["provision"] = self._admin_call(admin.provision, org, organization_name, cem, cemetery_name)
+            st = self.registry_in_cloud(admin)
+            if st["action"] != "ready":
+                raise AssociationError("Provizionarea nu a produs un registru valid în Cloud: " + st["message"], "provision")
+        steps["registry"] = {"action": "ready", "organization_uid": org, "cemetery_uid": cem}
+        code = self._admin_call(admin.issue_code, org, cem, "main")["code"]
+        steps["code"] = self.verify_code(code)
+        planned = self.plan(code, cemetery_name)
+        res = self.execute(planned["plan"], code, True)
+        steps["report"], steps["verification"] = res["report"], res["verification"]
+        return steps
+
+    # ------------------------------------------------------------------ cerere de înregistrare (fără parolă de administrator Cloud pe acest calculator)
+    SET_REGREQ = "cloud_regreq_id"
+
+    def request_registration(self, organization_name: str, cemetery_name: str, confirmed: bool) -> Dict[str, Any]:
+        """MAIN trimite automat UID-urile; administratorul Cloud confirmă în /admin/. Secretul cererii rămâne doar în SecretStore."""
+        if confirmed is not True:
+            raise AssociationError("Trimiterea cererii necesită confirmarea explicită a utilizatorului.", "confirm")
+        self.check_api()
+        secret = secrets.token_urlsafe(32)
+        cl = adc.AdminClient(self.url)
+        try:
+            res = self._admin_call(cl.request_registration, secret, self.binding.organization_uid, organization_name, self.binding.cemetery_uid, cemetery_name, self.device_name)
+        finally:
+            cl.close()
+        self.store.set(f"regreq/{res['request_id']}", secret)
+        self.local.put(**{self.SET_REGREQ: res["request_id"]})
+        return {"request_id": res["request_id"], "short_id": res["short_id"], "message": f"Cerere trimisă (ID {res['short_id']}). Administratorul Cloud o confirmă în /admin/; aplicația continuă automat."}
+
+    def pending_request(self) -> Optional[str]:
+        return self.local.get(self.SET_REGREQ) or None
+
+    def cancel_request(self) -> None:
+        rid = self.pending_request()
+        if rid:
+            self.store.delete(f"regreq/{rid}")
+            self.local.clear(self.SET_REGREQ)
+
+    def complete_registration(self, cemetery_name: str = "") -> Dict[str, Any]:
+        """Interoghează cererea. `pending` ⇒ așteaptă; `approved` ⇒ rulează automat verificarea codului, planul și asocierea (protecțiile Flux A rămân)."""
+        rid = self.pending_request()
+        if not rid:
+            raise AssociationError("Nu există nicio cerere de înregistrare trimisă.", "none")
+        secret = self.store.get(f"regreq/{rid}")
+        if not secret:
+            self.local.clear(self.SET_REGREQ)
+            raise AssociationError("Secretul cererii nu mai există în SecretStore; trimite o cerere nouă.", "none")
+        cl = adc.AdminClient(self.url)
+        try:
+            st = self._admin_call(cl.registration_status, rid, secret)
+        finally:
+            cl.close()
+        if st["state"] == "pending":
+            return {"state": "pending", "message": "Se așteaptă confirmarea administratorului Cloud în /admin/."}
+        if st["state"] in ("rejected", "expired", "consumed") or not st.get("code"):
+            self.cancel_request()
+            raise AssociationError({"rejected": "Cererea a fost respinsă de administratorul Cloud.", "expired": "Cererea a expirat (24 h); trimite una nouă."}.get(
+                st["state"], "Cererea a fost deja folosită; trimite una nouă."), "request_" + st["state"])
+        code = st["code"]
+        self.verify_code(code)
+        planned = self.plan(code, cemetery_name)
+        res = self.execute(planned["plan"], code, True)
+        self.cancel_request()
+        return {"state": "associated", "verification": res["verification"], "message": res["verification"]["message"]}
 
     # ------------------------------------------------------------------ întrerupere / reluare / anulare
     def incomplete(self) -> Optional[Dict[str, Any]]:

@@ -70,6 +70,8 @@ class CloudAssociateDialog(QDialog):
         self._admin: Optional[adc.AdminClient] = None
         self._me: Optional[Dict[str, Any]] = None
         self._issued: Optional[Dict[str, Any]] = None
+        self._auto_admin: Optional[adc.AdminClient] = None
+        self._auto_state: Optional[Dict[str, Any]] = None
         lay = QVBoxLayout(self)
         tabs = QTabWidget()
         tabs.addTab(self._build_assoc(), "Asociază acest calculator")
@@ -99,6 +101,43 @@ class CloudAssociateDialog(QDialog):
             i = self.cmb_local.findData(cur.cemetery_uid)
             self.cmb_local.setCurrentIndex(max(i, 0))
         form.addRow("Organizație / cimitir local:", self.cmb_local)
+        info = QLabel("<b>Două autentificări diferite:</b> contul LOCAL (administratorul MAIN, deja autentificat) permite acest ecran; "
+                      "contul <b>administrator CLOUD</b> (email + parolă primite de la administratorul serverului) autorizează crearea registrului în Cloud și codul de asociere. "
+                      "Parolele nu se păstrează și cheia definitivă ajunge direct în SecretStore.")
+        info.setWordWrap(True)
+        form.addRow(info)
+        self.ed_cmail = QLineEdit()
+        self.ed_cmail.setObjectName("assoc_cloud_email")
+        self.ed_cpass = QLineEdit()
+        self.ed_cpass.setEchoMode(QLineEdit.Password)
+        self.ed_cpass.setObjectName("assoc_cloud_pass")
+        self.btn_auto_check = QPushButton("Autentifică-te în Cloud și verifică registrul")
+        self.btn_auto_check.setObjectName("assoc_auto_check")
+        form.addRow("Administrator Cloud — email:", self.ed_cmail)
+        form.addRow("Administrator Cloud — parolă:", self.ed_cpass)
+        form.addRow(self.btn_auto_check)
+        self.chk_auto = QCheckBox("Confirm: creez în Cloud (dacă lipsesc) organizația și cimitirul cu UID-urile originale și asociez acest calculator")
+        self.chk_auto.setObjectName("assoc_auto_confirm")
+        self.chk_auto.setEnabled(False)
+        self.btn_auto_go = QPushButton("Provizionează (dacă e nevoie) și asociază automat")
+        self.btn_auto_go.setObjectName("assoc_auto_go")
+        self.btn_auto_go.setEnabled(False)
+        form.addRow(self.chk_auto)
+        form.addRow(self.btn_auto_go)
+        self.chk_req = QCheckBox("Confirm: trimit către Cloud UID-urile și denumirile registrului local, pentru confirmarea administratorului Cloud (fără parolă pe acest calculator)")
+        self.chk_req.setObjectName("assoc_req_confirm")
+        self.btn_req = QPushButton("Trimite cererea de înregistrare")
+        self.btn_req.setObjectName("assoc_req_send")
+        self.btn_req_cancel = QPushButton("Anulează cererea")
+        self.btn_req_cancel.setObjectName("assoc_req_cancel")
+        self.btn_req_cancel.setEnabled(False)
+        form.addRow(QLabel("— varianta fără parolă Cloud aici: cerere confirmată de administrator în /admin/ —"))
+        form.addRow(self.chk_req)
+        row_r = QHBoxLayout()
+        row_r.addWidget(self.btn_req)
+        row_r.addWidget(self.btn_req_cancel)
+        form.addRow(row_r)
+        form.addRow(QLabel("— sau, varianta manuală, cu un cod primit de la administrator —"))
         self.ed_code = QLineEdit()
         self.ed_code.setObjectName("assoc_code")
         self.ed_code.setPlaceholderText("Codul temporar primit de la administrator")
@@ -128,6 +167,14 @@ class CloudAssociateDialog(QDialog):
             btns.addWidget(b)
         lay.addLayout(btns)
         self.btn_check.clicked.connect(self._check_api)
+        self.btn_auto_check.clicked.connect(self._auto_check)
+        self.chk_auto.toggled.connect(lambda on: self.btn_auto_go.setEnabled(bool(on and self._auto_state)))
+        self.btn_auto_go.clicked.connect(self._auto_go)
+        self.btn_req.clicked.connect(self._req_send)
+        self.btn_req_cancel.clicked.connect(self._req_cancel)
+        self._req_timer = QTimer(self)
+        self._req_timer.setInterval(4000)
+        self._req_timer.timeout.connect(self._req_poll)
         self.btn_verify.clicked.connect(self._verify_code)
         self.chk_confirm.toggled.connect(lambda on: self.btn_go.setEnabled(bool(on and self._plan)))
         self.btn_go.clicked.connect(self._execute)
@@ -169,6 +216,128 @@ class CloudAssociateDialog(QDialog):
             self._say(f"Stare locală: {st}" + (f"\nAsociere întreruptă ({info['state']}, faza {info['phase']}): reia sau anulează." if info else ""))
         except Exception:  # noqa: BLE001
             self.btn_resume.setEnabled(False)
+
+    def _names(self, a: assoc.Association):
+        org = self._cat.get_organization(a.binding.organization_uid) or {}
+        cem = self._cat.get_cemetery(a.binding.cemetery_uid) or {}
+        return (org.get("display_name") or org.get("official_name") or "Organizație"), (cem.get("name") or "Cimitir")
+
+    def _auto_check(self) -> None:
+        email, pw = self.ed_cmail.text().strip(), self.ed_cpass.text()
+        self.ed_cpass.clear()
+        self._auto_state = None
+        self.chk_auto.setChecked(False)
+        self.chk_auto.setEnabled(False)
+        self.btn_auto_go.setEnabled(False)
+
+        def work(a):
+            a.check_api()
+            cl = adc.AdminClient(a.url)
+            try:
+                cl.login(email, pw)
+                return cl, a.registry_in_cloud(cl)
+            except Exception:
+                cl.close()
+                raise
+
+        def ok(res):
+            cl, st = res
+            if self._auto_admin:
+                self._auto_admin.close()
+            self._auto_admin, self._auto_state = cl, st
+            org_name, cem_name = (self._names(self._association()) if self.cmb_local.currentData() else ("", ""))
+            self._say(f"Autentificat în Cloud.\n\nOrganizație locală: {org_name} ({st['organization_uid']})\nCimitir local: {cem_name} ({st['cemetery_uid']})\n\n{st['message']}"
+                      + ("\n\nBifează confirmarea pentru a continua." if st["action"] in ("ready", "provision_cemetery", "provision_all") else ""))
+            self.chk_auto.setEnabled(st["action"] in ("ready", "provision_cemetery", "provision_all"))
+            if st["action"] not in ("ready", "provision_cemetery", "provision_all"):
+                self._auto_state = None
+        self._guarded(work, ok)
+
+    def _auto_go(self) -> None:
+        if not (self._auto_admin and self._auto_state and self.chk_auto.isChecked()):
+            return
+        self.btn_auto_go.setEnabled(False)
+        cl = self._auto_admin
+
+        def work(a):
+            org_name, cem_name = self._names(a)
+            return a.associate_with_admin(cl, org_name, cem_name, True)
+
+        def ok(res):
+            v = res["verification"]
+            prov = res.get("provision")
+            lines = [v["message"], ""]
+            if prov:
+                lines.append(f"✔ Provizionat în Cloud: organizație {'creată' if prov['organization_created'] else 'existentă'}, cimitir {'creat' if prov['cemetery_created'] else 'existent'} (UID-uri originale)")
+            lines += [f"✔ {k}: {s}" for k, s in v["checks"].items()]
+            self._say("\n".join(lines))
+            self._auto_state = None
+            self.chk_auto.setChecked(False)
+            self._refresh_buttons()
+        self._guarded(work, ok)
+
+    def _req_send(self) -> None:
+        if not self.chk_req.isChecked():
+            self._say("Bifează confirmarea pentru a trimite cererea.")
+            return
+
+        def work(a):
+            org_name, cem_name = self._names(a)
+            return a.request_registration(org_name, cem_name, True)
+
+        def ok(res):
+            self._say(res["message"])
+            self.btn_req.setEnabled(False)
+            self.btn_req_cancel.setEnabled(True)
+            self._req_timer.start()
+        self._guarded(work, ok)
+
+    def _req_poll(self) -> None:
+        if getattr(self, "_req_busy", False):
+            return
+        self._req_busy = True
+
+        def work(a):
+            return a.complete_registration(self._names(a)[1])
+
+        def done(res):
+            self._req_busy = False
+            if res["state"] == "pending":
+                return
+            self._req_timer.stop()
+            v = res["verification"]
+            self._say(v["message"] + "\n\n" + "\n".join(f"✔ {k}: {s}" for k, s in v["checks"].items()))
+            self.btn_req.setEnabled(True)
+            self.btn_req_cancel.setEnabled(False)
+            self.chk_req.setChecked(False)
+            self._refresh_buttons()
+
+        def fail(msg, _nc):
+            self._req_busy = False
+            self._req_timer.stop()
+            self.btn_req.setEnabled(True)
+            self.btn_req_cancel.setEnabled(False)
+            self._say(msg)
+        if not self._can():
+            self._req_busy = False
+            return
+        try:
+            a = self._association()
+        except assoc.AssociationError as exc:
+            self._req_busy = False
+            self._say(str(exc))
+            return
+        _run(self, lambda: work(a), done, fail)
+
+    def _req_cancel(self) -> None:
+        self._req_timer.stop()
+        try:
+            self._association().cancel_request()
+        except Exception:  # noqa: BLE001
+            pass
+        self.btn_req.setEnabled(True)
+        self.btn_req_cancel.setEnabled(False)
+        self._say("Cererea a fost anulată local. Administratorul Cloud o poate respinge sau ea expiră în 24 h.")
 
     def _check_api(self) -> None:
         self._guarded(lambda a: a.check_api(), lambda r: self._say(f"{r['message']}\nHTTPS: {'da' if r['https'] else 'NU (doar localhost)'}\nBază de date: {r['database']} · stocare: {r['storage']}"))
@@ -410,6 +579,11 @@ class CloudAssociateDialog(QDialog):
         _run(self, lambda: self._admin.revoke_device(org, bu), lambda _r: self._reload_devices(), lambda m, _nc: self.lbl_adm.setText(m))
 
     def closeEvent(self, ev) -> None:  # noqa: N802
+        if self._auto_admin:
+            try:
+                self._auto_admin.close()
+            except Exception:  # noqa: BLE001
+                pass
         if self._admin:
             try:
                 self._admin.close()

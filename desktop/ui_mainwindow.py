@@ -754,6 +754,9 @@ class CemeteryUI(QMainWindow):
             self.refresh_field_badge()
 
     def open_cloud_associate_window(self):
+        import access_session
+        if not access_session.require("manage_config", self, "asocierea cu Cloud-ul"):
+            return
         try:
             from cloud_associate_window import CloudAssociateDialog
             dlg = CloudAssociateDialog(self)

@@ -16,7 +16,7 @@ class AdminApiError(Exception):
 
 
 class AdminClient:
-    def __init__(self, base_url: str, timeout: float = 10.0, http: Optional[httpx.Client] = None):
+    def __init__(self, base_url: str, timeout: float = 25.0, http: Optional[httpx.Client] = None):
         self.base = base_url.rstrip("/") + "/api/v1/admin"
         self._http = http or httpx.Client(timeout=timeout)
         self._token: Optional[str] = None
@@ -60,6 +60,26 @@ class AdminClient:
 
     def me(self) -> Dict[str, Any]:
         return self._req("GET", "/me")
+
+    def registry_status(self, organization_uid: str, cemetery_uid: str) -> Dict[str, Any]:
+        return self._req("GET", "/registry", params={"organization_uid": organization_uid, "cemetery_uid": cemetery_uid})
+
+    def provision(self, organization_uid: str, organization_name: str, cemetery_uid: str, cemetery_name: str) -> Dict[str, Any]:
+        return self._req("POST", "/provision", {"organization_uid": organization_uid, "organization_name": organization_name,
+                                                "cemetery_uid": cemetery_uid, "cemetery_name": cemetery_name})
+
+    def request_registration(self, secret: str, organization_uid: str, organization_name: str, cemetery_uid: str, cemetery_name: str, device_label: str = "") -> Dict[str, Any]:
+        return self._req("POST", "/registry-requests", {"secret": secret, "organization_uid": organization_uid, "organization_name": organization_name,
+                                                        "cemetery_uid": cemetery_uid, "cemetery_name": cemetery_name, "device_label": device_label})
+
+    def registration_status(self, request_id: str, secret: str) -> Dict[str, Any]:
+        return self._req("POST", "/registry-requests/status", {"request_id": request_id, "secret": secret})
+
+    def list_requests(self) -> List[Dict[str, Any]]:
+        return self._req("GET", "/registry-requests")
+
+    def decide_request(self, request_id: str, approve: bool) -> Dict[str, Any]:
+        return self._req("POST", "/registry-requests/decide", {"request_id": request_id, "approve": bool(approve)})
 
     def issue_code(self, organization_uid: str, cemetery_uid: str, kind: str, ttl: Optional[int] = None) -> Dict[str, Any]:
         return self._req("POST", "/codes", {"organization_uid": organization_uid, "cemetery_uid": cemetery_uid, "kind": kind, "ttl": ttl})
