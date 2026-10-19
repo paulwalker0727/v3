@@ -119,3 +119,9 @@ licenta.lic
 .pytest_cache/
 .patch_backups/
 .patch_applied/
+
+# Setup Manager: stare locală (config, rapoarte, venv) — niciodată în Git
+CimitirSetupManager/
+.cimitir_setup_manager/
+setup_manager_home/
+tools/setup_manager/**/__pycache__/

@@ -22,7 +22,7 @@ COPY backend/templates/cloud_admin.html backend/templates/cloud_admin.html
 COPY backend/templates/partials/teren_capture.html backend/templates/partials/teren_capture.html
 COPY backend/static/teren.js backend/static/teren_ui.js backend/static/teren.css backend/static/
 COPY backend/static/cloud_admin.js backend/static/cloud_admin.css backend/static/
-COPY backend/static/mobile_app.js backend/static/mobile_offline.js backend/static/mobile_app.css backend/static/mobile_manifest.webmanifest backend/static/mobile_sw.js backend/static/mobile-icon-192.png backend/static/mobile-icon-512.png backend/static/
+COPY backend/static/mobile_app.js backend/static/mobile_offline.js backend/static/mobile_photos.js backend/static/jsQR.js backend/static/mobile_app.css backend/static/mobile_manifest.webmanifest backend/static/mobile_sw.js backend/static/mobile-icon-192.png backend/static/mobile-icon-512.png backend/static/
 
 RUN useradd --system --no-create-home --uid 10001 cimitir
 USER 10001

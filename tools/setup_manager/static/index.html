@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="sm-token" content="__SM_TOKEN__">
+<title>Cimitir Sync v2 — Setup Manager</title>
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark">CS</span><div><b>Setup Manager</b><small>Cimitir Sync v2 · mediu TEST</small></div></div>
+  <div class="mode-box">
+    <span id="prod-badge" class="badge badge-lock" data-testid="prod-blocked-badge">PROD BLOCAT</span>
+    <span id="mode-badge" class="badge badge-dry" data-testid="mode-badge">DRY RUN / CHECK ONLY</span>
+    <button id="mode-btn" class="btn btn-amber" data-testid="mode-toggle-btn">Activează scrierea…</button>
+  </div>
+</header>
+<div class="shell">
+  <nav class="side" data-testid="main-nav">
+    <button class="nav active" data-tab="config" data-testid="nav-config"><i>1</i>Configurare</button>
+    <button class="nav" data-tab="checks" data-testid="nav-checks"><i>2</i>Verificări</button>
+    <button class="nav" data-tab="migrations" data-testid="nav-migrations"><i>3</i>Migrări</button>
+    <button class="nav" data-tab="docker" data-testid="nav-docker"><i>4</i>Docker TEST</button>
+    <button class="nav" data-tab="pairing" data-testid="nav-pairing"><i>5</i>Asociere MAIN·Cloud·Mobile</button>
+    <button class="nav" data-tab="report" data-testid="nav-report"><i>6</i>Raport</button>
+    <div class="side-note">Parolele și cheile rămân în memoria acestui proces local. Nu pleacă spre servicii externe, doar spre Supabase/PostgreSQL-ul configurat.</div>
+  </nav>
+  <main class="main">
+    <div id="issues" class="issues" data-testid="config-issues"></div>
+
+    <section id="tab-config" class="tab active">
+      <h1>Configurare</h1>
+      <p class="lead">Completează o dată; verificările și operațiile folosesc aceste valori. Câmpurile secrete sunt mascate și nu sunt afișate niciodată înapoi.</p>
+      <form id="cfg-form" autocomplete="off" data-testid="config-form">
+        <fieldset><legend>Supabase</legend>
+          <label>Project Ref<input name="project_ref" data-testid="cfg-project-ref" spellcheck="false"></label>
+          <label>Supabase URL<input name="supabase_url" data-testid="cfg-supabase-url" spellcheck="false"></label>
+          <label>Supabase Secret Key<span class="pw"><input name="supabase_secret_key" type="password" data-secret data-testid="cfg-secret-key" autocomplete="new-password"><button type="button" class="eye" data-eye>👁</button></span></label>
+          <label>Storage Bucket<input name="storage_bucket" data-testid="cfg-bucket" spellcheck="false"></label>
+        </fieldset>
+        <fieldset><legend>PostgreSQL (administrativ — migrări și verificări)</legend>
+          <label class="wide">Connection String (Session Pooler, port 5432)<input name="db_connection_string" data-testid="cfg-db-url" spellcheck="false"></label>
+          <label>Username<input name="db_username" data-testid="cfg-db-user" spellcheck="false"></label>
+          <label>Password<span class="pw"><input name="db_password" type="password" data-secret data-testid="cfg-db-password" autocomplete="new-password"><button type="button" class="eye" data-eye>👁</button></span></label>
+          <label class="wide">Runtime DB URL pentru Cloud (opțional, rol cimitir_cp_app — recomandat)<span class="pw"><input name="runtime_db_url" type="password" data-secret data-testid="cfg-runtime-url" autocomplete="new-password"><button type="button" class="eye" data-eye>👁</button></span></label>
+          <label class="wide">Cale backup PostgreSQL (fișier .zip/.sql/.dump/.tar.gz)<input name="backup_path" data-testid="cfg-backup-path" spellcheck="false"></label>
+        </fieldset>
+        <fieldset><legend>Docker Cloud TEST</legend>
+          <label>Nume container<input name="container_name" data-testid="cfg-container" spellcheck="false"></label>
+          <label>Port Docker (≠ 8084)<input name="docker_port" data-testid="cfg-port" inputmode="numeric"></label>
+          <label>Tag imagine<input name="image_tag" data-testid="cfg-image-tag" spellcheck="false"></label>
+          <label>Cloud Public URL<input name="cloud_public_url" data-testid="cfg-public-url" spellcheck="false"></label>
+          <label class="wide">Container sursă pentru mediu (opțional, doar citire — ex. cel de pe 8084 rămâne neatins)<input name="source_container" data-testid="cfg-source" spellcheck="false"></label>
+          <label class="wide">Director repo (gol = detectat automat)<input name="repo_dir" data-testid="cfg-repo-dir" spellcheck="false"></label>
+        </fieldset>
+        <fieldset><legend>MAIN și Mobile</legend>
+          <label>Adresa Cloud pentru MAIN<input name="main_cloud_url" data-testid="cfg-main-url" spellcheck="false"></label>
+          <label>Director date MAIN de test (CIMITIR_DATA_DIR)<input name="main_data_dir" data-testid="cfg-main-data" spellcheck="false"></label>
+          <label class="wide">URL public HTTPS pentru Mobile<input name="mobile_public_url" data-testid="cfg-mobile-url" spellcheck="false"></label>
+        </fieldset>
+        <div class="row">
+          <button class="btn btn-primary" type="submit" data-testid="cfg-save-btn">Salvează configurarea</button>
+          <label class="inline"><input type="checkbox" id="persist" data-testid="cfg-persist-secrets"> Reține secretele criptat (Windows DPAPI)</label>
+          <span id="cfg-msg" class="msg" data-testid="cfg-message"></span>
+        </div>
+      </form>
+    </section>
+
+    <section id="tab-checks" class="tab">
+      <h1>Verifică toate conexiunile</h1>
+      <p class="lead">9 verificări, doar citire. Rezultatele nu conțin parole, chei sau șiruri de conexiune.</p>
+      <div class="row"><button id="run-checks" class="btn btn-primary" data-testid="run-checks-btn">Verifică toate conexiunile</button><span id="checks-sum" class="msg" data-testid="checks-summary"></span></div>
+      <ol id="checks-list" class="results" data-testid="checks-list"></ol>
+      <div class="card"><h3>Bucket Storage</h3><p class="lead">Dacă bucketul lipsește, poate fi creat PRIVAT (necesită modul scriere și confirmare).</p>
+        <div class="row"><input id="bucket-confirm" placeholder="CREEAZA BUCKET …" data-testid="bucket-confirm-input"><button id="bucket-btn" class="btn" data-testid="bucket-create-btn">Creează bucket privat</button></div><pre id="bucket-out" class="out" data-testid="bucket-output"></pre></div>
+    </section>
+
+    <section id="tab-migrations" class="tab">
+      <h1>Migrări</h1>
+      <p class="lead">Starea reală (schema_migrations + obiectele din PostgreSQL). Nu se reaplică ce există. Execuția cere backup verificat, mod scriere și fraza exactă de confirmare.</p>
+      <div class="row"><button id="plan-btn" class="btn btn-primary" data-testid="migrations-plan-btn">Generează planul de migrare</button><span id="plan-msg" class="msg" data-testid="migrations-message"></span></div>
+      <div id="plan-box" class="hidden">
+        <table class="grid" data-testid="migrations-table"><thead><tr><th>Migrare</th><th>Stare</th><th>Obiecte</th><th>Detalii</th></tr></thead><tbody id="mig-rows"></tbody></table>
+        <div class="card"><h3>Plan</h3><ul id="plan-steps" class="plain" data-testid="migrations-plan-steps"></ul><ul id="plan-blocked" class="plain bad" data-testid="migrations-blocked"></ul>
+          <div class="row"><input id="backup-path" placeholder="Cale backup" data-testid="backup-path-input" class="grow"><button id="backup-btn" class="btn" data-testid="backup-verify-btn">Verifică backup</button></div><div id="backup-out" class="msg" data-testid="backup-result"></div>
+          <div class="row"><input id="apply-confirm" class="grow" placeholder="Fraza de confirmare" data-testid="apply-confirm-input"><button id="apply-btn" class="btn btn-danger" data-testid="migrations-apply-btn">Aplică planul</button></div>
+          <div class="hint" id="apply-hint"></div><pre id="apply-out" class="out" data-testid="migrations-apply-output"></pre></div>
+      </div>
+    </section>
+
+    <section id="tab-docker" class="tab">
+      <h1>Docker TEST</h1>
+      <p class="lead">Containerul vechi de pe 8084 nu este modificat, oprit sau șters. Nu se folosesc <code>compose down</code> / <code>system prune</code>.</p>
+      <div class="row"><button id="docker-refresh" class="btn" data-testid="docker-refresh-btn">Detectează containere și porturi</button><span id="docker-msg" class="msg" data-testid="docker-message"></span></div>
+      <table class="grid" data-testid="docker-containers"><thead><tr><th>Container</th><th>Imagine</th><th>Stare</th><th>Porturi</th><th></th></tr></thead><tbody id="docker-rows"></tbody></table>
+      <div class="card"><h3>Operații</h3>
+        <div class="row"><button class="btn" data-dplan="build" data-testid="docker-plan-build">1 · Previzualizează build</button><button class="btn" data-dplan="start" data-testid="docker-plan-start">2 · Previzualizează pornire</button><button class="btn" data-dplan="update" data-testid="docker-plan-update">3 · Previzualizează actualizare</button><button id="docker-logs" class="btn" data-testid="docker-logs-btn">Loguri container</button></div>
+        <pre id="docker-plan" class="out" data-testid="docker-plan-output"></pre>
+        <div class="row"><input id="docker-confirm" class="grow" placeholder="Fraza de confirmare (apare în previzualizare)" data-testid="docker-confirm-input"><button class="btn btn-danger" data-drun="build" data-testid="docker-run-build">Construiește</button><button class="btn btn-danger" data-drun="start" data-testid="docker-run-start">Pornește</button><button class="btn btn-danger" data-drun="update" data-testid="docker-run-update">Actualizează</button></div>
+        <pre id="docker-job" class="out" data-testid="docker-job-output"></pre>
+      </div>
+    </section>
+
+    <section id="tab-pairing" class="tab">
+      <h1>Asociere MAIN ↔ Cloud ↔ Mobile</h1>
+      <p class="lead">Sonde automate (doar citire), teste cu date izolate (numai cu aprobarea ta) și lista pașilor care se fac în MAIN/telefon.</p>
+      <div class="card"><h3>Valori pentru MAIN și Mobile</h3><pre id="snippet" class="out" data-testid="pairing-snippet"></pre></div>
+      <div class="row"><button id="probe-btn" class="btn btn-primary" data-testid="pairing-probe-btn">Rulează sondele Cloud/Mobile</button></div>
+      <ol id="probe-list" class="results" data-testid="pairing-probe-list"></ol>
+      <div class="card"><h3>Teste cu date izolate (scriu registre FICTIVE)</h3>
+        <p class="lead">Reutilizează <code>scripts/verify_provision_live.py</code> și <code>scripts/verify_cloud_live.py</code>. Necesită mod scriere activ și aprobare. Datele reale nu sunt atinse; credențialele nu se salvează.</p>
+        <div class="grid2">
+          <label>E-mail admin Cloud TEST<input id="iso-email" autocomplete="off" data-testid="iso-email"></label>
+          <label>Parolă admin Cloud TEST<input id="iso-pass" type="password" autocomplete="new-password" data-testid="iso-password"></label>
+          <label>UID organizație TEST (doar pentru test sincronizare)<input id="iso-org" data-testid="iso-org-uid"></label>
+          <label>Aprobare<input id="iso-approval" placeholder="APROB DATE TEST IZOLATE" data-testid="iso-approval"></label>
+        </div>
+        <div class="row"><button class="btn btn-danger" data-iso="provision" data-testid="iso-run-provision">Test provizionare + asociere</button><button class="btn btn-danger" data-iso="sync" data-testid="iso-run-sync">Test sincronizare + documente</button></div>
+        <pre id="iso-out" class="out" data-testid="iso-output"></pre>
+      </div>
+      <div class="card"><h3>Lista de verificat manual</h3><div id="manual" data-testid="manual-checklist"></div></div>
+    </section>
+
+    <section id="tab-report" class="tab">
+      <h1>Raport</h1>
+      <p class="lead">Raport complet, fără secrete, salvat local.</p>
+      <div class="row"><button id="report-btn" class="btn btn-primary" data-testid="report-btn">Generează raportul</button><span id="report-msg" class="msg" data-testid="report-message"></span></div>
+      <pre id="report-out" class="out tall" data-testid="report-output"></pre>
+    </section>
+  </main>
+</div>
+<dialog id="mode-dialog" data-testid="mode-dialog"><form method="dialog">
+  <h3>Activare mod scriere (TEST)</h3>
+  <p>Modul rămâne activ 15 minute sau până la prima operație de scriere. Fiecare operație cere în plus propria confirmare.</p>
+  <p class="hint">Tastează exact: <b id="exec-phrase"></b></p>
+  <input id="mode-phrase" autocomplete="off" data-testid="mode-phrase-input">
+  <div class="row"><button class="btn btn-danger" id="mode-ok" value="ok" data-testid="mode-confirm-btn">Activează</button><button class="btn" value="cancel" data-testid="mode-cancel-btn">Anulează</button></div>
+  <p id="mode-err" class="msg bad"></p>
+</form></dialog>
+<script src="/assets/app.js"></script>
+</body>
+</html>
