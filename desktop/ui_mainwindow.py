@@ -319,6 +319,11 @@ class CemeteryUI(QMainWindow):
         act_cloud_assoc.setToolTip("Administrare → Cloud → Asociază acest calculator; coduri pentru MAIN/telefon; dispozitive asociate")
         act_cloud_assoc.triggered.connect(self.open_cloud_associate_window)
         toolbar.addAction(act_cloud_assoc)
+        act_cloud_center = QAction("⚙ Centru Cloud", self)
+        act_cloud_center.setObjectName("act-cloud-center")
+        act_cloud_center.setToolTip("Centru de configurare Cimitir Sync: Supabase, backend Cloud, administratori, backup, telefoane (doar administrator)")
+        act_cloud_center.triggered.connect(self.open_cloud_center)
+        toolbar.addAction(act_cloud_center)
         act_backup = QAction("💾 Copii de rezervă", self)
         act_backup.setObjectName("act-backup")
         act_backup.setToolTip("Copie zilnică automată a bazei și restaurare dintr-un clic")
@@ -752,6 +757,18 @@ class CemeteryUI(QMainWindow):
             dlg.exec()
         finally:
             self.refresh_field_badge()
+
+    def open_cloud_center(self):
+        import access_session
+        if not access_session.require("manage_config", self, "Centrul de configurare Cloud"):
+            return
+        try:
+            from cloud_center_dialog import CloudCenterDialog
+            dlg = CloudCenterDialog(self)
+        except Exception as e:
+            show_message(self, "Eroare", f"Nu am putut deschide Centrul de configurare Cloud: {type(e).__name__}", level="error")
+            return
+        dlg.exec()
 
     def open_cloud_associate_window(self):
         import access_session

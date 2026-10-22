@@ -72,7 +72,7 @@ def save(name: str, url: str, environment_label: str, confirm_production: bool =
     else:
         fields = {k: getattr(prof, k) for k in cp.PLAIN_FIELDS}
         fields.update(name=name, environment=env, api_base_url=url)
-        if (prof.project_ref or prof.supabase_url) and prof.api_base_url.rstrip("/") != (url or "").strip().rstrip("/"):
+        if (prof.project_ref or prof.supabase_url) and prof.api_base_url and prof.api_base_url.rstrip("/") != (url or "").strip().rstrip("/"):
             fields.update(project_ref="", supabase_url="")     # adresa s-a schimbat: referințele vechi ale proiectului nu mai sunt valabile
         prof = cp.update_profile(prof.id, fields, None, store)
     if not prof.is_active:
