@@ -165,6 +165,21 @@ class CloudSyncWindow(QDialog):
     def _effective_key(self) -> str:
         return self._key_value() or cloud_sync.get_config()["key"]
 
+    def _binding_validation(self, url: str) -> list[str] | None:
+        """Pentru Flux B nu cerem cheia legacy; verificăm însă adresa asociată.
+
+        Nu expunem cheia Binding în UI și nu acceptăm alt endpoint decât
+        cel din asocierea verificată, pentru a preveni trimiterea accidentală.
+        """
+        import sync_v2
+        if not sync_v2.is_binding():
+            return None
+        errors = [cloud_sync.validate_url(url)]
+        bound_url, _key, _source = sync_v2.connection()
+        if url.strip().rstrip("/") != bound_url:
+            errors.append("Adresa nu corespunde backendului asociat prin Flux B.")
+        return [error for error in errors if error]
+
     def _phones(self):
         from mobile_devices_window import MobileDevicesDialog
         MobileDevicesDialog(self).exec()
@@ -259,7 +274,9 @@ class CloudSyncWindow(QDialog):
     def _save(self) -> bool:
         url, key = self.txt_url.text().strip(), self._key_value()
         if url or key:
-            errors = cloud_sync.validate_config(url, key or self._effective_key())
+            errors = self._binding_validation(url)
+            if errors is None:
+                errors = cloud_sync.validate_config(url, key or self._effective_key())
             if errors:
                 self.log.appendPlainText("Configurația NU a fost salvată: " + " ".join(errors))
                 QMessageBox.warning(self, "Configurație invalidă", "\n".join(errors))
@@ -282,17 +299,23 @@ class CloudSyncWindow(QDialog):
         return True
 
     def _test(self):
-        errors = cloud_sync.validate_config(self.txt_url.text(), self._effective_key())
+        errors = self._binding_validation(self.txt_url.text())
+        if errors is None:
+            errors = cloud_sync.validate_config(self.txt_url.text(), self._effective_key())
         if errors:
             self.log.appendPlainText("Test oprit: " + " ".join(errors))
             QMessageBox.warning(self, "Configurație invalidă", "\n".join(errors))
             return
-        ok, msg = cloud_sync.check_connection(self.txt_url.text(), self._effective_key())
-        if ok:
-            if not self._save():
-                return
-            ok, msg2 = cloud_sync.ping()
-            msg = msg if ok else msg2
+        if not self._save():
+            return
+        import sync_v2
+        if sync_v2.is_binding():
+            ok, msg = cloud_sync.ping()  # autentificare Sync v2, fără cheia legacy
+        else:
+            ok, msg = cloud_sync.check_connection(self.txt_url.text(), self._effective_key())
+            if ok:
+                ok, msg2 = cloud_sync.ping()
+                msg = msg if ok else msg2
         self.log.appendPlainText(msg)
         QMessageBox.information(self, "Test conexiune" if ok else "Conexiune eșuată", msg)
 
