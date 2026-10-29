@@ -31,8 +31,23 @@ def env_label(stored: str) -> str:
     return "PROD" if (stored or "").upper() == "PRODUCTION" else (stored or "TEST").upper()
 
 
+_ENV_ALIASES = {"TEST": "TEST", "PROD": "PRODUCTION", "PRODUCTION": "PRODUCTION", "CUSTOM": "CUSTOM"}
+_LOOPBACK = ("localhost", "127.0.0.1", "::1")
+
+
 def env_value(label: str) -> str:
-    return dict(ENV_CHOICES).get((label or "").upper(), "TEST")
+    """Eticheta afișată -> valoarea stocată. O etichetă necunoscută NU mai cade tăcut pe TEST (nici pe PRODUCTION): ridică ValueError."""
+    try:
+        return _ENV_ALIASES[(label or "").strip().upper()]
+    except KeyError:
+        raise ValueError(f"mediu necunoscut: {label!r}") from None
+
+
+def _check_env_url(env: str, url: str) -> None:
+    from urllib.parse import urlparse
+    host = (urlparse((url or "").strip()).hostname or "").lower()
+    if env == "PRODUCTION" and host in _LOOPBACK:
+        raise cp.ValidationFailed(["Un profil PROD nu poate folosi o adresă locală (localhost/127.0.0.1): aceasta este o adresă de test. Alege mediul TEST."])
 
 
 @dataclass
@@ -63,6 +78,7 @@ def save(name: str, url: str, environment_label: str, confirm_production: bool =
     """Creează sau actualizează profilul curent doar cu cele 3 câmpuri vizibile (restul și secretele rămân neschimbate) și îl activează.
     PROD cere `confirm_production=True` (confirmare explicită în UI)."""
     env = env_value(environment_label)
+    _check_env_url(env, url)
     name = (name or "").strip() or DEFAULT_NAME
     prof = current_profile()
     if env == "PRODUCTION" and not confirm_production:

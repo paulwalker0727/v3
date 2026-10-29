@@ -3,8 +3,10 @@
 Pași (fiecare întoarce un rezumat afișabil; erorile sunt `AssociationError` cu mesaj în română, fără secrete):
   1. check_api(url)        — HTTPS/HTTP reachability, /health (DB+storage), /bootstrap/info (compatibilitate client↔server)
   2. verify_code(code)     — preflight real pe server: codul, drepturile emitentului, organizația/cimitirul, starea cloud (nu consumă codul)
-  3. plan(code)            — plan Flux A (rezumat + plan_hash) ; nimic nu se scrie în cloud
-  4. execute(plan, code)   — după confirmarea explicită a utilizatorului: begin_run → redeem → cheia în SecretStore (DPAPI) → verify_empty → complete
+  3. plan(code)            — alege automat fluxul din starea REALĂ (local/cloud): A = registru local gol + cloud gol; B = registru local cu date + cloud gol
+                             (prima încărcare). Rezumat + plan_hash; nimic nu se scrie în cloud. Orice altă combinație este refuzată cu un mesaj clar.
+  4. execute(plan, code)   — după confirmarea explicită a utilizatorului: Flux A (begin_run → redeem → cheia în SecretStore (DPAPI) → verify_empty → complete)
+                             sau Flux B (… → snapshot → staging → media → verificare → publicare atomică → finalizare locală)
   5. verify()              — test automat al legăturii (cheie lizibilă din SecretStore, authenticate, cheia absentă din SQLite) ; abia apoi se activează sincronizarea
 Dacă procesul e întrerupt, `incomplete()` arată starea, iar `resume()` / `abort()` o reiau sau o anulează în siguranță (rollback local + cloud + secret).
 Protecțiile din cimitir_bootstrap (BLOCKED_ACTIVE_EMPTY, verify_empty, plan_hash/TOCTOU) NU sunt ocolite.
@@ -22,7 +24,11 @@ import cimitir_bootstrap as bs
 import cimitir_cloud_admin_client as adc
 import cimitir_cloud_client as client
 import cimitir_cloud_control as cc
+import cimitir_flow_b as fb
+import cimitir_manifest as mf
 import cimitir_plan_guard as pg
+import cimitir_preflight as pf
+import cimitir_transfer_contract as tc
 
 SET_UNVERIFIED = "cloud_assoc_unverified"      # "1" = sincronizarea rămâne blocată până trece verify()
 SET_PENDING_PLAN = "cloud_assoc_plan"          # planul (fără cod/secrete) păstrat pentru reluare după întrerupere
@@ -52,9 +58,24 @@ def normalize_url(raw: str) -> str:
         raise AssociationError("URL Cloud invalid (ex.: https://cloud.exemplu.ro)", "url")
     if p.scheme == "http" and p.hostname not in ("localhost", "127.0.0.1", "::1"):
         raise AssociationError("Conexiunea către Cloud trebuie să fie HTTPS (HTTP e permis doar pe localhost).", "url")
+    host = (p.hostname or "").lower()
+    if host.endswith((".supabase.co", ".supabase.com", ".supabase.in")):
+        raise AssociationError("Aceasta este adresa Supabase (baza de date), nu adresa backendului Cloud. Introdu adresa API a backendului (ex.: https://cloud.parohie.ro sau http://127.0.0.1:8086).", "url")
     if p.path not in ("", "/") or p.query or p.fragment or p.username:
         raise AssociationError("Introdu doar adresa serverului, fără cale sau parametri.", "url")
     return f"{p.scheme}://{p.netloc}"
+
+
+_FLOW_MESSAGES = {
+    "C": "Cloud-ul conține deja date, iar registrul local este gol (descărcarea din Cloud, Flux C, nu este disponibilă în această versiune). Nimic nu a fost modificat.",
+    "LINK": "Registrul local și Cloud-ul conțin date. Nu se face îmbinare automată: sunt necesare o verificare și o aprobare separate. Nimic nu a fost modificat.",
+    "BLOCKED": "Registrul local și Cloud-ul conțin date diferite. Nu se face îmbinare automată. Nimic nu a fost modificat.",
+    "BLOCKED_ALARM": "Registrul este legat, are date locale, iar Cloud-ul pare gol (posibilă ștergere accidentală). Sincronizarea rămâne oprită; nimic nu a fost modificat.",
+    "ALREADY_BOUND": "Acest registru este deja asociat cu un Cloud. Dezasociază-l mai întâi dacă vrei să-l asociezi din nou.",
+    "REBUILD": "Registrul cere reconstruire (copie a altei instalări). Nu se asociază automat; nimic nu a fost modificat.",
+    "REVIEW_METADATA_ONLY": "Registrul local sau Cloud-ul conțin doar rămășițe de sincronizare (coadă/conflicte), fără date. Se revizuiește manual; nimic nu a fost modificat.",
+}
+_FRIENDLY_PASSTHROUGH = (bs.BlockedFlow, client.ServerIncompatible, pf.PreflightError, tc.TransferBlocked, tc.ContractError, fb.VerificationFailed)
 
 
 def _friendly(exc: BaseException) -> str:
@@ -63,17 +84,19 @@ def _friendly(exc: BaseException) -> str:
     if isinstance(exc, client.TransportError):
         return "Serverul Cloud nu răspunde sau conexiunea a fost întreruptă. Verifică adresa și internetul."
     if isinstance(exc, cc.CodeError):
-        return "Codul este invalid, expirat sau deja folosit. Cere un cod nou administratorului."
+        return "Codul este invalid, expirat, revocat sau deja folosit. Cere un cod nou administratorului."
     if isinstance(exc, cc.PermissionDenied):
         return "Emitentul codului nu are dreptul de a asocia acest calculator (este necesar rolul Owner)."
     if isinstance(exc, cc.ScopeError):
         return "Codul nu este valabil pentru acest cimitir/organizație sau este invalid/expirat."
     if isinstance(exc, cc.BootstrapLocked):
         return "O altă asociere este în curs pe acest cimitir. Așteaptă sau anulează-o."
-    if isinstance(exc, bs.BlockedFlow):
-        return str(exc)
     if isinstance(exc, (bs.PlanError, pg.PlanRejected, pg.PlanExpired, pg.TargetDrift, pg.PlanBlocked)):
         return f"Planul nu mai este valid: {exc}"
+    if isinstance(exc, pf.PlanInvalidated):
+        return "Datele locale sau cele din Cloud s-au schimbat după generarea planului; verifică din nou codul."
+    if isinstance(exc, _FRIENDLY_PASSTHROUGH):
+        return str(exc)
     return f"Operația a eșuat ({type(exc).__name__})."
 
 
@@ -107,20 +130,33 @@ class Association:
                 "bootstrap_api": info.get("bootstrap_api"), "message": "Conexiune verificată: API-ul Cloud este disponibil."}
 
     # ------------------------------------------------------------------ 2
+    def _route(self, rcp, code: str) -> Dict[str, Any]:
+        """Citire: starea cloud (prin cod) + starea locală => fluxul ales. Nu consumă codul și nu scrie nimic."""
+        try:
+            cloud = rcp.preflight_for_code(code, self.inst, self.binding.cemetery_uid)
+        except (bs.Crash, cc.ControlError, pg.PlanRejected) as exc:
+            raise AssociationError(_friendly(exc), "code") from None
+        if cloud["organization_uid"] != self.binding.organization_uid:
+            raise AssociationError("Codul aparține altei organizații decât registrul local selectat.", "scope")
+        li = self.local.inspect()
+        lclass = li["classification"]
+        if lclass == "empty":                              # inspect() vede doar tabelele de entități; manifestul vede și media/coada/conflictele
+            lclass = mf.local_manifest(self.binding)["classification"].lower()
+        decision = bs.decide_flow(lclass, cloud["classification"], li["sync_state"], cloud_status=cloud.get("status"))
+        flow = decision if decision in ("A", "B") else None
+        return {"cloud": cloud, "local": li, "local_class": lclass, "decision": decision, "flow": flow}
+
     def verify_code(self, code: str) -> Dict[str, Any]:
         self._need_code(code)
         rcp = self._rcp()
         try:
-            try:
-                cloud = rcp.preflight_for_code(code, self.inst, self.binding.cemetery_uid)
-            except (bs.Crash, cc.ControlError, pg.PlanRejected) as exc:
-                raise AssociationError(_friendly(exc), "code") from None
+            r = self._route(rcp, code)
         finally:
             rcp.close()
-        if cloud["organization_uid"] != self.binding.organization_uid:
-            raise AssociationError("Codul aparține altei organizații decât registrul local selectat.", "scope")
+        cloud = r["cloud"]
         return {"organization_uid": cloud["organization_uid"], "cemetery_uid": self.binding.cemetery_uid, "cemetery_status": cloud.get("status"),
                 "cloud_exists": cloud.get("exists"), "cloud_classification": cloud.get("classification"), "cloud_rows": cloud.get("rows"),
+                "local_classification": r["local_class"], "flow": r["flow"], "decision": r["decision"],
                 "message": "Cod valid; drepturile emitentului au fost verificate."}
 
     @staticmethod
@@ -130,29 +166,55 @@ class Association:
 
     # ------------------------------------------------------------------ 3
     def plan(self, code: str, cemetery_name: str = "") -> Dict[str, Any]:
+        """Alege Flux A (local gol + cloud gol) sau Flux B (local cu date + cloud gol) din starea reală; restul combinațiilor sunt refuzate explicit."""
         self._need_code(code)
         rcp = self._rcp()
         try:
-            plan = bs.plan_flow_a(self.binding, rcp, code, self.inst, cemetery_name=cemetery_name)
-        except (bs.BlockedFlow, bs.PlanError, bs.Crash, cc.ControlError, pg.PlanRejected) as exc:
-            raise AssociationError(_friendly(exc), "blocked" if isinstance(exc, bs.BlockedFlow) else "plan") from None
+            r = self._route(rcp, code)
+            if r["flow"] is None:
+                msg = _FLOW_MESSAGES.get(r["decision"]) or {
+                    "BLOCKED_ACTIVE_EMPTY": "Cimitirul este ACTIVE în Cloud dar gol: nu se tratează automat ca nou (posibilă ștergere în Cloud). Nimic nu a fost modificat."}.get(
+                    r["decision"], f"Asocierea nu este permisă pentru starea curentă ({r['decision']}). Nimic nu a fost modificat.")
+                raise AssociationError(msg, "blocked")
+            if r["flow"] == "A":
+                plan = bs.plan_flow_a(self.binding, rcp, code, self.inst, cemetery_name=cemetery_name)
+            else:
+                plan = fb.plan_flow_b(self.binding, rcp, None, self.inst)
+                plan["cemetery_name"] = cemetery_name
+        except AssociationError:
+            raise
+        except (bs.BlockedFlow, bs.PlanError, bs.Crash, cc.ControlError, pg.PlanRejected, pf.PreflightError, tc.TransferBlocked) as exc:
+            reason = _FLOW_MESSAGES.get(getattr(exc, "decision", ""))
+            raise AssociationError(reason or _friendly(exc), "blocked" if isinstance(exc, bs.BlockedFlow) else "plan") from None
         finally:
             rcp.close()
         plan["device_name"] = self.device_name
         self.local.put(**{SET_PENDING_PLAN: json.dumps(plan)})
+        return {"plan": plan, "plan_hash": plan["plan_hash"], "flow": plan["kind"], "summary": self._summary(plan)}
+
+    def _summary(self, plan: Dict[str, Any]) -> Dict[str, str]:
         li = self.local.inspect()
-        return {"plan": plan, "plan_hash": plan["plan_hash"], "summary": {
-            "Server": self.url, "Organizație (UID)": self.binding.organization_uid, "Cimitir (UID)": self.binding.cemetery_uid,
-            "Registru local": f"{li['classification']} · {li['rows']} rânduri · {li['outbox_pending']} în așteptare",
-            "Operațiune": "Asociere nouă MAIN (Flux A): se creează legătura și cheia definitivă, salvată în SecretStore (nu în SQLite/loguri)",
-            "Dispozitiv": self.device_name, "Plan expiră în": f"{int(plan['expires_at'] - plan['created_at'])} s"}}
+        out = {"Server": self.url, "Organizație (UID)": self.binding.organization_uid, "Cimitir (UID)": self.binding.cemetery_uid,
+               "Registru local": f"{li['classification']} · {li['rows']} rânduri · {li['outbox_pending']} în așteptare"}
+        if plan["kind"] == "B":
+            lm = plan["local_manifest"]
+            counts = ", ".join(f"{e}: {v['count']}" for e, v in lm["entities"].items() if v["count"])
+            out["Operațiune"] = ("Prima încărcare a registrului local în Cloud (Flux B): datele se copiază în zonă de staging, se verifică integral (număr, amprente, media), "
+                                 "apoi se publică atomic. Identitățile (UID) locale se păstrează. Nu se creează organizații sau cimitire noi. Cheia definitivă se salvează în SecretStore")
+            out["Date de încărcat"] = counts or "—"
+            out["Fișiere media"] = f"{lm['media']['count']} ({lm['media']['bytes']} octeți)" + (f" · LIPSĂ pe disc: {len(plan['media_missing'])}" if plan.get("media_missing") else "")
+        else:
+            out["Operațiune"] = "Asociere nouă MAIN (Flux A): se creează legătura și cheia definitivă, salvată în SecretStore (nu în SQLite/loguri)"
+        out["Dispozitiv"] = self.device_name
+        out["Plan expiră în"] = f"{int(plan['expires_at'] - plan['created_at'])} s"
+        return out
 
     def cancel_plan(self, plan: Dict[str, Any]) -> None:
         bs.cancel_plan(self.binding, plan["bootstrap_id"])
         self.local.clear(SET_PENDING_PLAN)
 
     # ------------------------------------------------------------------ 4 + 5
-    def execute(self, plan: Dict[str, Any], code: str, confirmed: bool) -> Dict[str, Any]:
+    def execute(self, plan: Dict[str, Any], code: str, confirmed: bool, accept_missing_media: bool = False) -> Dict[str, Any]:
         if confirmed is not True:
             raise AssociationError("Asocierea necesită confirmarea explicită a utilizatorului.", "confirm")
         self._need_code(code)
@@ -160,15 +222,36 @@ class Association:
         rcp = self._rcp()
         try:
             try:
-                report = bs.execute_flow_a(self.binding, rcp, self.store, plan, plan["plan_hash"], code, self.inst, cloud_url=self.url)
+                if plan.get("kind", "A") == "B":
+                    if hasattr(rcp, "pairing_code"):
+                        rcp.pairing_code = code                       # `can` (capabilitate bootstrap) rulează înainte de begin_run
+                    report = fb.execute_flow_b(self.binding, rcp, self.store, None, plan, plan["plan_hash"], code, self.inst, cloud_url=self.url,
+                                               accept_missing_media=accept_missing_media)
+                else:
+                    report = bs.execute_flow_a(self.binding, rcp, self.store, plan, plan["plan_hash"], code, self.inst, cloud_url=self.url)
             except bs.Crash as exc:
                 raise AssociationError(_friendly(exc) + " Starea e salvată: folosește „Reia” sau „Anulează asocierea”.", "interrupted") from None
-            except (bs.BootstrapError, bs.PlanError, cc.ControlError, pg.PlanRejected) as exc:
-                self.local.clear(SET_PENDING_PLAN)
+            except bs.BlockedFlow as exc:
+                if exc.decision == "MEDIA_MISSING":                   # nimic modificat; planul rămâne valid pentru confirmarea explicită
+                    self.local.clear(SET_UNVERIFIED)
+                    raise AssociationError(str(exc), "media_missing") from None
+                self._after_failure()
                 raise AssociationError(_friendly(exc), "failed") from None
+            except (bs.BootstrapError, bs.PlanError, cc.ControlError, pg.PlanRejected, pf.PreflightError, tc.TransferBlocked) as exc:
+                resumable = self._after_failure()
+                raise AssociationError(_friendly(exc) + (" Starea e salvată: folosește „Reia” sau „Anulează asocierea”." if resumable else ""), "failed") from None
         finally:
             rcp.close()
         return {"report": report, "verification": self.verify()}
+
+    def _after_failure(self) -> bool:
+        """După un eșec: dacă a rămas un bootstrap reluabil (ex. cloud deja publicat) păstrăm planul; altfel curățăm marcajele locale. Întoarce True dacă e reluabil."""
+        if bs.incomplete_bootstrap(self.binding):
+            return True
+        self.local.clear(SET_PENDING_PLAN)
+        if self.local.sync_state not in bs.SYNC_ACTIVE_STATES:
+            self.local.clear(SET_UNVERIFIED)
+        return False
 
     def verify(self) -> Dict[str, Any]:
         """Test automat; doar dacă trece se ridică blocajul de sincronizare."""
@@ -303,12 +386,12 @@ class Association:
             except (ValueError, KeyError):
                 run = None
         if run and run["state"] == "planned":
-            return {"bootstrap_id": run["bootstrap_id"], "kind": "A", "state": "planned", "phase": "planned", "holder_alive": False, "actions": ["resume", "rollback"]}
+            return {"bootstrap_id": run["bootstrap_id"], "kind": run["kind"], "state": "planned", "phase": "planned", "holder_alive": False, "actions": ["resume", "rollback"]}
         if self.local.get(SET_UNVERIFIED) == "1" and self.local.sync_state in bs.SYNC_ACTIVE_STATES:
             return {"bootstrap_id": "", "kind": "A", "state": "unverified", "phase": "verify", "holder_alive": False, "actions": ["verify", "rollback"]}
         return None
 
-    def resume(self, code: str = "") -> Dict[str, Any]:
+    def resume(self, code: str = "", accept_missing_media: bool = False) -> Dict[str, Any]:
         """Reia asocierea întreruptă: cu cheia deja salvată nu mai e nevoie de cod; altfel e nevoie de un cod valid (cel vechi poate fi expirat)."""
         info = self.incomplete()
         if not info:
@@ -322,7 +405,7 @@ class Association:
         ref = self.local.get("cloud_secret_ref")
         if not (ref and self.store.get(ref)) and not (code or "").strip():
             raise AssociationError("Pentru reluare introdu un cod de asociere valid (cel vechi a putut expira).", "code")
-        return self.execute(plan, code or "-", True)
+        return self.execute(plan, code or "-", True, accept_missing_media)
 
     def abort(self) -> Dict[str, Any]:
         info = self.incomplete()
@@ -332,9 +415,18 @@ class Association:
                 bs.unbind(self.binding, rcp, self.store, "main-local")
             elif info and info.get("bootstrap_id"):
                 try:
-                    bs.abort_flow(self.binding, rcp, self.store, info["bootstrap_id"], self.inst)
+                    if info.get("kind") == "B":
+                        ref = self.local.get("cloud_secret_ref")
+                        key = self.store.get(ref) if ref else None
+                        if key and hasattr(rcp, "use_binding_key"):
+                            rcp.use_binding_key(key)                  # curățarea staging/media din cloud se autentifică cu legătura începută
+                        fb.abort_flow_b(self.binding, rcp, self.store, None, info["bootstrap_id"], self.inst)
+                    else:
+                        bs.abort_flow(self.binding, rcp, self.store, info["bootstrap_id"], self.inst)
                 except cc.BootstrapLocked:
                     raise AssociationError("Asocierea rulează încă într-un alt proces; închide-l sau așteaptă.", "locked") from None
+                except bs.BootstrapError as exc:
+                    raise AssociationError(str(exc), "abort") from None
             self.local.clear(SET_PENDING_PLAN, SET_UNVERIFIED)
         finally:
             rcp.close()

@@ -23,7 +23,7 @@ SYNC_ACTIVE_STATES = ("BOUND", "BOUND_MEDIA_PENDING")
 ENTITY_TABLES = ("locuri_de_veci", "concesionari", "contracte", "inhumati", "plati", "amenajari_avize", "documents")
 PLAN_TTL = 600
 LOCK_NAME = "bootstrap.lock"
-BINDING_SETTINGS = ("cloud_binding_uid", "cloud_url", "cloud_secret_ref", "bound_installation_uid", "sync_epoch", "last_change_seq", "cloud_device_uid")
+BINDING_SETTINGS = ("cloud_binding_uid", "cloud_url", "cloud_secret_ref", "bound_installation_uid", "sync_epoch", "last_change_seq", "cloud_device_uid", "bound_root_fp")
 
 
 class BootstrapError(Exception):
@@ -49,6 +49,17 @@ def _sha(obj: Any) -> str:
 
 
 # ------------------------------------------------------------------ identitate
+def root_fingerprint(binding) -> str:
+    """Amprenta folderului registrului la momentul asocierii: o COPIE a folderului (alt traseu) nu poate refolosi identitatea și cheia originale."""
+    return hashlib.sha256(os.path.normcase(os.path.realpath(str(binding.root))).encode("utf-8")).hexdigest()[:32]
+
+
+def root_matches(binding) -> bool:
+    """Asocierile vechi (fără amprentă) rămân valabile; cele noi sunt legate de folderul în care s-a făcut asocierea."""
+    fp = LocalRegistry(binding).get("bound_root_fp")
+    return not fp or fp == root_fingerprint(binding)
+
+
 def installation_uid(catalog) -> str:
     uid = catalog.get_state("installation_uid")
     if not uid:
@@ -471,7 +482,7 @@ def execute_flow_a(binding, cp: cc.LocalControlPlane, store: SecretStore, plan: 
         report = {"bootstrap_id": bid, "kind": "A", "plan_hash": plan["plan_hash"], "organization_uid": binding.organization_uid,
                   "cemetery_uid": binding.cemetery_uid, "binding_uid": auth["binding_uid"], "sync_epoch": auth["sync_epoch"],
                   "local_rows": li["rows"], "cloud_rows": cloud["rows"], "cloud_tombstones": cloud["tombstones"], "result": "completed"}
-        local.put(bound_installation_uid=inst, sync_state="BOUND")
+        local.put(bound_installation_uid=inst, bound_root_fp=root_fingerprint(binding), sync_state="BOUND")
         local.run_update(bid, state="completed", phase="done", report=report)
         release_lock(binding)
         return report
@@ -529,7 +540,7 @@ def sync_allowed(binding, inst: str) -> bool:
     st = local.sync_state
     if st not in SYNC_ACTIVE_STATES:
         return False
-    if local.get("bound_installation_uid") != inst:
+    if local.get("bound_installation_uid") != inst or not root_matches(binding):
         local.put(sync_state="REBUILD_REQUIRED")
         return False
     return True
