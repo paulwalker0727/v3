@@ -1,0 +1,18 @@
+# Șablon Caddy pentru serviciul de provizionare al operatorului (HTTPS automat). Înlocuiește domeniul.
+provisioner.exemplu.ro {
+    encode zstd gzip
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    # restricționează la IP-urile tale, dacă ai IP fix:
+    # @blocked not remote_ip 203.0.113.10
+    # respond @blocked 403
+    reverse_proxy 127.0.0.1:8443
+}
+
+# Site-urile instanțelor parohiilor (câte unul per parohie) se generează cu cimitir_prov_runtime.caddy_site(domeniu, port_backend)
+# și se pun în /etc/caddy/sites.d/<slug>.caddy (import sites.d/*.caddy). Exemplu generat:
+# parohia-x.exemplu.ro {
+#     encode zstd gzip
+#     header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#     request_body { max_size 25MB }
+#     reverse_proxy 127.0.0.1:18100 { health_uri /healthz }
+# }

@@ -199,7 +199,8 @@ def preflight(environ: Optional[Dict[str, str]] = None) -> list:
     if ref and not re.fullmatch(r"[a-z]{20}", ref):
         issues.append("CIMITIR_CLOUD_PROJECT_REF invalid (20 litere mici)")
     host = (urlparse(env.get("SUPABASE_URL") or "").hostname or "")
-    if ref and host and host != f"{ref}.supabase.co":
+    local_demo = env.get("CIMITIR_LOCAL_DEMO") == "1" and env.get("CIMITIR_COMMERCIAL") != "1" and host in ("127.0.0.1", "localhost")   # demonstrație locală (provizionare), niciodată comercial
+    if ref and host and host != f"{ref}.supabase.co" and not local_demo:
         issues.append("SUPABASE_URL nu corespunde CIMITIR_CLOUD_PROJECT_REF")
     db_url = env.get("CIMITIR_CP_DATABASE_URL") or ""
     if ref and "supabase" in db_url and ref not in db_url:

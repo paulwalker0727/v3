@@ -1,0 +1,3 @@
+# Dependențe pentru serviciul de provizionare al operatorului (Linux). Mai cere pe server: postgresql-client (pg_dump/pg_restore), opțional Docker și Caddy.
+# Aceleași versiuni fixate ca în backend/requirements-cloud.txt.
+-r requirements-cloud.txt

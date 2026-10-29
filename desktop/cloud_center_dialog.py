@@ -28,6 +28,15 @@ CONFIDENTIALITY = (
 )
 
 
+class _NoStore:
+    """SecretStore indisponibil (ex. fără DPAPI): fila Provizionare nu poate salva tokenul și o spune explicit."""
+    def get(self, name):
+        return None
+
+    def set(self, name, value):
+        raise RuntimeError("SecretStore indisponibil pe acest sistem: tokenul de operator nu poate fi salvat în siguranță.")
+
+
 class CloudCenterDialog(QDialog):
     def __init__(self, parent=None, can_manage: Optional[Callable[[], bool]] = None, http: Any = None, store: Any = None,
                  supabase_connect: Any = None, supabase_bucket_connect: Any = None, supabase_url_connect: Any = None, admin_factory: Any = None):
@@ -44,7 +53,8 @@ class CloudCenterDialog(QDialog):
         root.addWidget(self.tabs, 1)
         self.supabase = SupabaseTab(self, supabase_connect, supabase_bucket_connect, supabase_url_connect)
         for title, w in (("A. Stare generală", self._build_status()), ("B. Supabase", self.supabase), ("C. Backend Cloud", self._build_backend()),
-                         ("D. Administratori", self._build_admin()), ("E. Backup", self._build_backup()), ("F. Mobile", self._build_mobile())):
+                         ("D. Administratori", self._build_admin()), ("E. Backup", self._build_backup()), ("F. Mobile", self._build_mobile()),
+                         ("G. Provizionare", self._build_provision())):
             self.tabs.addTab(w, title)
         close = QPushButton("Închide")
         close.setObjectName("center_close")
@@ -59,6 +69,16 @@ class CloudCenterDialog(QDialog):
         self.supabase.clear_auth()
         self._wipe_admin_fields()
         super().done(r)
+
+    def _build_provision(self) -> QWidget:
+        from cloud_provision_tab import ProvisionTab
+        import cimitir_secretstore as ss
+        try:
+            store = self._store or ss.default_store()
+        except Exception:  # noqa: BLE001
+            store = _NoStore()
+        self.provision = ProvisionTab(store, self.guard, self)
+        return self.provision
 
     # ------------------------------------------------------------------ A. stare generală
     def _build_status(self) -> QWidget:
