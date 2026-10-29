@@ -145,3 +145,9 @@ export async function renderIssued(v){
     box.innerHTML=(r.issued||[]).length?r.issued.map(x=>`<button class="result" data-u="${esc(x.uid)}" data-n="${esc(x.number)}" data-k="${esc(x.kind)}" data-testid="issued-row"><div><b>${esc(x.label)} · ${esc(x.number)}</b><small>${esc(String(x.created_at||'').slice(0,16).replace('T',' '))} · ${x.device_type==='MAIN'?'MAIN':'telefon'}</small></div><span class="pill">PDF</span></button>`).join(''):'<div class="empty">Niciun document emis încă.</div>';
     box.querySelectorAll('[data-u]').forEach(b=>b.onclick=()=>openPdf(`/issue/${b.dataset.u}/pdf`,`${b.dataset.k}-${b.dataset.n}.pdf`));
   }catch(_e){document.getElementById('ibox').innerHTML='<div class="empty">Istoricul se încarcă doar online.</div>';}}
+
+export async function deleteDocument(doc){
+  if(!canCat('fisiere','delete')){C.toast('Nu ai dreptul de ștergere (se acordă din MAIN).');return false;}
+  if(!await askConfirm('Confirmi ștergerea?',`${doc.filename||'Documentul'} va fi anulat. Operațiunea este auditată; fișierul rămâne în arhivă.`,'Șterge',true))return false;
+  try{await C.api(`${C.API}/sync-v2/documents/${encodeURIComponent(doc.uid)}`,{method:'DELETE'});C.toast('Document șters.');return true;}
+  catch(e){C.toast(e.status===403?'Nu ai dreptul de ștergere.':'Ștergerea necesită conexiune la internet.');return false;}}

@@ -280,7 +280,7 @@ async function docBlobUrl(doc){
   return URL.createObjectURL(await res.blob());
 }
 async function openDoc(doc){try{const u=await docBlobUrl(doc);if(doc.mime==='application/pdf'){window.open(u,'_blank','noopener');return;}
-  const back=document.createElement('div');back.className='photo-viewer';back.setAttribute('data-testid','photo-viewer');back.innerHTML=`<img alt="${esc(doc.filename)}" src="${u}"><button type="button">Închide</button>`;back.onclick=()=>{back.remove();URL.revokeObjectURL(u);};document.body.appendChild(back);}
+  const back=document.createElement('div');back.className='photo-viewer';back.setAttribute('data-testid','photo-viewer');back.innerHTML=`<img alt="${esc(doc.filename)}" src="${u}"><button type="button">Închide</button>${ext.canCat('fisiere','delete')?'<button type="button" id="doc-del" data-testid="document-delete">Șterge / Anulează</button>':''}`;back.onclick=(e)=>{if(e.target.id==='doc-del')return;back.remove();URL.revokeObjectURL(u);};back.querySelector('#doc-del')?.addEventListener('click',async()=>{if(await ext.deleteDocument(doc)){back.remove();URL.revokeObjectURL(u);}});document.body.appendChild(back);}
   catch(e){toast(e.status?e.message:'Documentul nu a fost încă memorat pe acest telefon; deschide-l o dată cu internet.');}}
 async function pickPhoto(entity_uid,caption,capture){
   return new Promise((resolve)=>{const inp=document.createElement('input');inp.type='file';inp.accept='image/jpeg,image/png,application/pdf';if(capture)inp.setAttribute('capture','environment');
