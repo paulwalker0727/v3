@@ -157,3 +157,36 @@ def test_tablet_layout_and_read_only_badge(web):
         page.wait_for_selector("#cem-map polygon.plot")
         page.screenshot(path="/tmp/pwa_tablet.png")
         b.close()
+
+
+def test_offline_create_grave_and_polygon_then_reconnect_without_duplicates(web):
+    w = web
+    give(w, {"locuri": cell(True, True, True), "harta": cell(True, True, True)})
+    with pw.sync_playwright() as p:
+        b, page = open_app(p, w)
+        page.click(".bottom-nav [data-view=map]")
+        page.wait_for_selector("#cem-map")
+        page.context.set_offline(True)                                                   # telefonul pierde internetul
+        page.click("[data-testid=map-new-grave]")
+        page.fill("[data-testid=field-cod_loc]", "OFF-1")
+        page.click("[data-testid=record-save]")
+        page.wait_for_selector("[data-testid=polygon-editor]")
+        page.click("[data-testid=polygon-mode-add]")
+        box = page.locator("#pe-svg").bounding_box()
+        for dx, dy in ((0.2, 0.2), (0.8, 0.2), (0.5, 0.8)):
+            page.mouse.click(box["x"] + box["width"] * dx, box["y"] + box["height"] * dy)
+        page.click("[data-testid=polygon-save]")
+        page.wait_for_timeout(800)
+        assert sql(w, "SELECT count(*) FROM locuri_de_veci WHERE cod_loc='OFF-1'")[0][0] == 0   # nimic ajuns încă în cloud; operațiile sunt păstrate local
+        page.context.set_offline(False)
+        page.evaluate("document.getElementById('sync-btn').click()")
+        for _ in range(40):
+            rows = sql(w, "SELECT points FROM locuri_de_veci WHERE cod_loc='OFF-1'")
+            if rows and rows[0][0] and len(rows[0][0]) == 3:
+                break
+            page.wait_for_timeout(300)
+        assert len(rows) == 1 and len(rows[0][0]) == 3
+        page.evaluate("document.getElementById('sync-btn').click()")                       # retrimitere: fără duplicate
+        page.wait_for_timeout(1200)
+        assert sql(w, "SELECT count(*) FROM locuri_de_veci WHERE cod_loc='OFF-1'")[0][0] == 1
+        b.close()

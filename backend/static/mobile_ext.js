@@ -12,10 +12,10 @@ export const canDo=(entity,act)=>{const m=mx();if(!m)return act==='delete'?false
 /** Câmpurile pe care telefonul le poate MODIFICA (null = toate). Restul se afișează dezactivate. */
 export const allowedFields=(entity)=>{const m=mx();if(!m)return null;const f=m[CAT[entity]]?.fields;return f?new Set(f):null;};
 export const visibleModule=(v)=>({locuri:canCat('locuri','view')||canCat('harta','view'),map:canCat('harta','view'),inhumati:canCat('inhumati','view'),contracte:canCat('contracte','view'),
-  plati:canCat('plati','view'),concesionari:canCat('concesionari','view'),documente:canCat('fisiere','view')}[v]??true);
+  plati:canCat('plati','view'),concesionari:canCat('concesionari','view'),documente:canCat('fisiere','view'),emise:['contracte','plati','avize'].some(c=>canCat(c,'view'))}[v]??true);
 export const readOnly=()=>!!mx()&&!['locuri','harta','concesionari','inhumati','contracte','plati','avize','fisiere'].some(c=>canCat(c,'add')||canCat(c,'edit')||canCat(c,'delete'));
 export function renderPermPill(){const p=document.getElementById('perm-pill');if(!p)return;const info=C.state.syncInfo?.permissions;
-  p.textContent=readOnly()?'Doar citire':(info?.profile?({administrator:'Administrator',secretar:'Secretar',personal_cimitir:'Personal cimitir',doar_consultare:'Doar consultare'}[info.profile]||'Permisiuni personalizate'):'Permisiuni');p.dataset.testid='perm-pill';p.setAttribute('data-testid','perm-pill');}
+  p.textContent=readOnly()?'Doar citire':(info?.profile?({administrator:'Administrator',secretar:'Secretar',personal_cimitir:'Personal cimitir',doar_consultare:'Doar consultare'}[info.profile]||'Personalizat'):'Permisiuni');p.dataset.testid='perm-pill';p.setAttribute('data-testid','perm-pill');}
 
 // ---------------------------------------------------------------- dialog de confirmare (în aplicație, nu alert)
 export function askConfirm(title,msg,okLabel='Confirmă',danger=false){return new Promise((res)=>{
@@ -134,6 +134,14 @@ export async function renderConcesionari(v){
   const draw=async()=>{const q=(document.getElementById('cq')?.value||'').toLowerCase();const ob=await C.outbox();const rows=(await rowsOf('concesionari')).map(r=>({uid:r.uid,...r.data}));
     ob.filter(o=>o.entity==='concesionari'&&o.state==='pending'&&!rows.some(r=>r.uid===o.uid)).forEach(o=>rows.push({uid:o.uid,...o.data,_p:1}));
     const items=rows.filter(r=>!q||`${r.nume||''} ${r.prenume||''} ${r.telefon||''}`.toLowerCase().includes(q)).sort((a,b)=>`${a.nume}`.localeCompare(`${b.nume}`)).slice(0,200);
-    document.getElementById('cbox').innerHTML=items.length?items.map(r=>`<button class="result" data-uid="${esc(r.uid)}" data-testid="concesionar-row"><div><b>${esc(`${r.nume||''} ${r.prenume||''}`.trim()||'Fără nume')}</b><small>${esc(r.telefon||'')}${r._p?' · nesincronizat':''}</small></div><span class="pill">${canDo('concesionari','edit')?'Editează':'Vezi'}</span></button>`).join(''):'<div class="empty">Nicio înregistrare. Apasă Sincronizează.</div>';
-    document.querySelectorAll('#cbox [data-uid]').forEach(b=>b.onclick=()=>C.openRecordForm('concesionari',b.dataset.uid,true));};
+    document.getElementById('cbox').innerHTML=items.length?items.map(r=>`<button class="result" data-uid="${esc(r.uid)}" data-testid="concesionar-row"><div><b>${esc(`${r.nume||''} ${r.prenume||''}`.trim()||'Fără nume')}</b><small>${esc(r.telefon||'')}${r._p?' · nesincronizat':''}</small></div><span class="pill">${canDo('concesionari','edit')?'Editează':'Doar citire'}</span></button>`).join(''):'<div class="empty">Nicio înregistrare. Apasă Sincronizează.</div>';
+    document.querySelectorAll('#cbox [data-uid]').forEach(b=>b.onclick=()=>{if(canDo('concesionari','edit'))C.openRecordForm('concesionari',b.dataset.uid);});};
   document.getElementById('cq').oninput=draw;document.getElementById('cadd')?.addEventListener('click',()=>C.openRecordForm('concesionari',null));draw();}
+
+// ---------------------------------------------------------------- istoricul documentelor emise (contract, chitanță, aviz, adeverințe)
+export async function renderIssued(v){
+  v.innerHTML=`<div class="page-head"><div><h1>Documente emise</h1><p>Istoric: număr, tip și data emiterii. Deschide pentru vizualizare, descărcare sau tipărire.</p></div></div><div id="ibox" class="result-list"><div class="empty">Se încarcă…</div></div>`;
+  try{const r=await C.api(`${C.API}/sync-v2/issue?limit=200`);const box=document.getElementById('ibox');
+    box.innerHTML=(r.issued||[]).length?r.issued.map(x=>`<button class="result" data-u="${esc(x.uid)}" data-n="${esc(x.number)}" data-k="${esc(x.kind)}" data-testid="issued-row"><div><b>${esc(x.label)} · ${esc(x.number)}</b><small>${esc(String(x.created_at||'').slice(0,16).replace('T',' '))} · ${x.device_type==='MAIN'?'MAIN':'telefon'}</small></div><span class="pill">PDF</span></button>`).join(''):'<div class="empty">Niciun document emis încă.</div>';
+    box.querySelectorAll('[data-u]').forEach(b=>b.onclick=()=>openPdf(`/issue/${b.dataset.u}/pdf`,`${b.dataset.k}-${b.dataset.n}.pdf`));
+  }catch(_e){document.getElementById('ibox').innerHTML='<div class="empty">Istoricul se încarcă doar online.</div>';}}

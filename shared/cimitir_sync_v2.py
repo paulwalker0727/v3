@@ -646,6 +646,11 @@ class SyncV2Service:
 
     def _audit_safe(self, c, a, kind, entity, uid, detail) -> None:
         try:
+            if kind == "denied":      # anti-inundare: același refuz (telefon+registru+rând+motiv) se înregistrează cel mult o dată pe minut
+                dup = c.execute("SELECT 1 FROM sync_v2_audit WHERE binding_uid=CAST(? AS uuid) AND kind='denied' AND COALESCE(entity,'')=COALESCE(?,'') AND COALESCE(entity_uid,'')=COALESCE(?,'') "
+                                "AND detail->>'reason'=? AND created_at > now() - interval '60 seconds' LIMIT 1", (a["binding_uid"], entity, uid, str(detail.get("reason")))).fetchone()
+                if dup is not None:
+                    return
             self._audit(c, a, kind, entity, uid, detail)
         except Exception:  # noqa: BLE001 — jurnalul nu trebuie să blocheze răspunsul; lipsește doar înainte de migrarea 027
             pass
