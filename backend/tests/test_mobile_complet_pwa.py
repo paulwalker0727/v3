@@ -188,3 +188,46 @@ def test_offline_create_grave_and_polygon_then_reconnect_without_duplicates(web)
         page.wait_for_timeout(1200)
         assert sql(w, "SELECT count(*) FROM locuri_de_veci WHERE cod_loc='OFF-1'")[0][0] == 1
         b.close()
+
+
+def test_concessionaires_add_search_edit_and_issued_history(web):
+    w = web
+    give(w, {"concesionari": cell(True, True, True), "plati": cell(True, True), "contracte": cell(True), "locuri": cell(True)})
+    with pw.sync_playwright() as p:
+        b, page = open_app(p, w)
+        page.click(".bottom-nav [data-view=modules]")
+        page.click("[data-testid=module-concesionari]")
+        page.click("[data-testid=add-concesionari-top]")
+        page.fill("[data-testid=field-nume]", "Țărnă")
+        page.fill("[data-testid=field-prenume]", "Ștefan")
+        page.click("[data-testid=record-save]")
+        for _ in range(30):
+            rows = sql(w, "SELECT nume, prenume FROM concesionari")
+            if rows:
+                break
+            page.wait_for_timeout(300)
+        assert rows == [("Țărnă", "Ștefan")]
+        for _ in range(40):                                             # așteaptă golirea cozii locale (operațiunea a fost confirmată de server)
+            if page.evaluate("""() => new Promise((res) => { const r = indexedDB.open('cimitir-mobile-v2'); r.onsuccess = () => { const q = r.result.transaction('kv').objectStore('kv').get('outbox'); q.onsuccess = () => res((q.result || []).length); }; })""") == 0:
+                break
+            page.wait_for_timeout(250)
+        page.fill("[data-testid=concesionari-filter]", "tăr")          # căutare tolerantă la majuscule (diacritice exacte)
+        page.fill("[data-testid=concesionari-filter]", "Țărnă")
+        page.wait_for_selector("[data-testid=concesionar-row]")
+        page.click("[data-testid=concesionar-row]")
+        page.wait_for_selector("#sheet-body .micro:has-text('EDITARE')")
+        page.fill("[data-testid=field-telefon]", "0722000111")
+        page.click("[data-testid=record-save]")
+        for _ in range(30):
+            if sql(w, "SELECT telefon FROM concesionari")[0][0] == "0722000111":
+                break
+            page.wait_for_timeout(300)
+        assert sql(w, "SELECT telefon FROM concesionari")[0][0] == "0722000111"
+        # istoricul documentelor emise (gol, apoi cu chitanța emisă)
+        r = requests.post(f"{w['url']}/api/v1/sync-v2/issue", json={"kind": "chitanta", "entity_uid": w["pay"]}, headers=H(w["T"]["A"]["phone"]), timeout=10)
+        assert r.status_code == 200
+        page.click(".bottom-nav [data-view=modules]")
+        page.click("[data-testid=module-emise]")
+        page.wait_for_selector("[data-testid=issued-row]")
+        assert "CH-000001" in page.inner_text("[data-testid=issued-row]")
+        b.close()

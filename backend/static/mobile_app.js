@@ -136,6 +136,7 @@ async function syncNow(){
     for(let i=0;i<todo.length;i+=50){
       const chunk=todo.slice(i,i+50);
       const r=await api(`${API}/sync-v2/push`,{method:'POST',body:JSON.stringify({ops:chunk.map(o=>({op_id:o.op_id,entity:o.entity,uid:o.uid,action:o.action,base_version:o.base_version,data:o.data}))})});
+      ob=await outbox();   // citire proaspătă: operațiile adăugate cât timp cererea era în curs (ex. poligon desenat imediat după crearea locului) NU se pierd
       for(const x of r.results){const o=ob.find(z=>z.op_id===x.op_id);if(!o)continue;
         if(x.status==='applied'){ob=ob.filter(z=>z!==o);res.applied++;}
         else if(x.status==='conflict'){o.state='conflict';o.reason=x.reason;o.serverVersion=x.server_version;res.conflicts++;}
