@@ -14,6 +14,7 @@ REF_RE = re.compile(r"^[a-z]{20}$")
 NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,62}$")
 TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,40}$")
 ENV_NAME = "TEST"
+PARISH_ENV = "PARISH"     # proiectul Supabase propriu al unei parohii, administrat din MAIN (refurile protejate rămân blocate)
 
 
 class GuardError(Exception):
@@ -65,7 +66,7 @@ def consistency_issues(cfg: Dict) -> List[str]:
         if "pooler" not in p["host"] and p["port"] not in ("5432", "0"):
             out.append("Port PostgreSQL neașteptat pentru Supabase.")
     bucket = (cfg.get("storage_bucket") or "").strip()
-    if bucket and "test" not in bucket.lower():
+    if bucket and cfg.get("env_name", ENV_NAME) != PARISH_ENV and "test" not in bucket.lower():
         out.append("Bucketul TEST trebuie să conțină „test” în nume (separare strictă TEST/PROD).")
     port = cfg.get("docker_port")
     try:
@@ -80,8 +81,8 @@ def consistency_issues(cfg: Dict) -> List[str]:
 
 def assert_read_allowed(cfg: Dict) -> None:
     assert_not_prod(cfg)
-    if cfg.get("env_name", ENV_NAME) != ENV_NAME:
-        raise GuardError("Mediul permis este doar TEST.")
+    if cfg.get("env_name", ENV_NAME) not in (ENV_NAME, PARISH_ENV):
+        raise GuardError("Mediul permis este doar TEST sau proiectul propriu al parohiei (PARISH).")
 
 
 def assert_write_allowed(cfg: Dict) -> None:

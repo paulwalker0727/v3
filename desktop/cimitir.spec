@@ -43,6 +43,12 @@ def _backend_data(name):
     return (src, "portal/" + name) if os.path.exists(src) else None
 
 
+def _root_data(rel_path, dest):
+    """Fișiere din rădăcina repo-ului (Setup Manager + migrări), necesare Centrului de configurare Cloud."""
+    src = os.path.join(os.path.dirname(HERE), rel_path)
+    return (src, dest) if os.path.exists(src) else None
+
+
 # --- fișiere de date incluse în pachet ---
 datas = [
     d for d in (
@@ -55,6 +61,8 @@ datas = [
         _backend_data("static"),
         _backend_data("fonts"),
         _backend_data("doc_templates"),
+        _root_data("tools/setup_manager", "tools/setup_manager"),            # Centru Cloud: logica validată de instalare schemă
+        _root_data("backend/cimitir/pg_migrations", "backend/cimitir/pg_migrations"),
     ) if d
 ]
 
@@ -102,6 +110,11 @@ hiddenimports = [
     "cloud_conflicts_window",
     "cloud_profiles",
     "cloud_profiles_dialog",
+    "cloud_center",
+    "cloud_center_common",
+    "cloud_center_dialog",
+    "cloud_center_supabase_tab",
+    "cloud_supabase",
     "field_inbox_client",
     "field_inbox_window",
     "field_import",

@@ -9,48 +9,59 @@ import database as db
 
 
 def _backups_dir() -> str:
-    base = os.path.dirname(os.path.abspath(db.DB_PATH))
-    d = os.path.join(base, "backups")
-    os.makedirs(d, exist_ok=True)
-    return d
+    """Folderul de backup pentru registrul activ, nu pentru vechiul cimitir.db."""
+    from pathlib import Path
+    import sys
+    shared = str(Path(__file__).resolve().parent.parent / "shared")
+    if shared not in sys.path:
+        sys.path.insert(0, shared)
+    import cimitir_backup
+    import cimitir_config
+    custom = (db.get_setting("backup_dir") or "").strip()
+    d = Path(custom) if custom else cimitir_backup.default_backup_dir(cimitir_config.working_dir())
+    d.mkdir(parents=True, exist_ok=True)
+    return str(d)
 
 
 def backup_db(dest_dir: Optional[str] = None) -> Optional[str]:
-    """Copiază baza de date într-un fișier cu timestamp. Returnează calea."""
+    """Backup consistent SQLite + media pentru registrul activ; compatibil cu bara MAIN."""
     try:
-        dest_dir = dest_dir or _backups_dir()
-        os.makedirs(dest_dir, exist_ok=True)
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        dest = os.path.join(dest_dir, f"cimitir_backup_{ts}.db")
-        shutil.copy2(db.DB_PATH, dest)
-        return dest
+        from pathlib import Path
+        import sys
+        shared = str(Path(__file__).resolve().parent.parent / "shared")
+        if shared not in sys.path:
+            sys.path.insert(0, shared)
+        import cimitir_backup
+        import cimitir_config
+        source = Path(cimitir_config.working_dir())
+        target = cimitir_backup.backup(source, Path(dest_dir or _backups_dir()))
+        problems = cimitir_backup.verify(target)
+        if problems:
+            raise RuntimeError("Verificarea backupului a eșuat: " + "; ".join(problems))
+        return str(target)
     except Exception as e:
         print(f"[backup_db] {e}")
         return None
 
 
 def restore_db(src_path: str) -> bool:
-    """Restaurează baza de date dintr-un backup (face întâi un backup de siguranță)."""
-    try:
-        if not os.path.exists(src_path):
-            return False
-        backup_db()  # siguranță
-        shutil.copy2(src_path, db.DB_PATH)
-        return True
-    except Exception as e:
-        print(f"[restore_db] {e}")
-        return False
+    """Nu înlocui o bază SQLite deschisă. Restaurarea sigură e în BackupWindow."""
+    print("[restore_db] Restaurarea directă este dezactivată; folosește Copii de rezervă > Restaurează selecția.")
+    return False
 
 
 def auto_backup_daily() -> Optional[str]:
-    """Face un backup o dată pe zi (verifică ultimul din folder)."""
+    """Backup zilnic prin mecanismul actual, inclusiv media registrului."""
     try:
-        today = datetime.date.today().strftime("%Y%m%d")
-        d = _backups_dir()
-        for f in os.listdir(d):
-            if f.startswith(f"cimitir_backup_{today}"):
-                return None  # deja există backup azi
-        return backup_db(d)
+        from pathlib import Path
+        import sys
+        shared = str(Path(__file__).resolve().parent.parent / "shared")
+        if shared not in sys.path:
+            sys.path.insert(0, shared)
+        import cimitir_backup
+        import cimitir_config
+        target = cimitir_backup.run_scheduled(Path(cimitir_config.working_dir()), db.get_setting)
+        return str(target) if target else None
     except Exception as e:
         print(f"[auto_backup_daily] {e}")
         return None

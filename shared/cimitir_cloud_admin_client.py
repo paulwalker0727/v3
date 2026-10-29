@@ -45,6 +45,13 @@ class AdminClient:
     def status(self) -> Dict[str, Any]:
         return self._req("GET", "/status")
 
+    def bootstrap(self, token: str, email: str, password: str, display_name: str = "", organization_uid: Optional[str] = None,
+                  organization_name: str = "", cemetery_uid: Optional[str] = None, cemetery_name: str = "") -> Dict[str, Any]:
+        """Inițializare unică a primului administrator Cloud (token tehnic de inițializare; fără sesiune)."""
+        return self._req("POST", "/bootstrap", {"token": token, "email": email, "password": password, "display_name": display_name,
+                                                "organization_uid": organization_uid, "organization_name": organization_name,
+                                                "cemetery_uid": cemetery_uid, "cemetery_name": cemetery_name})
+
     def login(self, email: str, password: str) -> Dict[str, Any]:
         self._token = None
         res = self._req("POST", "/login", {"email": email, "password": password})
