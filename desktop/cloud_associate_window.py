@@ -76,6 +76,12 @@ class CloudAssociateDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._build_assoc(), "Asociază acest calculator")
         tabs.addTab(self._build_codes(), "Coduri și dispozitive (administrator)")
+        from cloud_init_admin_tab import InitAdminTab
+        from portable_tab import PortableTab
+        self.tab_init = InitAdminTab(self._store, lambda: self.ed_url.text().strip() or default_url(), self._can, self)
+        self.tab_portable = PortableTab(self._cat, self._can, self)
+        tabs.addTab(self.tab_init, "Inițializare administrator Cloud")
+        tabs.addTab(self.tab_portable, "Backup portabil")
         lay.addWidget(tabs)
 
     # ================================================================== tab 1

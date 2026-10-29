@@ -229,13 +229,13 @@ class RegistryCatalog:
         return self.data_dir / REGISTRIES_DIR / valid_uid(cemetery_uid)
 
     # -- organizații
-    def create_organization(self, org_type: str, official_name: str, display_name: str = "", **extra: str) -> str:
+    def create_organization(self, org_type: str, official_name: str, display_name: str = "", uid: str = "", **extra: str) -> str:
         if org_type not in ORG_TYPES:
             raise RegistryError(f"Tip de organizație necunoscut: {org_type!r}")
         official_name = (official_name or "").strip()
         if not official_name:
             raise RegistryError("Denumirea oficială este obligatorie.")
-        uid = new_uid()
+        uid = valid_uid(uid) if uid else new_uid()                    # `uid` explicit doar pentru import portabil (păstrează identitatea originală)
         vals = {k: (extra.get(k) or "").strip() for k in ("cui", "county", "locality", "address", "phone", "email", "logo_path")}
         with self._conn() as c:
             c.execute("INSERT INTO organizations (uid, org_type, official_name, display_name, cui, county, locality, address,"
@@ -275,14 +275,14 @@ class RegistryCatalog:
             return [dict(r) for r in c.execute(sql)]
 
     # -- cimitire
-    def create_cemetery(self, organization_uid: str, name: str, **extra: str) -> str:
+    def create_cemetery(self, organization_uid: str, name: str, uid: str = "", **extra: str) -> str:
         org = self.get_organization(organization_uid)
         if not org or not org["active"]:
             raise RegistryError("Organizația nu există sau este arhivată.")
         name = (name or "").strip()
         if not name:
             raise RegistryError("Denumirea cimitirului este obligatorie.")
-        uid = new_uid()
+        uid = valid_uid(uid) if uid else new_uid()
         vals = {k: (extra.get(k) or "").strip() for k in ("county", "locality", "address")}
         with self._conn() as c:
             c.execute("INSERT INTO cemeteries (uid, organization_uid, name, county, locality, address, active, created_at, updated_at)"

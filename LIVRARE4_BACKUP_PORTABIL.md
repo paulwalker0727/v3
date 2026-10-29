@@ -1,0 +1,23 @@
+# Livrarea 4 — Backup portabil și prima sincronizare controlată
+
+Modul: `shared/cimitir_portable.py` · UI: `desktop/portable_tab.py` (fila „Backup portabil” din Cloud → Asociază) · teste: `backend/tests/test_portable_backup.py` (9, LOCAL-SQLite + Qt offscreen).
+
+## Arhiva `.cimitir-portabil` (ZIP)
+`manifest.json` (format, versiune, organizație/cimitir cu UID-uri, numere pe entități, sha256 + dimensiune pentru **fiecare** fișier, avertismente, ce s-a sanitizat) · `database.sqlite` (copie consistentă prin API-ul de backup SQLite, include WAL) · `media/…` (fotografii, documente, `media/_map/` pentru imaginea hărții; fișiere aflate în afara folderului media sunt aduse în `media/_external/` cu cale relativă).
+Include: registru + identități (UID organizație/cimitir/rânduri), locuri, sectoare și poligoane, concesionari, persoane înhumate, contracte, documente, fotografii, imaginea hărții, relațiile dintre înregistrări (baza SQLite integrală).
+
+**Sanitizare la export (decizie de securitate):** NU intră în arhivă legătura Cloud (`cloud_binding_uid`, `cloud_url`, `cloud_secret_ref`, `bound_installation_uid`, `sync_epoch`, `last_change_seq`, `cloud_device_uid`, `bound_root_fp`), starea de sincronizare (forțată `UNBOUND`), coada de sincronizare (`sync_ops`, `cloud_sync_*`) și conturile locale (`users`: hash-uri de parole). Cheia Cloud nu e niciodată în arhivă. Arhiva se creează pe `.part`, apoi se redenumește și se **autoverifică**; nu suprascrie un fișier existent și nu se poate scrie în interiorul registrului exportat.
+
+## Import (nu suprascrie nimic)
+1. **Selectarea arhivei** → 2. **Verificare**: format, versiune (arhivă mai nouă ⇒ refuz), căi nesigure (zip-slip), limite, fișiere necunoscute, sha256+dimensiune pentru fiecare fișier, `PRAGMA integrity_check` → 3. **Previzualizare** (nu scrie nimic): organizație/cimitir destinație cu UID, numere pe entități, media, blocaje și avertismente → 4. **Confirmarea explicită** a organizației și cimitirului destinație (UID-urile trebuie să corespundă arhivei) → 5. **Detectare duplicate**: cimitir cu același UID în catalog ⇒ **blocat** (`EXISTS`); organizație cu aceeași denumire dar alt UID, cimitir cu același nume ⇒ avertisment care cere acceptare explicită (nu se îmbină automat); coduri de loc duplicate în arhivă ⇒ avertisment → 6. **Restaurare sigură**: extragere în folder temporar `.import-*`, reverificare sha256, creare organizație/cimitir în catalog **cu UID-urile originale**, mutare atomică, `prepare_registry_db` (refuză identitate străină), verificare finală (numere = manifest, media ok, `UNBOUND`, fără secret) → la orice eroare **rollback** complet (catalog + foldere) → 7. **Raport** JSON în `<registru>/logs/import-<id>.json` (și în UI).
+Foldere `.import-*` rămase după o cădere sunt curățate la următorul import.
+
+## Prima sincronizare (după import)
+Registrul importat este `UNBOUND`, fără cheie, fără identitate de instalare ⇒ `sync_allowed` = fals: **nicio sincronizare automată**. Încărcarea în Cloud se face prin **Asociază acest calculator → Flux B** (Livrarea 1): plan cu rezumat și `plan_hash`, confirmare explicită, încărcare în staging cu checkpoint, verificare integrală (număr, amprente, media), publicare atomică, **reluare după întrerupere fără cod nou**, idempotency; dacă Cloud-ul are deja date, Flux B refuză (nu suprascrie) fără aprobare/îmbinare dedicată. Testul `test_first_sync_after_import_uses_flux_b_with_preview_resume_and_no_overwrite` arată că `content_digest`-ul registrului importat = al celui exportat și că Flux B se finalizează (simulator local); `TESTE_SI_REGRESII_LIVRARI_2_4.md` listează și testele PG+HTTP ale Flux B/resume din Livrarea 1.
+Limită onestă: progresul vizibil este (a) bara de progres la export/import (hash/scriere/extragere) și (b) rezumatul final al Flux B; **bara de progres în timp real pe încărcarea Flux B nu a fost adăugată** (rămâne mesajul „Asociere în curs…”). Checkpoint/reluare există la nivel de protocol (`resume`), nu ca ecran dedicat.
+
+## Netestat / limite
+- Pe Windows real, cu arhive de GB, cu Supabase real: **netestat**. Testele folosesc registre mici și simulatorul de control plane.
+- Migrarea între versiuni de schemă: arhivele cu `version` > 1 sunt refuzate; nu există încă migrare automată de schemă SQLite între versiuni de aplicație (se aplică `init_db` pe baza importată).
+- Arhiva NU este criptată; conține date personale (concesionari, înhumați). Păstreaz-o ca pe un document sensibil; criptarea cu parolă/cheie a parohiei = îmbunătățire viitoare (Livrarea 3, secțiunea de limitări).
+- Conturile locale nu se exportă: după import se creează administratorul local în mod obișnuit (primul pornire).
