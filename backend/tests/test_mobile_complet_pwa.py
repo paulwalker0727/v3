@@ -231,3 +231,26 @@ def test_concessionaires_add_search_edit_and_issued_history(web):
         page.wait_for_selector("[data-testid=issued-row]")
         assert "CH-000001" in page.inner_text("[data-testid=issued-row]")
         b.close()
+
+
+def test_map_shows_background_image_from_main_and_polygons(web):
+    import base64
+    import hashlib
+    import io
+
+    from PIL import Image
+    w = web
+    buf = io.BytesIO()
+    Image.new("RGB", (120, 80), (30, 120, 70)).save(buf, "PNG")
+    raw = buf.getvalue()
+    r = requests.put(f"{w['url']}/api/v1/sync-v2/map/background", json={"mime": "image/png", "data": base64.b64encode(raw).decode(), "sha256": hashlib.sha256(raw).hexdigest(),
+                                                                       "width": 120, "height": 80, "version": 1}, headers=H(w["T"]["A"]["main"]), timeout=10)
+    assert r.status_code == 200, r.text
+    give(w, {"locuri": cell(True), "harta": cell(True)})
+    with pw.sync_playwright() as p:
+        b, page = open_app(p, w)
+        page.click(".bottom-nav [data-view=map]")
+        page.wait_for_selector("#cem-map polygon.plot")
+        page.wait_for_selector("[data-testid=map-background]", state="attached")
+        assert page.get_attribute("[data-testid=map-background]", "width") == "120"
+        b.close()
