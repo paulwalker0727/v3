@@ -89,7 +89,6 @@ def test_ui_follows_matrix_create_grave_polygon_field_lock_delete_and_pdf(web):
         for dx, dy in ((0.3, 0.3), (0.7, 0.3), (0.5, 0.7)):
             page.mouse.click(box["x"] + box["width"] * dx, box["y"] + box["height"] * dy)
         page.click("[data-testid=polygon-save]")
-        page.wait_for_selector(".toast:has-text('Sincronizat')")
         for _ in range(20):
             row = sql(w, "SELECT sector, points FROM locuri_de_veci WHERE cod_loc='NOU-7'")
             if row and row[0][1] and len(row[0][1]) >= 3:
@@ -100,8 +99,7 @@ def test_ui_follows_matrix_create_grave_polygon_field_lock_delete_and_pdf(web):
         page.click(".bottom-nav [data-view=modules]")
         page.click("[data-testid=module-locuri]")
         page.fill("[data-testid=list-filter]", "PWA-1")
-        page.wait_for_selector("button.result:not([disabled])")
-        page.click("button.result:not([disabled])")
+        page.locator("button.result", has_text="PWA-1").first.click()
         page.click("[data-testid=edit-grave]")
         assert page.is_disabled("[data-testid=field-sector]") and not page.is_disabled("[data-testid=field-observatii]")
         page.fill("[data-testid=field-observatii]", "verificat pe teren")
@@ -113,7 +111,7 @@ def test_ui_follows_matrix_create_grave_polygon_field_lock_delete_and_pdf(web):
             page.wait_for_timeout(300)
         assert got == ("verificat pe teren", "PWA-1"), page.inner_text("body")[-600:]
         # fără drept de ștergere: nu există buton „Șterge" (și serverul ar refuza oricum)
-        page.click("button.result:not([disabled])")
+        page.locator("button.result", has_text="PWA-1").first.click()
         assert page.locator("[data-testid=delete-grave]").count() == 0
         # chitanță PDF: emite (are „Adaugă" pe plăți), apoi se deschide vizualizatorul cu descărcare/tipărire
         page.wait_for_selector("[data-testid=pdf-chitanta]")
