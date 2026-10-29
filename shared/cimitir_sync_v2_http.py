@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import anyio
 from fastapi import APIRouter, Request
@@ -18,7 +19,7 @@ PREFIX = wire.API + "/sync-v2"
 PUSH_LIMIT = 512 * 1024
 
 
-def create_router(service: sv.SyncV2Service, docs: "sdocs.DocumentService | None" = None) -> APIRouter:
+def create_router(service: sv.SyncV2Service, docs: "sdocs.DocumentService | None" = None, issuer: Any = None) -> APIRouter:
     router = APIRouter(prefix=PREFIX)
 
     def add(path: str, methods: list, fn):
@@ -87,6 +88,20 @@ def create_router(service: sv.SyncV2Service, docs: "sdocs.DocumentService | None
         body = json.loads(await fih._body_limited(r, 2_000_000))
         return await run(lambda: service.put_sectors(key, body.get("sectors")))
 
+    async def profiles(_r, key):
+        return await run(lambda: service.profiles(key))
+
+    async def save_profile(r: Request, key):
+        body = json.loads(await fih._body_limited(r, 32 * 1024))
+        return await run(lambda: service.save_profile(key, r.path_params["pkey"], body.get("label"), body.get("matrix")))
+
+    async def matrix(r: Request, key):
+        body = json.loads(await fih._body_limited(r, 32 * 1024))
+        return await run(lambda: service.set_matrix(key, r.path_params["ref"], body.get("profile"), body.get("matrix"), bool(body.get("view_pii"))))
+
+    async def audit(r: Request, key):
+        return await run(lambda: service.audit(key, qint(r, "limit", 100)))
+
     async def runs(r: Request, key):
         return await run(lambda: service.runs(key, qint(r, "limit", 50)))
 
@@ -103,6 +118,46 @@ def create_router(service: sv.SyncV2Service, docs: "sdocs.DocumentService | None
     add("/devices/{ref}/capabilities", ["PUT"], capabilities)
     add("/sectors", ["PUT"], sectors)
     add("/runs", ["GET"], runs)
+    add("/permissions/profiles", ["GET"], profiles)
+    add("/permissions/profiles/{pkey}", ["PUT"], save_profile)
+    add("/devices/{ref}/matrix", ["PUT"], matrix)
+    add("/audit", ["GET"], audit)
+    if issuer is not None:
+        async def iss_templates(_r, key):
+            return await run(lambda: issuer.templates(key))
+
+        async def iss_issue(r: Request, key):
+            body = json.loads(await fih._body_limited(r, 16 * 1024))
+            return await run(lambda: issuer.issue(key, str(body.get("kind") or ""), str(body.get("entity_uid") or ""), body.get("fields")))
+
+        async def iss_next(r: Request, key):
+            return await run(lambda: issuer.suggest(key, r.query_params.get("kind", "")))
+
+        async def iss_list(r: Request, key):
+            return await run(lambda: issuer.list(key, r.query_params.get("entity_uid", ""), r.query_params.get("kind", ""), qint(r, "limit", 100)))
+
+        async def iss_pdf(request: Request):
+            secret = ""
+            try:
+                secret = fih._binding_key(request)
+                try:
+                    if request.path_params["uid"] == "preview":
+                        data, name = await run(lambda: issuer.preview(secret, request.query_params.get("kind", ""), request.query_params.get("entity_uid", ""))), "previzualizare.pdf"
+                    else:
+                        data, name = await run(lambda: issuer.pdf(secret, request.path_params["uid"]))
+                except cc.ScopeError as exc:
+                    if str(exc) == "legătură invalidă":
+                        raise wire.Unauthenticated("legătură invalidă") from None
+                    raise
+                return Response(data, media_type="application/pdf", headers={**fih._HEADERS, "X-Content-Type-Options": "nosniff", "Content-Disposition": f'inline; filename="{name}"'})
+            except Exception as exc:  # noqa: BLE001
+                return fih._error(exc, secret)
+
+        add("/issue/templates", ["GET"], iss_templates)
+        add("/issue", ["POST"], iss_issue)
+        add("/issue", ["GET"], iss_list)
+        add("/issue/next", ["GET"], iss_next)
+        router.add_api_route("/issue/{uid}/pdf", iss_pdf, methods=["GET"])
     if docs is not None:
         async def doc_list(r: Request, key):
             return await run(lambda: docs.list(key, qint(r, "since", 0), r.query_params.get("entity", ""), r.query_params.get("entity_uid", ""), qint(r, "limit", 200)))

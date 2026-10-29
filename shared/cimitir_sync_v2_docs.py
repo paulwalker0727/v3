@@ -15,6 +15,7 @@ import cimitir_cloud_control as cc
 import cimitir_entities as ents
 import cimitir_field_storage as fs
 import cimitir_storage as st
+import cimitir_mobile_perms as mp
 import cimitir_sync_v2 as sv
 
 MAX_BYTES = fs.MAX_BYTES
@@ -44,13 +45,14 @@ class DocumentService:
         return self.sync._auth(key)
 
     def _can_read(self, c, a, entity: str) -> bool:
-        return entity in sv.readable_entities(c, a)
+        m, _ = sv.matrix_of(c, a)
+        return entity in sv.readable_entities(c, a) and mp.can(m, "fisiere", "view")      # categoria „Fotografii și fișiere": fără „Vede" nu apare și nu se poate descărca
 
     def _need_upload(self, c, a) -> None:
         if a["device_type"] == "MAIN":
             return
-        caps = sv.caps_of(c, a)
-        if caps is None or "upload_documents" not in caps:
+        m, _ = sv.matrix_of(c, a)
+        if not mp.can(m, "fisiere", "add"):
             raise cc.PermissionDenied("nu ai dreptul de a încărca documente sau fotografii")
 
     def _row(self, c, a, uid: str):
@@ -198,16 +200,21 @@ class DocumentService:
     # ------------------------------------------------------------------ 4. ștergere logică (doar MAIN)
     def delete(self, key: str, uid: str) -> Dict[str, Any]:
         a = self._auth(key)
-        self.sync._need_main(a)
         uid = str(uid).lower()
         c = self.cp._c()
         try:
+            m, _ = sv.matrix_of(c, a)
+            if a["device_type"] != "MAIN" and not mp.can(m, "fisiere", "delete"):       # ștergerea de pe telefon: doar cu „Șterge/Anulează" pe categoria fișiere (logică, auditată)
+                self.sync._audit_safe(c, a, "denied", "documente", uid, {"reason": "not_authorized:delete"})
+                raise cc.PermissionDenied("nu ai dreptul de a șterge documente")
             r = self._row(c, a, uid)
-            if r is None:
+            if r is None or not self._can_read(c, a, r["entity"]):
                 raise cc.ScopeError("document inexistent")
             if r["status"] != "DELETED":
                 c.execute("UPDATE sync_v2_documents SET status='DELETED', deleted_by_binding=CAST(? AS uuid) WHERE cemetery_uid=CAST(? AS uuid) AND uid=?",
                           (a["binding_uid"], a["cemetery_uid"], uid))
+                if a["device_type"] != "MAIN":
+                    self.sync._audit(c, a, "delete", "documente", uid, {"entity": r["entity"], "entity_uid": r["entity_uid"], "filename": r["filename"], "sha256": r["sha256"]})
             return _public(self._row(c, a, uid))
         finally:
             c.close()

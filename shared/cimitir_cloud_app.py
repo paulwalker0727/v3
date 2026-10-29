@@ -33,6 +33,7 @@ import cimitir_mobile_registry as mir
 import cimitir_sync_v2 as sv2
 import cimitir_sync_v2_http as sv2h
 import cimitir_sync_v2_docs as sdocs
+import cimitir_mobile_issue as issue_mod
 
 log = logging.getLogger("cimitir.cloud_app")
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,7 +110,7 @@ def create_app(service: Any = None, origins: Optional[list] = None, pairing: Any
     app.include_router(mih.create_router(mir.MobileRegistryService(service)))
     sync_service = sv2.SyncV2Service(service)
     media = getattr(service, "media", None)
-    app.include_router(sv2h.create_router(sync_service, sdocs.DocumentService(sync_service, media.storage) if media is not None else None))
+    app.include_router(sv2h.create_router(sync_service, sdocs.DocumentService(sync_service, media.storage) if media is not None else None, issue_mod.IssueService(sync_service)))
     app.include_router(cloud_http.create_router(service.cp))               # /api/v1/bootstrap/* (asociere MAIN), pe PostgreSQL
     admin_service = admin_mod.AdminService(service.cp)
     app.include_router(adminh.create_router(admin_service))                 # /api/v1/admin/* (sesiune administrativă)

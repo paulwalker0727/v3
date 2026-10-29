@@ -25,7 +25,7 @@ from cimitir_prov_store import ProvisionError, Vault
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_FILES = (("shared", "*.py"), ("backend", "attachments.py"), ("scripts", "cloud_admin_recovery.py"))
-RELEASE_TREES = ("backend/templates", "backend/static", "backend/cimitir/pg_migrations", "backend/cimitir/pg_rollbacks")
+RELEASE_TREES = ("backend/templates", "backend/static", "backend/cimitir/pg_migrations", "backend/cimitir/pg_rollbacks", "backend/doc_templates", "backend/fonts")
 EXCLUDE_PREFIX = "cimitir_prov"          # codul provisionerului nu intră în release-ul instanței
 SAFE_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "SYSTEMROOT")
 
