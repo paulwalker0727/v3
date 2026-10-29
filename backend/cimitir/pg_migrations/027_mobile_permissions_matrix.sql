@@ -96,3 +96,26 @@ BEGIN
                        'AND (cp_device_is_main() OR cp_mobile_delete_ok()))', t);
     END LOOP;
 END $$;
+
+-- Imaginea hărții (fundalul poligoanelor) din MAIN, pentru Mobile. Stocare privată (în DB, doar prin API cu permisiunea „Vede hartă"); max 8 MB; integritate prin sha256.
+CREATE TABLE IF NOT EXISTS sync_v2_map_background (
+    cemetery_uid     UUID PRIMARY KEY,
+    organization_uid UUID NOT NULL,
+    mime             TEXT NOT NULL CHECK (mime IN ('image/png','image/jpeg','image/webp')),
+    width            INTEGER NOT NULL DEFAULT 0,
+    height           INTEGER NOT NULL DEFAULT 0,
+    sha256           TEXT NOT NULL,
+    version          INTEGER NOT NULL DEFAULT 1,
+    data             BYTEA NOT NULL CHECK (octet_length(data) <= 8388608),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE sync_v2_map_background ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS cp_tenant ON sync_v2_map_background;
+CREATE POLICY cp_tenant ON sync_v2_map_background TO cimitir_cp_app USING (cp_org_ok(organization_uid) AND cp_cem_ok(cemetery_uid)) WITH CHECK (cp_org_ok(organization_uid) AND cp_cem_ok(cemetery_uid));
+REVOKE ALL ON sync_v2_map_background FROM cimitir_cp_app;
+GRANT SELECT, INSERT ON sync_v2_map_background TO cimitir_cp_app;
+GRANT UPDATE (mime, width, height, sha256, version, data, updated_at) ON sync_v2_map_background TO cimitir_cp_app;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN REVOKE ALL ON sync_v2_map_background FROM anon; END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN REVOKE ALL ON sync_v2_map_background FROM authenticated; END IF;
+END $$;

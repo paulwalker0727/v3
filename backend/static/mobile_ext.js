@@ -65,6 +65,14 @@ export async function pdfSection(g,d){
   sec.querySelectorAll('[data-i]').forEach(b=>{const [k,uid]=vis[+b.dataset.i];b.onclick=()=>runIssue(k,uid,issued,b);if(!canCat(KIND_CAT[k],'add')&&!issued?.[`${k}:${uid}`]&&k!=='contract')b.disabled=true;});
   return sec;}
 
+// ---------------------------------------------------------------- imaginea hărții din MAIN (privată; doar cu „Vede hartă")
+export async function loadMapBackground(){
+  try{const r=await fetch(`${C.API}/sync-v2/map/background`,{headers:{Authorization:`Binding ${C.state.key}`},cache:'no-cache'});
+    if(!r.ok){C.state.mapBg=null;return null;}
+    const blob=await r.blob(),w=+r.headers.get('X-Map-Width')||0,h=+r.headers.get('X-Map-Height')||0;
+    C.state.mapBg=w&&h?{url:URL.createObjectURL(blob),w,h}:null;return C.state.mapBg;}
+  catch(_e){C.state.mapBg=null;return null;}}
+
 // ---------------------------------------------------------------- editor poligon (desenare, modificare puncte, repoziționare)
 const NS='http://www.w3.org/2000/svg';
 export async function openPolygonEditor(uid,code,startPoints){
@@ -75,7 +83,7 @@ export async function openPolygonEditor(uid,code,startPoints){
   let map=C.state.map;if(!map){try{map=await C.api(`${C.API}/mobile/map`);C.state.map=map;}catch(_e){map={plots:[],sectors:[]};}}
   const others=(map.plots||[]).filter(p=>p.uid!==uid&&(p.points||[]).length>=3);
   let pts=(startPoints||[]).map(p=>[Number(p[0]),Number(p[1])]);if(pts.length>3&&pts[0][0]===pts.at(-1)[0]&&pts[0][1]===pts.at(-1)[1])pts.pop();
-  const all=[...others.flatMap(p=>p.points),...pts];const xs=all.map(p=>+p[0]),ys=all.map(p=>+p[1]);
+  if(C.state.mapBg===undefined)await loadMapBackground();const bg=C.state.mapBg||null;const all=[...others.flatMap(p=>p.points),...pts].concat(bg?[[0,0],[bg.w,bg.h]]:[]);const xs=all.map(p=>+p[0]),ys=all.map(p=>+p[1]);
   const b=all.length?{x:Math.min(...xs),y:Math.min(...ys),w:Math.max(...xs)-Math.min(...xs)||100,h:Math.max(...ys)-Math.min(...ys)||100}:{x:0,y:0,w:1000,h:1000};
   const pad=Math.max(b.w,b.h)*.06;let vb={x:b.x-pad,y:b.y-pad,w:b.w+2*pad,h:b.h+2*pad};const home={...vb};
   let mode=hasPoly?'move':'add';const W=document.createElement('div');W.className='ext-modal full';W.id='poly-editor';W.setAttribute('data-testid','polygon-editor');
@@ -83,7 +91,7 @@ export async function openPolygonEditor(uid,code,startPoints){
   document.body.appendChild(W);const svg=W.querySelector('#pe-svg');svg.style.touchAction='none';
   const sc=()=>vb.w/55;
   const draw=()=>{svg.setAttribute('viewBox',`${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
-    svg.innerHTML=`${others.map(p=>`<polygon points="${p.points.map(q=>q.join(',')).join(' ')}" fill="rgba(120,120,120,.22)" stroke="#999" stroke-width="1" vector-effect="non-scaling-stroke"/>`).join('')}${pts.length>=2?`<polygon id="pe-poly" points="${pts.map(q=>q.join(',')).join(' ')}" fill="rgba(79,138,104,.45)" stroke="#183b2d" stroke-width="2" vector-effect="non-scaling-stroke"/>`:''}${pts.map((q,i)=>`<circle data-v="${i}" cx="${q[0]}" cy="${q[1]}" r="${sc()}" fill="#fff" stroke="#183b2d" stroke-width="2" vector-effect="non-scaling-stroke"/>`).join('')}`;
+    svg.innerHTML=`${bg?`<image href="${bg.url}" x="0" y="0" width="${bg.w}" height="${bg.h}" preserveAspectRatio="none"/>`:''}${others.map(p=>`<polygon points="${p.points.map(q=>q.join(',')).join(' ')}" fill="rgba(120,120,120,.22)" stroke="#999" stroke-width="1" vector-effect="non-scaling-stroke"/>`).join('')}${pts.length>=2?`<polygon id="pe-poly" points="${pts.map(q=>q.join(',')).join(' ')}" fill="rgba(79,138,104,.45)" stroke="#183b2d" stroke-width="2" vector-effect="non-scaling-stroke"/>`:''}${pts.map((q,i)=>`<circle data-v="${i}" cx="${q[0]}" cy="${q[1]}" r="${sc()}" fill="#fff" stroke="#183b2d" stroke-width="2" vector-effect="non-scaling-stroke"/>`).join('')}`;
     W.querySelector('#pe-add').dataset.on=mode==='add';W.querySelector('#pe-move').dataset.on=mode==='move';W.querySelector('#pe-hint').textContent=mode==='add'?`Atinge harta pentru a adăuga puncte (${pts.length}). Minim 3.`:'Trage un punct sau poligonul întreg. Trage fundalul pentru deplasare.';};
   const toSvg=(e)=>{const m=svg.getScreenCTM().inverse();const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;const q=p.matrixTransform(m);return [q.x,q.y];};
   let drag=null;

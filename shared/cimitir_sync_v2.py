@@ -602,6 +602,42 @@ class SyncV2Service:
         finally:
             c.close()
 
+    # ------------------------------------------------------------------ fundalul hărții (imaginea din MAIN)
+    def put_map_background(self, binding_key: str, mime: str, b64: str, sha256: str, width: int, height: int, version: int) -> Dict[str, Any]:
+        import base64
+        import hashlib
+        a = self._auth(binding_key)
+        self._need_main(a)
+        if mime not in ("image/png", "image/jpeg", "image/webp"):
+            raise ValueError("tip de imagine neacceptat")
+        raw = base64.b64decode(b64 or "", validate=True)
+        if not raw or len(raw) > 8 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != str(sha256).lower():
+            raise ValueError("imagine invalidă sau amprentă diferită")
+        c = self.cp._c()
+        try:
+            c.execute("INSERT INTO sync_v2_map_background (cemetery_uid,organization_uid,mime,width,height,sha256,version,data) VALUES (CAST(? AS uuid),CAST(? AS uuid),?,?,?,?,?,?) "
+                      "ON CONFLICT (cemetery_uid) DO UPDATE SET mime=EXCLUDED.mime,width=EXCLUDED.width,height=EXCLUDED.height,sha256=EXCLUDED.sha256,"
+                      "version=EXCLUDED.version,data=EXCLUDED.data,updated_at=now()", (a["cemetery_uid"], a["organization_uid"], mime, int(width), int(height), sha256.lower(), int(version), raw))
+            return {"sha256": sha256.lower(), "bytes": len(raw)}
+        finally:
+            c.close()
+
+    def get_map_background(self, binding_key: str):
+        """(octeți, mime, meta) sau ScopeError. Necesită „Vede" pe categoria Hartă și poligoane (altfel 403)."""
+        a = self._auth(binding_key)
+        c = self.cp._c()
+        try:
+            m, _ = matrix_of(c, a)
+            if not mp.can(m, "harta", "view"):
+                raise cc.PermissionDenied("nu ai acces la hartă")
+            r = c.execute("SELECT mime,width,height,sha256,version,data FROM sync_v2_map_background WHERE cemetery_uid=CAST(? AS uuid) AND organization_uid=CAST(? AS uuid)",
+                          (a["cemetery_uid"], a["organization_uid"])).fetchone()
+            if r is None:
+                raise cc.ScopeError("fără imagine de fundal")
+            return bytes(r["data"]), r["mime"], {"width": r["width"], "height": r["height"], "sha256": r["sha256"], "version": r["version"]}
+        finally:
+            c.close()
+
     # ------------------------------------------------------------------ audit
     def _audit(self, c, a, kind: str, entity: Optional[str], uid: Optional[str], detail: Dict[str, Any]) -> None:
         c.execute("INSERT INTO sync_v2_audit (organization_uid,cemetery_uid,binding_uid,device_type,kind,entity,entity_uid,detail) "

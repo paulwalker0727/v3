@@ -121,7 +121,8 @@ def test_polygon_permissions_are_separate_from_place_permissions(sx):
     give(sx, ref, matrix={"locuri": cell(True), "harta": cell(False)})
     ch = pull(sx, phone, "locuri_de_veci")["changes"]
     assert ch and all("points" not in x["data"] and "color" not in x["data"] for x in ch if not x["deleted"])
-    assert all(p["points"] == [] for p in sx["mob"].map_data(phone)["plots"]) or sx["mob"].map_data(phone)["plots"] == [] or True
+    assert sx["mob"].map_data(phone)["plots"] == []                                                      # harta nu se mai citește prin API
+    assert "points" not in sx["mob"].grave_detail(phone, loc)["grave"]
 
 
 def test_revocation_applies_to_offline_operations_sent_later(sx):
@@ -279,3 +280,23 @@ def test_issue_documents_numbering_idempotent_and_permissions(ix):
     assert "1800101123456" in txt
     # izolare: MAIN-ul altei parohii nu poate descărca documentul
     assert ic.get(f"{API}/issue/{c1['uid']}/pdf", headers=H(ix["T"]["B"]["main"])).status_code in (403, 404)
+
+
+def test_map_background_private_permissioned_and_integral(ix):
+    import base64
+    import hashlib
+    seed_main_data(ix)
+    key, phone, ref = ix["T"]["A"]["main"], ix["T"]["A"]["phone"], ix["T"]["A"]["phone_b"]
+    keyb = ix["T"]["B"]["main"]
+    img = b"\x89PNG\r\n\x1a\n" + os.urandom(2048)
+    body = {"mime": "image/png", "data": base64.b64encode(img).decode(), "sha256": hashlib.sha256(img).hexdigest(), "width": 800, "height": 600, "version": 1}
+    ic = ix["iclient"]
+    assert ic.put(f"{API}/map/background", json=body, headers=H(phone)).status_code == 403           # doar MAIN trimite fundalul
+    assert ic.put(f"{API}/map/background", json={**body, "sha256": "0" * 64}, headers=H(key)).status_code == 400   # amprentă greșită = imagine coruptă
+    assert ic.put(f"{API}/map/background", json=body, headers=H(key)).status_code == 200
+    give(ix, ref, matrix={"harta": cell(True)})
+    r = ic.get(f"{API}/map/background", headers=H(phone))
+    assert r.status_code == 200 and r.content == img and r.headers["x-map-width"] == "800" and r.headers["content-type"] == "image/png"      # fără corupere
+    give(ix, ref, matrix={"locuri": cell(True)})                                                                                            # fără „Vede hartă"
+    assert ic.get(f"{API}/map/background", headers=H(phone)).status_code == 403
+    assert ic.get(f"{API}/map/background", headers=H(keyb)).status_code == 404                                                              # altă parohie: nu vede imaginea
