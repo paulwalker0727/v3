@@ -256,12 +256,16 @@ def verify_project(inp: SupabaseInput, password: str, connect: Optional[Callable
 
 
 def _verify_open(conn, i: SupabaseInput, res: VerifyResult, mig, mig_dir: Optional[Path]) -> None:
+    # Supabase Session Pooler (Supavisor) termină conexiunea clientului.
+    # pg_stat_ssl inspectează doar pooler -> PostgreSQL, NU MAIN -> pooler.
+    # Verificăm TLS din libpq, la client, fără să relaxăm sslmode=require.
     try:
-        row = conn.execute("SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()").fetchone()
-        res.add("Conexiune criptată (TLS)", "OK" if row and row[0] else "FAIL", "" if row and row[0] else "conexiunea nu este criptată")
+        in_use = conn.pgconn.ssl_in_use
+        res.add("Conexiune criptată (TLS)", "OK" if in_use else "FAIL",
+                "criptare TLS confirmată pe conexiunea MAIN → pooler" if in_use
+                else "conexiunea clientului PostgreSQL nu folosește TLS")
     except Exception:  # noqa: BLE001
-        conn.rollback()
-        res.add("Conexiune criptată (TLS)", "WARN", "nu se poate verifica")
+        res.add("Conexiune criptată (TLS)", "FAIL", "nu se poate confirma TLS pe conexiunea clientului")
     has = conn.execute("SELECT to_regnamespace('storage') IS NOT NULL, to_regnamespace('auth') IS NOT NULL").fetchone()
     if not (has[0] and has[1]):
         res.add("Proiect Supabase", "FAIL", "baza nu pare un proiect Supabase (lipsesc schemele auth/storage): proiect respins")

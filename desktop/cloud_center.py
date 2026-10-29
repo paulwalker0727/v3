@@ -5,6 +5,7 @@ Nu modifică licența, autentificarea locală, sincronizarea sau datele MAIN: ci
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 import sqlite3
 import time
@@ -44,7 +45,7 @@ def _license_item() -> Item:
 
 def _local_db_item() -> Item:
     try:
-        conn = sqlite3.connect(f"file:{db.DB_PATH}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{Path(db.current_db_path()).resolve().as_posix()}?mode=ro", uri=True)
         try:
             ok = conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
         finally:
