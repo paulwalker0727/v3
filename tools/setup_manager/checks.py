@@ -15,7 +15,7 @@ from .config import build_db_url, db_host_port, migrations_dir, repo_root
 from .redact import redact
 
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
-MOBILE_BASE = ("mobile_app.js", "mobile_offline.js", "mobile_photos.js", "jsQR.js", "mobile_app.css", "mobile-icon-192.png", "mobile-icon-512.png",
+MOBILE_BASE = ("mobile_app.js", "mobile_ext.js", "mobile_offline.js", "mobile_photos.js", "jsQR.js", "mobile_app.css", "mobile-icon-192.png", "mobile-icon-512.png",
                "mobile_manifest.webmanifest", "mobile_sw.js")
 
 
