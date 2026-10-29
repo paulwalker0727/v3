@@ -26,6 +26,7 @@ from typing import Any, Deque, Dict, List, Optional
 import psycopg
 
 import cimitir_cloud_control as cc
+import cimitir_instance_grant as ig
 import cimitir_phone_pairing as pp
 
 SESSION_TTL = 12 * 3600
@@ -200,7 +201,14 @@ class AdminService:
         finally:
             c.close()
         initialized = bool(st["completed"]) or int(st["admins"]) > 0
-        return {"initialized": initialized, "bootstrap_open": (not initialized) and bootstrap_token_state(self._e(), self.clock) == "ok"}
+        env = self._e()
+        grant = ig.configured(env)
+        out = {"initialized": initialized, "bootstrap_open": (not initialized) and (grant or bootstrap_token_state(env, self.clock) == "ok")}
+        if grant:
+            out.update(instance_id=env[ig.ENV_INSTANCE_ID].strip(), owner_key_fingerprint=ig.fingerprint(env[ig.ENV_PUBKEY].strip()), bootstrap_methods=["signed_grant"] + (["env_token"] if bootstrap_token_state(env, self.clock) == "ok" else []))
+        if initialized and (env.get(ENV_TOKEN) or ""):
+            out["legacy_token_configured"] = True      # inofensiv (inițializarea e închisă), dar se recomandă eliminarea din configurația containerului
+        return out
 
     def bootstrap(self, token: Any, email: Any, password: Any, display_name: Any = "", organization_uid: Any = None, organization_name: Any = "",
                   cemetery_uid: Any = None, cemetery_name: Any = "", ip: str = "") -> Dict[str, Any]:
@@ -209,10 +217,16 @@ class AdminService:
         if self.status()["initialized"]:
             raise BootstrapClosed("instalarea are deja un administrator; inițializarea nu mai este permisă")
         env = self._e()
-        if bootstrap_token_state(env, self.clock) != "ok":
-            raise Forbidden("inițializarea nu este activă (BOOTSTRAP_TOKEN lipsă/expirat); generează un token nou pe server")
-        if not isinstance(token, str) or not hmac.compare_digest(_h(token.strip()), _h(env.get(ENV_TOKEN, ""))):
-            raise Forbidden("token de inițializare invalid")
+        if ig.is_grant(token):
+            try:
+                ig.verify_grant(token, env, self.clock())
+            except ig.GrantError as exc:
+                raise Forbidden(str(exc)) from None
+        else:
+            if bootstrap_token_state(env, self.clock) != "ok":
+                raise Forbidden("inițializarea nu este activă (BOOTSTRAP_TOKEN lipsă/expirat); folosește un grant semnat sau generează un token nou pe server")
+            if not isinstance(token, str) or not hmac.compare_digest(_h(token.strip()), _h(env.get(ENV_TOKEN, ""))):
+                raise Forbidden("token de inițializare invalid")
         email = validate_email(email)
         validate_password(password, email)
         org = _uuid(organization_uid, "UID organizație") if organization_uid else str(uuid.uuid4())

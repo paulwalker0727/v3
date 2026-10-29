@@ -187,3 +187,29 @@ def test_no_secret_in_status_or_logs(store):
     cp.activate_profile(p.id)
     blob = str(simple.status(check=True, store=store, http=FakeHttp()).as_dict()) + simple.test_connection(p, store, FakeHttp())[1]
     assert not any(s in blob for s in ALL_SECRETS)
+
+
+def test_env_value_is_strict_and_never_defaults_silently(store):
+    assert [simple.env_value(x) for x in ("TEST", "PROD", "PRODUCTION", "CUSTOM", " test ")] == ["TEST", "PRODUCTION", "PRODUCTION", "CUSTOM", "TEST"]
+    for bad in ("", "x", "STAGING"):
+        with pytest.raises(ValueError):
+            simple.env_value(bad)
+
+
+def test_prod_profile_with_local_address_is_refused_and_test_profile_is_never_promoted(store):
+    with pytest.raises(cp.ValidationFailed):
+        simple.save("P", "http://127.0.0.1:8086", "PROD", confirm_production=True, store=store)
+    assert cp.list_profiles() == []
+    p = simple.save("Test local", "http://127.0.0.1:8086", "TEST", store=store)
+    assert p.environment == "TEST"
+    p = simple.save("Test local", "http://127.0.0.1:8087", "TEST", store=store)       # re-salvare: rămâne TEST
+    assert p.environment == "TEST" and p.is_active
+    with pytest.raises(cp.ConfirmationRequired):                                       # trecerea la PROD cere confirmare explicită
+        simple.save("Test local", "https://cloud.example.ro", "PROD", store=store)
+    assert cp.get_profile(p.id).environment == "TEST"
+
+
+def test_custom_profile_keeps_custom_label(store):
+    p = cp.create_profile({"name": "C", "environment": "CUSTOM", "api_base_url": "https://c.example.ro"}, None, store)
+    cp.activate_profile(p.id)
+    assert simple.status().environment == "CUSTOM"

@@ -92,6 +92,8 @@ class CloudSimpleDialog(QDialog):
         st = simple.status(check=check, store=self._store, http=self._http)
         self.ed_name.setText(st.profile_name)
         self.ed_url.setText(st.cloud_url)
+        if self.cb_env.findText(st.environment) < 0:
+            self.cb_env.addItem(st.environment)            # ex. CUSTOM: nu se transformă tăcut în altă valoare
         self.cb_env.setCurrentText(st.environment)
         self._show(st)
 

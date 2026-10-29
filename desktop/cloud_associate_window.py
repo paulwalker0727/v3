@@ -76,6 +76,12 @@ class CloudAssociateDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._build_assoc(), "Asociază acest calculator")
         tabs.addTab(self._build_codes(), "Coduri și dispozitive (administrator)")
+        from cloud_init_admin_tab import InitAdminTab
+        from portable_tab import PortableTab
+        self.tab_init = InitAdminTab(self._store, lambda: self.ed_url.text().strip() or default_url(), self._can, self)
+        self.tab_portable = PortableTab(self._cat, self._can, self)
+        tabs.addTab(self.tab_init, "Inițializare administrator Cloud")
+        tabs.addTab(self.tab_portable, "Backup portabil")
         lay.addWidget(tabs)
 
     # ================================================================== tab 1
@@ -156,6 +162,10 @@ class CloudAssociateDialog(QDialog):
         self.chk_confirm.setObjectName("assoc_confirm")
         self.chk_confirm.setEnabled(False)
         lay.addWidget(self.chk_confirm)
+        self.chk_media = QCheckBox("Confirm: unele fișiere media (fotografii/documente) lipsesc de pe disc; continui fără ele")
+        self.chk_media.setObjectName("assoc_media_confirm")
+        self.chk_media.setVisible(False)
+        lay.addWidget(self.chk_media)
         btns = QHBoxLayout()
         self.btn_go = QPushButton("Asociază")
         self.btn_go.setObjectName("assoc_go")
@@ -346,6 +356,8 @@ class CloudAssociateDialog(QDialog):
         def ok(plan):
             self._plan = plan["plan"]
             self.chk_confirm.setEnabled(True)
+            self.chk_media.setChecked(False)
+            self.chk_media.setVisible(bool(plan["plan"].get("media_missing")))
             self._say("Cod valid. Rezumat operațiune:\n\n" + "\n".join(f"• {k}: {v}" for k, v in plan["summary"].items()) + "\n\nBifează confirmarea pentru a continua.")
         code = self.ed_code.text().strip()
 
@@ -355,23 +367,30 @@ class CloudAssociateDialog(QDialog):
         self._plan = None
         self.chk_confirm.setChecked(False)
         self.chk_confirm.setEnabled(False)
+        self.chk_media.setVisible(False)
         self._guarded(work, ok)
 
     def _execute(self) -> None:
         plan, code = self._plan, self.ed_code.text().strip()
         if not plan or not self.chk_confirm.isChecked():
             return
+        if plan.get("media_missing") and not self.chk_media.isChecked():
+            self._say("Unele fișiere media lipsesc de pe disc. Bifează confirmarea suplimentară pentru a continua fără ele sau repară fișierele și verifică din nou codul.")
+            return
+        accept_media = self.chk_media.isChecked()
         self.btn_go.setEnabled(False)
+        self._say("Asociere în curs…" + (" Se încarcă registrul în Cloud (poate dura); nu închide aplicația." if plan.get("kind") == "B" else ""))
 
         def ok(res):
             self._plan = None
+            self.chk_media.setVisible(False)
             self.ed_code.clear()
             v = res["verification"]
             self._say(v["message"] + "\n\n" + "\n".join(f"✔ {k}: {s}" for k, s in v["checks"].items()))
             self._refresh_buttons()
 
         def fail_refresh(a):
-            return a.execute(plan, code, True)
+            return a.execute(plan, code, True, accept_missing_media=accept_media)
         self._guarded(fail_refresh, ok)
 
     def _refresh_buttons(self) -> None:

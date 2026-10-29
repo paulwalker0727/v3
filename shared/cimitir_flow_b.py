@@ -213,7 +213,7 @@ def _finalize_local(binding, cp, actor, plan, key, inst, local, tick, transfer, 
     prom = tr.promote_transfer(binding, bid, True, hook=lambda p: tick("finalize:" + p))
     tick("finalize:after_promote")
     missing = lm["media"]["missing"]
-    local.put(bound_installation_uid=inst, sync_state="BOUND_MEDIA_PENDING" if missing else "BOUND", sync_epoch=auth["sync_epoch"], last_change_seq=0)
+    local.put(bound_installation_uid=inst, bound_root_fp=bs.root_fingerprint(binding), sync_state="BOUND_MEDIA_PENDING" if missing else "BOUND", sync_epoch=auth["sync_epoch"], last_change_seq=0)
     tick("finalize:after_bound")
     cut = snap.cut_info(binding, bid) or {}
     snap.finalize_cut(binding, bid)

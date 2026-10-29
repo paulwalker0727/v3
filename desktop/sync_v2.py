@@ -48,6 +48,16 @@ def _binding_key_from_registry() -> str:
     return key if BINDING_RE.match(key) else ""
 
 
+def _registry_is_original() -> bool:
+    try:
+        import cimitir_bootstrap as bs
+        import cimitir_registry as reg
+        b = reg.current_binding()
+        return b is None or bs.root_matches(b)
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def connection() -> tuple:
     """(url, cheie Binding, sursă). Cheia: 1) legătura MAIN din registrul local (SecretStore), 2) cheia profilului Cloud activ dacă are forma Binding.
     URL-ul: profilul Cloud activ, altfel cloud_url din registrul local. Cheia nu apare în loguri/excepții."""
@@ -55,6 +65,8 @@ def connection() -> tuple:
     url = (cfg["url"] or db.get_setting(SET_REG_URL) or "").strip().rstrip("/")
     if (db.get_setting("cloud_assoc_unverified") or "") == "1":
         return url, "", ""                  # asocierea nu a trecut verificarea completă: sincronizarea rămâne blocată
+    if not _registry_is_original():
+        return url, "", ""                  # folder copiat/mutat: identitatea și cheia originale nu se refolosesc (cere asociere nouă)
     key = _binding_key_from_registry()
     if key:
         return url, key, "registry"
