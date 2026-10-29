@@ -1,0 +1,21 @@
+[Unit]
+Description=Cimitir Sync - serviciu de provizionare (operator)
+After=network-online.target
+
+[Service]
+User=cimitir-prov
+Group=cimitir-prov
+EnvironmentFile=/etc/cimitir/provisioner.env
+Environment=PYTHONPATH=/opt/cimitir/shared
+WorkingDirectory=/opt/cimitir
+ExecStart=/opt/cimitir/venv/bin/python -m cimitir_provisioner_app serve --home /var/lib/cimitir-prov --port 8443
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/cimitir-prov
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

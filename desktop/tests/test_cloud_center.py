@@ -206,7 +206,7 @@ def _dialog(qapp, store, allowed=True, **kw):
 def test_dialog_structure_and_unavailable_markers(qapp, store):
     from PySide6.QtWidgets import QFrame
     d = _dialog(qapp, store)
-    assert [d.tabs.tabText(i) for i in range(d.tabs.count())] == ["A. Stare generală", "B. Supabase", "C. Backend Cloud", "D. Administratori", "E. Backup", "F. Mobile"]
+    assert [d.tabs.tabText(i) for i in range(d.tabs.count())] == ["A. Stare generală", "B. Supabase", "C. Backend Cloud", "D. Administratori", "E. Backup", "F. Mobile", "G. Provizionare"]
     assert set(d._status_labels) == {"license", "local_db", "supabase", "backend", "pairing", "sync"}
     assert all(lbl.text() not in ("", "…") for lbl in d._status_labels.values())
     boxes = {f.objectName() for f in d.findChildren(QFrame) if f.objectName().startswith("unavailable_")}
