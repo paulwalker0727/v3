@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -96,8 +97,8 @@ class PhonePairingService:
             c.execute("BEGIN")
             try:
                 c.execute("SELECT cp_lock_cemetery(?)", (a["cemetery_uid"],))
-                n = c.execute("SELECT count(*) AS n FROM device_pairing_codes WHERE cemetery_uid=? AND device_type='MOBILE' AND used_at IS NULL AND expires_at > now()",
-                              (a["cemetery_uid"],)).fetchone()["n"]
+                n = c.execute("SELECT count(*) AS n FROM device_pairing_codes WHERE cemetery_uid=? AND device_type='MOBILE' AND used_at IS NULL AND expires_at > now()"
+                              + self.cp.revoked_clause(c), (a["cemetery_uid"],)).fetchone()["n"]
                 if n >= MAX_OPEN_CODES:
                     raise TooManyOpenCodes(f"maximum {MAX_OPEN_CODES} coduri active per cimitir")
                 r = c.execute("INSERT INTO device_pairing_codes (code_hash, organization_uid, cemetery_uid, device_type, created_by, expires_at) "
@@ -111,7 +112,38 @@ class PhonePairingService:
                 raise
         finally:
             c.close()
-        return {"code": display_code(code), "expires_at": r["exp"], "ttl": ttl, "organization_uid": a["organization_uid"], "cemetery_uid": a["cemetery_uid"]}
+        return {"code": display_code(code), "code_id": _h(code)[:16], "expires_at": r["exp"], "ttl": ttl, "server_time": time.time(),
+                "organization_uid": a["organization_uid"], "cemetery_uid": a["cemetery_uid"]}
+
+    def list_codes(self, main_key: str) -> List[Dict[str, Any]]:
+        """Codurile de telefon recente ale cimitirului (fără codul brut): activ | folosit | expirat | revocat."""
+        a = self._main(main_key)
+        c = self.cp._c()
+        try:
+            if not c.execute("SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='device_pairing_codes' AND column_name='revoked_at'").fetchone():
+                raise cc.ScopeError("schema veche (migrarea 023 lipsește)")
+            rows = c.execute("SELECT left(code_hash, 16) AS code_id, EXTRACT(EPOCH FROM created_at)::float8 AS created_at, EXTRACT(EPOCH FROM expires_at)::float8 AS expires_at, "
+                             "CASE WHEN revoked_at IS NOT NULL THEN 'revoked' WHEN used_at IS NOT NULL THEN 'used' WHEN expires_at <= now() THEN 'expired' ELSE 'active' END AS state "
+                             "FROM device_pairing_codes WHERE cemetery_uid=? AND organization_uid=? AND device_type='MOBILE' AND created_at > now() - interval '24 hours' "
+                             "ORDER BY created_at DESC LIMIT 50", (a["cemetery_uid"], a["organization_uid"])).fetchall()
+            return [{k: r[k] for k in ("code_id", "created_at", "expires_at", "state")} for r in rows]
+        finally:
+            c.close()
+
+    def revoke_code(self, main_key: str, code_id: Any) -> Dict[str, Any]:
+        if not isinstance(code_id, str) or not re.fullmatch(r"[0-9a-f]{16}", code_id):
+            raise cc.ScopeError("cod inexistent")
+        a = self._main(main_key)
+        c = self.cp._c()
+        try:
+            n = c.execute("UPDATE device_pairing_codes SET revoked_at=now(), revoked_by=? WHERE cemetery_uid=? AND organization_uid=? AND device_type='MOBILE' AND left(code_hash, 16)=? "
+                          "AND used_at IS NULL AND revoked_at IS NULL AND expires_at > now()", (a["binding_uid"], a["cemetery_uid"], a["organization_uid"], code_id)).rowcount
+            if n < 1:
+                raise cc.ScopeError("cod inexistent, deja folosit, expirat sau revocat")
+            self.cp._audit(c, a["binding_uid"], "phone_code_revoked", a["organization_uid"], a["cemetery_uid"], code_id=code_id)
+            return {"code_id": code_id, "revoked": True}
+        finally:
+            c.close()
 
     # ------------------------------------------------------------------ rate limiting
     def _count_attempt(self, buckets: List[str]) -> None:

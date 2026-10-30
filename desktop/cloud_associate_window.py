@@ -425,6 +425,10 @@ class CloudAssociateDialog(QDialog):
         form.addRow("Parolă:", self.ed_pass)
         lay.addLayout(form)
         lay.addWidget(self.btn_login)
+        self.lbl_adm = QLabel("")
+        self.lbl_adm.setObjectName("adm_status")
+        self.lbl_adm.setWordWrap(True)
+        lay.addWidget(self.lbl_adm)
         self.cmb_org = QComboBox()
         self.cmb_cem = QComboBox()
         row = QHBoxLayout()
@@ -462,8 +466,6 @@ class CloudAssociateDialog(QDialog):
         self.btn_rev_dev = QPushButton("Revocă dispozitivul selectat")
         self.btn_rev_dev.setEnabled(False)
         lay.addWidget(self.btn_rev_dev)
-        self.lbl_adm = QLabel("")
-        lay.addWidget(self.lbl_adm)
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._tick)
@@ -495,16 +497,20 @@ class CloudAssociateDialog(QDialog):
             for o in me["organizations"]:
                 self.cmb_org.addItem(o["name"] or o["organization_uid"], o["organization_uid"])
             for b in (self.btn_main, self.btn_phone):
-                b.setEnabled(True)
-            self.lbl_adm.setText(f"Autentificat: {me['email']}")
+                b.setEnabled(bool(me["organizations"]))
+            self.lbl_adm.setText(f"Autentificat: {me['email']}" if me["organizations"] else "Contul este autentificat, dar nu administrează nicio organizație în acest Cloud.")
             self._org_changed()
-        _run(self, work, ok, lambda m, _nc: self.lbl_adm.setText(m))
+        self.lbl_adm.setText("Se autentifică…")
+        _run(self, work, ok, lambda m, _nc: self.lbl_adm.setText("Autentificare eșuată: " + m))
 
     def _org_changed(self) -> None:
         self.cmb_cem.clear()
         org = next((o for o in (self._me or {}).get("organizations", []) if o["organization_uid"] == self.cmb_org.currentData()), None)
         for c in (org or {}).get("cemeteries", []):
             self.cmb_cem.addItem(f"{c['name']} ({c['status']})", c["uid"])
+        i = self.cmb_cem.findData(self.cmb_local.currentData())      # cimitirul registrului local, nu primul din listă
+        if i >= 0:
+            self.cmb_cem.setCurrentIndex(i)
         self._reload_devices()
 
     def _reload_devices(self) -> None:
@@ -527,10 +533,17 @@ class CloudAssociateDialog(QDialog):
 
     def _issue(self, kind: str) -> None:
         org, cem = self.cmb_org.currentData(), self.cmb_cem.currentData()
-        if not (org and cem and self._admin):
+        if not self._admin or not self._me:
+            self.lbl_adm.setText("Autentifică-te mai întâi ca administrator Cloud (email + parolă).")
             return
+        if not (org and cem):
+            self.lbl_adm.setText("Alege organizația și cimitirul pentru care generezi codul.")
+            return
+        self.lbl_adm.setText("Se generează codul…")
 
         def ok(res):
+            res["deadline"] = time.time() + int(res.get("ttl") or 0)
+            self.lbl_adm.setText("Cod generat.")
             self._issued = res
             self.lbl_code.setText(res["display"])
             self._show_qr(res)
@@ -538,7 +551,7 @@ class CloudAssociateDialog(QDialog):
             self.btn_revoke_code.setEnabled(True)
             self._timer.start()
             self._tick()
-        _run(self, lambda: self._admin.issue_code(org, cem, kind), ok, lambda m, _nc: self.lbl_adm.setText(m))
+        _run(self, lambda: self._admin.issue_code(org, cem, kind), ok, lambda m, _nc: self.lbl_adm.setText("Codul nu a putut fi generat: " + m))
 
     def _show_qr(self, res: Dict[str, Any]) -> None:
         """QR doar pentru codul de telefon: link `<cloud>/mobile/#pair=<cod>`; telefonul se asociază automat la scanare."""
@@ -560,7 +573,7 @@ class CloudAssociateDialog(QDialog):
     def _tick(self) -> None:
         if not self._issued:
             return
-        left = int(self._issued["expires_at"] - time.time())
+        left = int(self._issued.get("deadline", self._issued["expires_at"]) - time.time())
         if left <= 0:
             self._timer.stop()
             self.lbl_left.setText("Codul a expirat. Generează unul nou (regenerare).")

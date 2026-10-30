@@ -176,7 +176,16 @@ def create_router(service: pp.PhonePairingService) -> APIRouter:
     async def revoke(request: Request, key: str):
         return await run(lambda: service.revoke_phone(key, request.path_params["buid"]))
 
+    async def codes(_request: Request, key: str):
+        return await run(lambda: service.list_codes(key))
+
+    async def revoke_code(request: Request, key: str):
+        b = await fih._json_body(request, 1024)
+        return await run(lambda: service.revoke_code(key, b.get("code_id") if isinstance(b, dict) else None))
+
     route("POST", "/codes", issue, 201)
+    route("GET", "/codes", codes)
+    route("POST", "/codes/revoke", revoke_code)
     route("POST", "/redeem", redeem, 201, auth=False)
     route("GET", "/phones", phones)
     route("POST", "/phones/{buid}/revoke", revoke)
