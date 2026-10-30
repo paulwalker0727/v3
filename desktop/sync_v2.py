@@ -7,6 +7,7 @@ Cheia vine din profilul Cloud activ (SecretStore); nu apare în loguri/excepții
 from __future__ import annotations
 
 import hashlib
+import os
 import json
 import re
 from datetime import datetime
@@ -175,6 +176,33 @@ def _push_sectors() -> int:
     return len(out)
 
 
+def _push_map_background() -> int:
+    """Imaginea hărții din MAIN (setarea `map_path`) -> cloud (privat), doar dacă s-a schimbat. Poligoanele Mobile se desenează peste ea."""
+    import base64
+    path = (db.get_setting("map_path") or "").strip()
+    if not path or not os.path.isfile(path) or os.path.getsize(path) > 8 * 1024 * 1024:
+        return 0
+    ext = os.path.splitext(path)[1].lower()
+    mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(ext)
+    if not mime:
+        return 0
+    raw = open(path, "rb").read()
+    digest = hashlib.sha256(raw).hexdigest()
+    if db.get_setting("sync_v2_map_bg_hash") == digest:
+        return 0
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            w, h = im.width, im.height
+    except Exception:  # noqa: BLE001
+        w, h = 0, 0
+    version = int(db.get_setting("sync_v2_map_bg_version") or 0) + 1
+    request("PUT", "map/background", json={"mime": mime, "data": base64.b64encode(raw).decode(), "sha256": digest, "width": w, "height": h, "version": version}, timeout=120)
+    db.set_setting("sync_v2_map_bg_version", str(version))
+    db.set_setting("sync_v2_map_bg_hash", digest)
+    return 1
+
+
 def run() -> Dict[str, Any]:
     """Un ciclu „Sincronizează": descarcă (adoptă modificările telefoanelor) -> trimite outbox-ul -> descarcă din nou. Nu ridică excepții."""
     import entity_sync
@@ -217,6 +245,13 @@ def run() -> Dict[str, Any]:
             report["ok"] = report["ok"] and docs["ok"]
         except Exception as exc:  # noqa: BLE001  (documentele nu opresc sincronizarea registrelor)
             report["lines"].append(f"Documente: eroare neașteptată ({type(exc).__name__}).")
+        try:
+            if _push_map_background():
+                report["lines"].append("Fundal hartă trimis în cloud (privat).")
+        except (cs.RetryLater, cs.Rejected) as exc:       # fundalul hărții nu oprește sincronizarea registrelor
+            report["lines"].append(f"Fundal hartă: {getattr(exc, 'detail', exc)}")
+        except Exception as exc:  # noqa: BLE001
+            report["lines"].append(f"Fundal hartă: eroare neașteptată ({type(exc).__name__}).")
         report["state"] = "ok" if report["ok"] else ("conflict" if counts["conflict"] else "partial")
         try:
             report["server_open_conflicts"] = int(request("GET", "status").json().get("open_conflicts", 0))
@@ -272,3 +307,27 @@ def resolve_server_conflict(conflict_id: int, resolution: str) -> str:
 
 def journal(limit: int = 50) -> List[Dict[str, Any]]:
     return request("GET", "runs", params={"limit": limit}).json()["runs"]
+
+
+# ------------------------------------------------------------------ Permisiuni Mobile pe categorii (matricea; impusă pe server)
+def permission_profiles() -> Dict[str, Any]:
+    """{categories, actions, fields:{categorie:[câmpuri]}, profiles:{cheie:{label, matrix, custom}}}."""
+    return request("GET", "permissions/profiles").json()
+
+
+def save_permission_profile(key: str, label: str, matrix: Dict[str, Any]) -> Dict[str, Any]:
+    return request("PUT", f"permissions/profiles/{key}", json={"label": label, "matrix": matrix}).json()
+
+
+def set_device_matrix(ref: str, profile: Any = None, matrix: Any = None, view_pii: bool = False) -> Dict[str, Any]:
+    """Atribuie profil și/sau matrice explicită (inclusiv câmpurile editabile). Se aplică imediat pe server, inclusiv operațiilor offline în așteptare."""
+    body: Dict[str, Any] = {"view_pii": bool(view_pii)}
+    if profile:
+        body["profile"] = profile
+    if matrix is not None:
+        body["matrix"] = matrix
+    return request("PUT", f"devices/{ref}/matrix", json=body).json()
+
+
+def audit_log(limit: int = 100) -> List[Dict[str, Any]]:
+    return request("GET", "audit", params={"limit": limit}).json()["events"]

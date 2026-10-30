@@ -347,3 +347,35 @@ def test_admin_bootstrap_new_org_without_cemetery_is_not_half_applied(dx):
     svc = ad.AdminService(ccp.PostgresControlPlane(), environ=env)
     out = svc.bootstrap(token, f"owner{uuid.uuid4().hex[:6]}@example.invalid", "Parola-Lunga-9!x", "Owner", organization_name="Parohia Nouă (test)")
     assert out["organization_uid"] and out["cemetery_uid"] is None and svc.status()["initialized"]
+
+
+def test_files_category_matrix_view_add_delete_is_enforced_and_deletion_audited(dx):
+    """Matricea „Fotografii și fișiere": fără Vede nu se vede/descarcă; fără Adaugă nu se încarcă; ștergerea de pe telefon doar cu Șterge/Anulează (auditată)."""
+    s = seed(dx)
+    main, phone, ref = s["main"], dx["T"]["A"]["phone"], dx["T"]["A"]["phone_b"]
+
+    def cell(view=False, add=False, edit=False, delete=False):
+        return {"view": view, "add": add, "edit": edit, "delete": delete, "fields": None}
+
+    def give(matrix):
+        r = dx["client"].put(f"/api/v1/sync-v2/devices/{ref}/matrix", json={"matrix": matrix}, headers=H(main))
+        assert r.status_code == 200, r.text
+
+    data = png(40, b"mx")
+    m = meta(data, "locuri_de_veci", s["loc"])
+    give({"locuri": cell(True)})                                                   # „Fișiere": fără Vede/Adaugă
+    assert dec(dx, phone, **m).status_code == 403
+    give({"locuri": cell(True), "fisiere": cell(True, add=True)})
+    assert dec(dx, phone, **m).status_code == 200 and put(dx, phone, m["uid"], data).status_code == 200
+    assert dx["client"].delete(f"/api/v1/sync-v2/documents/{m['uid']}", headers=H(phone)).status_code == 403
+    give({"locuri": cell(True), "fisiere": cell(True, delete=True)})
+    assert len(doc_list(dx, phone)["documents"]) == 1
+    assert dx["client"].delete(f"/api/v1/sync-v2/documents/{m['uid']}", headers=H(phone)).status_code == 200
+    ev = dx["client"].get("/api/v1/sync-v2/audit", headers=H(main)).json()["result"]["events"]
+    assert any(e["kind"] == "delete" and e["entity"] == "documente" and e["entity_uid"] == m["uid"] for e in ev)
+    assert any(e["kind"] == "denied" and e["entity"] == "documente" for e in ev)
+    path = f"docs/{dx['T']['A']['org']}/{dx['T']['A']['cem']}/{m['uid']}"
+    assert dx["sup"].stat(path) is not None                                        # ștergere logică: octeții nu se pierd
+    give({"locuri": cell(True)})                                                   # revocare „Vede" fișiere
+    assert doc_list(dx, phone)["documents"] == []
+    assert dx["client"].get(f"/api/v1/sync-v2/documents/{m['uid']}/file", headers=H(phone)).status_code in (403, 404, 409)

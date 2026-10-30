@@ -24,6 +24,7 @@ requests==2.34.2
 # documente, PDF, Excel, QR
 pillow==12.3.0
 reportlab==5.0.1
+python-docx==1.2.0
 openpyxl==3.1.5
 qrcode==8.2
 PyMuPDF>=1.24

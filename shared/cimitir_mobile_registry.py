@@ -15,6 +15,7 @@ import uuid
 from typing import Any, Dict, List
 
 import cimitir_cloud_control as cc
+import cimitir_mobile_perms as mp
 import cimitir_sync_v2 as sv
 
 SEARCH_LIMIT_MAX = 25
@@ -216,7 +217,8 @@ class MobileRegistryService:
                              "OR (COALESCE(x.nume,'') || ' ' || COALESCE(x.prenume,'')) ILIKE ? "
                              "ORDER BY ct.id DESC LIMIT ?", (like, like, like, limit)).fetchall()]
             vis = sv.readable_entities(c, a)      # permisiuni aplicate pe server (rol/capabilități)
-            return {"graves": graves if "locuri_de_veci" in vis else [], "concessionaires": concessionaires if "concesionari" in vis else [],
+            m, _pii = sv.matrix_of(c, a)
+            return {"graves": graves if ("locuri_de_veci" in vis and mp.can(m, "locuri", "view")) else [], "concessionaires": concessionaires if "concesionari" in vis else [],
                     "burials": burials if "inhumati" in vis else [], "contracts": contracts if "contracte" in vis else []}
         finally:
             c.close()
@@ -226,16 +228,21 @@ class MobileRegistryService:
         limit = max(1, min(int(limit), MAP_LIMIT_MAX))
         c = self.cp._c()
         try:
-            if "locuri_de_veci" not in sv.readable_entities(c, a):
+            m, _pii = sv.matrix_of(c, a)
+            if not mp.can(m, "harta", "view"):       # categoria „Hartă și poligoane" fără „Vede": nu apare și nu se poate citi prin API
                 return {"plots": [], "sectors": [], "truncated": False}
+            detail = mp.can(m, "locuri", "view")
             plots = []
             for r in c.execute(
                 "SELECT uid,cod_loc,points,sector,parcela,rand,numar,disponibilitate,stare,ocupat,are_inhumari "
                 "FROM locuri_de_veci ORDER BY cod_loc LIMIT ?", (limit,)).fetchall():
-                plots.append({"uid": r["uid"], "code": _text(r["cod_loc"]), "points": _json(r["points"], []), "sector": _text(r["sector"]),
-                              "parcel": _text(r["parcela"]), "row": _text(r["rand"]), "number": _text(r["numar"]),
-                              "availability": _text(r["disponibilitate"]), "state": _text(r["stare"]),
-                              "occupied": bool(r["ocupat"] or r["are_inhumari"])})
+                plot = {"uid": r["uid"], "code": _text(r["cod_loc"]), "points": _json(r["points"], []), "sector": _text(r["sector"]),
+                        "parcel": _text(r["parcela"]), "row": _text(r["rand"]), "number": _text(r["numar"]),
+                        "availability": _text(r["disponibilitate"]), "state": _text(r["stare"]),
+                        "occupied": bool(r["ocupat"] or r["are_inhumari"])}
+                if not detail:        # fără „Vede locuri": doar geometria și codul
+                    plot = {k: plot[k] for k in ("uid", "code", "points")}
+                plots.append(plot)
             sectors = []
             for r in c.execute("SELECT uid,id,points,color FROM sectoare ORDER BY id").fetchall():
                 sectors.append({"uid": r["uid"], "name": _text(r["id"]), "points": _json(r["points"], []), "color": _text(r["color"])})
@@ -321,8 +328,11 @@ class MobileRegistryService:
                 "SELECT uid,nr_aviz,data_aviz,lucrare FROM amenajari_avize WHERE cod_loc=? ORDER BY id DESC",
                 (grave["cod_loc"],)).fetchall()]
             vis = sv.readable_entities(c, a)      # permisiuni aplicate pe server (rol/capabilități)
-            if "locuri_de_veci" not in vis:
+            m, _pii = sv.matrix_of(c, a)
+            if "locuri_de_veci" not in vis or not mp.can(m, "locuri", "view"):
                 raise cc.PermissionDenied("nu ai dreptul de citire pentru acest registru")
+            if not mp.can(m, "harta", "view"):
+                grave.pop("points", None)
             return {"grave": grave, "contracts": contracts if "contracte" in vis else [], "burials": burials if "inhumati" in vis else [],
                     "payments": payments if "plati" in vis else [], "permits": permits if "amenajari_avize" in vis else []}
         finally:

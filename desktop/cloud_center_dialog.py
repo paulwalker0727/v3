@@ -398,7 +398,7 @@ class CloudCenterDialog(QDialog):
         self.mb_sync.setObjectName("mobile_sync_state")
         lay.addWidget(self.mb_sync)
         for name, text, slot in (("mobile_pair", "Asociază telefoane (cod / QR)…", self.open_associate), ("mobile_field", "Telefoane de teren…", self.open_field),
-                                 ("mobile_v2", "Telefoane Mobile v2 (permisiuni, conflicte, jurnal)…", self.open_mobile_v2)):
+                                 ("mobile_v2", "Permisiuni Mobile (categorii, câmpuri, profiluri), conflicte, jurnal…", self.open_mobile_v2)):
             b = QPushButton(text)
             b.setObjectName(name)
             b.clicked.connect(slot)

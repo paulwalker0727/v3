@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
 
 import cloud_sync
 import sync_v2
+from mobile_permissions_panel import AuditPanel, MobilePermissionsPanel
 
 ENTITY_LABELS = {"locuri_de_veci": "Locuri de veci", "concesionari": "Concesionari", "contracte": "Contracte",
                  "inhumati": "Înhumați", "plati": "Plăți", "amenajari_avize": "Avize amenajare"}
@@ -19,7 +20,7 @@ STATES = {"open": "De rezolvat", "main_wins": "MAIN a câștigat (modificarea te
 class MobileDevicesDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Telefoane Mobile v2")
+        self.setWindowTitle("Telefoane Mobile — Permisiuni Mobile, conflicte, jurnal")
         self.setMinimumSize(780, 460)
         self._devices, self._conflicts, self._roles = [], [], {}
         root = QVBoxLayout(self)
@@ -28,9 +29,12 @@ class MobileDevicesDialog(QDialog):
         root.addWidget(self.lbl)
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
+        self.perm_panel, self.audit_panel = MobilePermissionsPanel(), AuditPanel()
+        self.tabs.addTab(self.perm_panel, "Permisiuni Mobile")
         self._tab_devices()
         self._tab_conflicts()
         self._tab_journal()
+        self.tabs.addTab(self.audit_panel, "Audit (permisiuni, ștergeri)")
         self.reload()
 
     def _tab_devices(self):
@@ -48,7 +52,7 @@ class MobileDevicesDialog(QDialog):
         row.addWidget(self.btn_save)
         row.addStretch(1)
         lay.addLayout(row)
-        self.tabs.addTab(w, "Permisiuni telefoane")
+        self.tabs.addTab(w, "Permisiuni simple (registre — vechi)")
 
     def _fill_devices(self):
         self.dev_table.setRowCount(len(self._devices))
@@ -154,3 +158,8 @@ class MobileDevicesDialog(QDialog):
         self._fill_devices()
         self._fill_conflicts()
         self._fill_journal(runs)
+        try:
+            self.perm_panel.reload()
+            self.audit_panel.reload()
+        except (cloud_sync.RetryLater, cloud_sync.Rejected) as exc:
+            self.lbl.setText(self.lbl.text() + f" · Permisiuni Mobile indisponibile (serverul nu are încă migrarea 027?): {getattr(exc, 'detail', exc)}")

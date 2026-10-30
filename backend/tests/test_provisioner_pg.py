@@ -255,12 +255,12 @@ class TestProvisioning:
 
     def test_12_update_preserves_data_and_applies_migrations(self, env):
         prov, owner = env["prov"], env["owner"]
-        src = make_source(env["base"] / "src-v2", {"027_prov_test_marker.sql": "CREATE TABLE IF NOT EXISTS prov_test_marker (id integer PRIMARY KEY);\nGRANT SELECT ON prov_test_marker TO cimitir_cp_app;\n"})
+        src = make_source(env["base"] / "src-v2", {"900_prov_test_marker.sql": "CREATE TABLE IF NOT EXISTS prov_test_marker (id integer PRIMARY KEY);\nGRANT SELECT ON prov_test_marker TO cimitir_cp_app;\n"})
         prov.import_release(owner, str(src), "v2")
         with pgops.connect(env["a"].admin_url()) as c:
             before = pgops.table_counts(c)
         out = prov.update(owner, "parohia-alfa", env["a"].admin_url(), "v2")
-        assert out["from"] == "v1" and out["to"] == "v2" and out["migrations"]["applied"] == [27] and out["instance"]["status"] == "running"
+        assert out["from"] == "v1" and out["to"] == "v2" and out["migrations"]["applied"] == [900] and out["instance"]["status"] == "running"
         with pgops.connect(env["a"].admin_url()) as c:
             after = pgops.table_counts(c)
         assert {t: n for t, n in after.items() if t in before and t != "schema_migrations"} == {t: n for t, n in before.items() if t != "schema_migrations"}
@@ -270,8 +270,8 @@ class TestProvisioning:
 
     def test_13_failed_migration_rolls_back_and_keeps_old_backend(self, env):
         prov, owner = env["prov"], env["owner"]
-        src = make_source(env["base"] / "src-v3", {"027_prov_test_marker.sql": "CREATE TABLE IF NOT EXISTS prov_test_marker (id integer PRIMARY KEY);\nGRANT SELECT ON prov_test_marker TO cimitir_cp_app;\n",
-                                                   "028_bad.sql": "CREATE TABLE prov_bad_leftover (x int);\nSELECT 1/0;\n"})
+        src = make_source(env["base"] / "src-v3", {"900_prov_test_marker.sql": "CREATE TABLE IF NOT EXISTS prov_test_marker (id integer PRIMARY KEY);\nGRANT SELECT ON prov_test_marker TO cimitir_cp_app;\n",
+                                                   "901_bad.sql": "CREATE TABLE prov_bad_leftover (x int);\nSELECT 1/0;\n"})
         prov.import_release(owner, str(src), "v3")
         with pytest.raises(ProvisionError) as e:
             prov.update(owner, "parohia-alfa", env["a"].admin_url(), "v3")
@@ -282,7 +282,7 @@ class TestProvisioning:
 
     def test_14_broken_release_auto_rollback(self, env):
         prov, owner = env["prov"], env["owner"]
-        src = make_source(env["base"] / "src-v4", {"027_prov_test_marker.sql": "CREATE TABLE IF NOT EXISTS prov_test_marker (id integer PRIMARY KEY);\nGRANT SELECT ON prov_test_marker TO cimitir_cp_app;\n"}, break_app=True)
+        src = make_source(env["base"] / "src-v4", {"900_prov_test_marker.sql": "CREATE TABLE IF NOT EXISTS prov_test_marker (id integer PRIMARY KEY);\nGRANT SELECT ON prov_test_marker TO cimitir_cp_app;\n"}, break_app=True)
         prov.import_release(owner, str(src), "v4")
         with pytest.raises(ProvisionError) as e:
             prov.update(owner, "parohia-alfa", env["a"].admin_url(), "v4")
