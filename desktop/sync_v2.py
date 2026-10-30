@@ -96,8 +96,14 @@ class _Resp:
         return self._p
 
 
-def request(method: str, op: str, **kwargs) -> _Resp:
-    """`op`: 'push' | 'pull' | 'status' | ... Aceleași excepții ca `cloud_sync._request` (RetryLater: rețea/5xx; Rejected: 4xx)."""
+OLD_BACKEND = ("Serverul Cloud nu are această funcție: backendul rulează o versiune mai veche decât MAIN. "
+               "Actualizează backendul (vezi ACTUALIZARE_BACKEND_TEST.md) sau selectează în MAIN adresa backendului nou. Nimic nu a fost modificat.")
+PAIRING_API = "/api/v1/phone-pairing"
+
+
+def request(method: str, op: str, prefix: str = API, **kwargs) -> _Resp:
+    """`op`: 'push' | 'pull' | 'status' | ... Aceleași excepții ca `cloud_sync._request` (RetryLater: rețea/5xx; Rejected: 4xx).
+    404/405 fără corp API (`ok`) = ruta nu există pe server (backend vechi) => mesaj explicit, nu „Elementul nu există”."""
     url, key, _src = connection()
     if not key:
         raise cs.Rejected(0, "Nu există cheie MAIN Binding (pairing neefectuat sau SecretStore indisponibil).")
@@ -105,7 +111,7 @@ def request(method: str, op: str, **kwargs) -> _Resp:
         raise cs.Rejected(0, "Adresa serverului trebuie să fie HTTPS.")
     kwargs.setdefault("timeout", cs.TIMEOUT)
     try:
-        resp = requests.request(method, f"{url}{API}/{op.lstrip('/')}",
+        resp = requests.request(method, f"{url}{prefix}/{op.lstrip('/')}",
                                 headers={"Authorization": f"Binding {key}", "X-Sync-Client": cs.client_id()}, **kwargs)
     except requests.RequestException as exc:
         cs._mark_online(False)
@@ -118,6 +124,8 @@ def request(method: str, op: str, **kwargs) -> _Resp:
         body = resp.json()
     except ValueError:
         body = {}
+    if resp.status_code in (404, 405) and not (isinstance(body, dict) and "ok" in body):
+        raise cs.Rejected(resp.status_code, OLD_BACKEND)
     if resp.status_code >= 400 or body.get("ok") is False:
         raise cs.Rejected(resp.status_code, _ERR.get(resp.status_code) or body.get("message") or "cerere refuzată")
     return _Resp(body.get("result", {}))

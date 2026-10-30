@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
 
 import cloud_sync
 import sync_v2
+from mobile_pairing_panel import MobilePairingPanel
 from mobile_permissions_panel import AuditPanel, MobilePermissionsPanel
 
 ENTITY_LABELS = {"locuri_de_veci": "Locuri de veci", "concesionari": "Concesionari", "contracte": "Contracte",
@@ -18,9 +19,9 @@ STATES = {"open": "De rezolvat", "main_wins": "MAIN a câștigat (modificarea te
 
 
 class MobileDevicesDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, tab: str = "pairing"):
         super().__init__(parent)
-        self.setWindowTitle("Telefoane Mobile — Permisiuni Mobile, conflicte, jurnal")
+        self.setWindowTitle("Telefoane Mobile — asociere, permisiuni, conflicte, jurnal")
         self.setMinimumSize(780, 460)
         self._devices, self._conflicts, self._roles = [], [], {}
         root = QVBoxLayout(self)
@@ -29,13 +30,30 @@ class MobileDevicesDialog(QDialog):
         root.addWidget(self.lbl)
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
-        self.perm_panel, self.audit_panel = MobilePermissionsPanel(), AuditPanel()
+        self.pair_panel, self.perm_panel, self.audit_panel = MobilePairingPanel(), MobilePermissionsPanel(), AuditPanel()
+        self.tabs.addTab(self.pair_panel, "Asociere telefon (cod / QR)")
         self.tabs.addTab(self.perm_panel, "Permisiuni Mobile")
+        self.pair_panel.permissions_requested.connect(self._open_rights)
         self._tab_devices()
         self._tab_conflicts()
         self._tab_journal()
         self.tabs.addTab(self.audit_panel, "Audit (permisiuni, ștergeri)")
         self.reload()
+        self.pair_panel.reload()
+        self.tabs.setCurrentIndex(0 if tab == "pairing" else 1)
+
+    def _open_rights(self, ref: str) -> None:
+        i = self.perm_panel.cmb_dev.findData(ref)
+        if i < 0:
+            self.perm_panel.reload()
+            i = self.perm_panel.cmb_dev.findData(ref)
+        if i >= 0:
+            self.perm_panel.cmb_dev.setCurrentIndex(i)
+        self.tabs.setCurrentWidget(self.perm_panel)
+
+    def done(self, result) -> None:
+        self.pair_panel.done_cleanup()
+        super().done(result)
 
     def _tab_devices(self):
         w = QWidget()
@@ -152,7 +170,7 @@ class MobileDevicesDialog(QDialog):
             self._conflicts = sync_v2.server_conflicts(True)
             runs = sync_v2.journal(100)
         except (cloud_sync.RetryLater, cloud_sync.Rejected) as exc:
-            self.lbl.setText(f"Cloud indisponibil sau cheie MAIN lipsă: {getattr(exc, 'detail', exc)}")
+            self.lbl.setText(f"Cloud indisponibil, cheie MAIN lipsă sau backend vechi: {getattr(exc, 'detail', exc)}")
             return
         self.lbl.setText(f"{len(self._devices)} telefon(e) asociate · {sum(1 for c in self._conflicts if c['resolution'] == 'open')} conflict(e) de rezolvat")
         self._fill_devices()
@@ -162,4 +180,4 @@ class MobileDevicesDialog(QDialog):
             self.perm_panel.reload()
             self.audit_panel.reload()
         except (cloud_sync.RetryLater, cloud_sync.Rejected) as exc:
-            self.lbl.setText(self.lbl.text() + f" · Permisiuni Mobile indisponibile (serverul nu are încă migrarea 027?): {getattr(exc, 'detail', exc)}")
+            self.lbl.setText(self.lbl.text() + f" · Permisiuni Mobile indisponibile (backend vechi sau migrarea 027 lipsă?): {getattr(exc, 'detail', exc)}")

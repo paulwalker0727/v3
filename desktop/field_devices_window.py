@@ -54,9 +54,8 @@ class FieldDevicesDialog(QDialog):
         row.addWidget(self.lbl_expiry)
         row.addStretch(1)
         root.addLayout(row)
-        hint = QLabel("Acest cod este numai pentru aplicația de teren Field Inbox v1, NU pentru Mobile v2. "
-                      "Pentru Mobile v2 folosește Centrul Cloud → F. Mobile → «Asociază telefoane (cod / QR)». "
-                      "Codul se folosește o singură dată și expiră.")
+        hint = QLabel("Fereastră pentru aplicația de teren veche (Field Inbox v1). Pentru telefoanele Mobile v2 folosește Centrul Cloud → F. Mobile → «Asociază telefoane (cod / QR)», "
+                      "unde poți și acorda drepturi. Codul se folosește o singură dată și expiră.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
         root.addWidget(hint)

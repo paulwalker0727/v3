@@ -119,6 +119,10 @@ def create_router(service: sv.SyncV2Service, docs: "sdocs.DocumentService | None
     async def runs(r: Request, key):
         return await run(lambda: service.runs(key, qint(r, "limit", 50)))
 
+    async def instance(_r, key):
+        return await run(lambda: service.instance(key))
+
+    add("/instance", ["GET"], instance)
     add("/status", ["GET"], status)
     add("/pull", ["GET"], pull)
     add("/row", ["GET"], row)

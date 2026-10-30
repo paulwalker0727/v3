@@ -390,14 +390,14 @@ class CloudCenterDialog(QDialog):
     def _build_mobile(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        info = QLabel("Telefoanele se asociază prin mecanismul existent de pairing (cod / QR emis de administratorul Cloud). "
-                      "Administratorul aprobă și revocă dispozitivele, stabilește permisiunile și vede starea sincronizării.")
+        info = QLabel("Telefoanele se asociază direct din MAIN (cod / QR, mecanismul existent de pairing), fără browser și fără parola administratorului Cloud. "
+                      "Tot de aici acorzi drepturi (Vede / Adaugă / Editează / Șterge) și revoci telefoane.")
         info.setWordWrap(True)
         lay.addWidget(info)
         self.mb_sync = QLabel("")
         self.mb_sync.setObjectName("mobile_sync_state")
         lay.addWidget(self.mb_sync)
-        for name, text, slot in (("mobile_pair", "Asociază telefoane (cod / QR)…", self.open_associate), ("mobile_field", "Telefoane de teren — Field Inbox v1 (vechi)…", self.open_field),
+        for name, text, slot in (("mobile_pair", "Asociază telefoane (cod / QR)…", self.open_mobile_pairing), ("mobile_field", "Telefoane de teren — Field Inbox v1 (vechi)…", self.open_field),
                                  ("mobile_v2", "Permisiuni Mobile (categorii, câmpuri, profiluri), conflicte, jurnal…", self.open_mobile_v2)):
             b = QPushButton(text)
             b.setObjectName(name)
@@ -416,20 +416,25 @@ class CloudCenterDialog(QDialog):
         except Exception:  # noqa: BLE001
             return False
 
-    def _open(self, module: str, cls: str) -> None:
+    def _open(self, module: str, cls: str, **kw) -> None:
         if not self.guard():
             return
         try:
             mod = __import__(module)
-            getattr(mod, cls)(self).exec()
+            dlg = getattr(mod, cls)(self, **kw)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Eroare", f"Nu am putut deschide fereastra ({type(exc).__name__}).")
+            QMessageBox.warning(self, "Eroare", f"Nu am putut deschide fereastra ({type(exc).__name__}: {str(exc)[:160]}).")
+            return
+        dlg.exec()
 
     def open_field(self) -> None:
         self._open("field_devices_window", "FieldDevicesDialog")
 
     def open_mobile_v2(self) -> None:
-        self._open("mobile_devices_window", "MobileDevicesDialog")
+        self._open("mobile_devices_window", "MobileDevicesDialog", tab="permissions")
+
+    def open_mobile_pairing(self) -> None:
+        self._open("mobile_devices_window", "MobileDevicesDialog", tab="pairing")
 
 
 def open_cloud_center(parent=None) -> None:

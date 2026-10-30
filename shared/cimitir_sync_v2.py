@@ -10,7 +10,10 @@ Telefonul poate scrie doar entitățile bifate din MAIN (`sync_v2_permissions`, 
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import time
 import sqlite3
 import uuid
 from datetime import date, datetime
@@ -169,6 +172,9 @@ def readable_entities(c, a: Dict[str, Any]) -> List[str]:
     return [e for e in ents.ORDER if mp.readable_entity(m, e)]
 
 
+API_REVISION = "mobile-complet-2026.2"
+
+
 class SyncV2Service:
     def __init__(self, inbox):
         self.inbox, self.cp = inbox, inbox.cp
@@ -231,6 +237,24 @@ class SyncV2Service:
                     "editable": self._editable(c, a), "entities": visible, "role": self._role(c, a),
                     "capabilities": self._caps_view(c, a), "permissions": self._perm_view(c, a),
                     "last_run": {k: _jsonable(last[k]) for k in last.keys()} if last else None}
+        finally:
+            c.close()
+
+    def instance(self, binding_key: str) -> Dict[str, Any]:
+        """Identitatea și capabilitățile instanței de backend, pentru legătura autentificată (MAIN sau telefon): permite clientului să verifice că vorbește cu release-ul
+        și baza de date așteptate înainte de a salva permisiuni. `db_fingerprint` este același pe orice backend care folosește aceeași bază/același cimitir."""
+        a = self._auth(binding_key)
+        c = self.cp._c()
+        try:
+            has = lambda sql: bool(c.execute(sql).fetchone()[0])      # noqa: E731
+            matrix_ok = has("SELECT to_regclass('sync_v2_profiles') IS NOT NULL") and has(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='sync_v2_permissions' AND column_name='detail')")
+            cem = c.execute("SELECT current_database() AS db, (SELECT created_at::text FROM cemeteries WHERE uid=CAST(? AS uuid)) AS cc", (a["cemetery_uid"],)).fetchone()
+            fp = hashlib.sha256(f"{cem['db']}|{a['cemetery_uid']}|{cem['cc']}".encode()).hexdigest()[:16]
+            codes_ok = has("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='device_pairing_codes' AND column_name='revoked_at')")
+            return {"api_revision": API_REVISION, "release": os.environ.get("CIMITIR_RELEASE", "") or API_REVISION, "db_fingerprint": fp, "server_time": time.time(),
+                    "device_type": a["device_type"], "organization_uid": a["organization_uid"], "cemetery_uid": a["cemetery_uid"],
+                    "capabilities": sorted(k for k, ok in (("sync_v2", True), ("permissions_matrix", matrix_ok), ("pairing_codes_by_main", codes_ok), ("issue_documents", matrix_ok)) if ok)}
         finally:
             c.close()
 
@@ -737,7 +761,7 @@ class SyncV2Service:
         self._need_main(a)
         c = self.cp._c()
         try:
-            rows = c.execute("SELECT b.binding_uid, d.device_name, d.device_type FROM device_cemetery_bindings b JOIN devices d ON d.device_uid=b.device_uid "
+            rows = c.execute("SELECT b.binding_uid, d.device_name, d.device_type, b.created_at, b.last_seen_at FROM device_cemetery_bindings b JOIN devices d ON d.device_uid=b.device_uid "
                              "AND d.organization_uid=b.organization_uid WHERE b.organization_uid=CAST(? AS uuid) AND b.cemetery_uid=CAST(? AS uuid) AND b.active "
                              "AND b.revoked_at IS NULL AND d.device_type='MOBILE' ORDER BY d.device_name", self._scope(a)).fetchall()
             perms = {}
@@ -754,7 +778,8 @@ class SyncV2Service:
     @staticmethod
     def _device_public(c, r, perms, roles) -> Dict[str, Any]:
         dm = mp.device_matrix(c, r["binding_uid"])
-        return {"ref": r["binding_uid"], "name": r["device_name"], "editable": sorted(perms.get(r["binding_uid"], [])), "role": roles.get(r["binding_uid"]),
+        iso = lambda v: v.isoformat() if v is not None else None            # noqa: E731
+        return {"ref": r["binding_uid"], "name": r["device_name"], "created_at": iso(r["created_at"]), "last_seen_at": iso(r["last_seen_at"]), "editable": sorted(perms.get(r["binding_uid"], [])), "role": roles.get(r["binding_uid"]),
                 "mode": "matrix" if dm else "legacy", "profile": (dm or {}).get("profile"), "matrix": (dm or {}).get("matrix"), "view_pii": (dm or {}).get("view_pii", False)}
 
     def set_permissions(self, binding_key: str, ref: str, entities: Any) -> Dict[str, Any]:
