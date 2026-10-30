@@ -24,7 +24,7 @@ KEYS = ("name", "cemetery", "paired", "last_seen", "state")
 class FieldDevicesDialog(QDialog):
     def __init__(self, parent=None, client_factory: Callable[[], Any] = None, can_manage: Optional[Callable[[], bool]] = None):
         super().__init__(parent)
-        self.setWindowTitle("Telefoane / Dispozitive teren")
+        self.setWindowTitle("Telefoane de teren — Field Inbox v1 (vechi)")
         self.setMinimumSize(820, 520)
         self._factory = client_factory or (lambda: fic.connect()[0])
         self._can_manage = can_manage or (lambda: access_session.require("manage_config", self, "administrarea telefoanelor de teren"))
@@ -41,7 +41,7 @@ class FieldDevicesDialog(QDialog):
         root.addWidget(self.btn_config)
 
         row = QHBoxLayout()
-        self.btn_code = QPushButton("Generează cod pairing MOBILE")
+        self.btn_code = QPushButton("Generează cod pentru Field Inbox (vechi)")
         self.btn_code.setObjectName("devices_gen_code")
         self.lbl_code = QLabel("—")
         self.lbl_code.setObjectName("devices_code")
@@ -54,7 +54,10 @@ class FieldDevicesDialog(QDialog):
         row.addWidget(self.lbl_expiry)
         row.addStretch(1)
         root.addLayout(row)
-        hint = QLabel("Codul se folosește o singură dată și expiră. Telefonul îl introduce în aplicația de teren.")
+        hint = QLabel("Acest cod este numai pentru aplicația de teren Field Inbox v1, NU pentru Mobile v2. "
+                      "Pentru Mobile v2 folosește Centrul Cloud → F. Mobile → «Asociază telefoane (cod / QR)». "
+                      "Codul se folosește o singură dată și expiră.")
+        hint.setWordWrap(True)
         hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
         root.addWidget(hint)
 
