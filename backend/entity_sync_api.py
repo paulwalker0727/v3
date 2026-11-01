@@ -50,9 +50,26 @@ def _jsonable(value: Any) -> Any:
 
 
 # ------------------------------------------------------------------ citire / serializare
-def _select_sql(entity: str) -> str:
+def _avail(conn, entity: str) -> frozenset:
+    """Coloanele opționale (028) pe care baza curentă le poate stoca (PostgreSQL: există + drept de scriere; SQLite: există)."""
+    opt = ents.optional_cols(entity)
+    if not opt:
+        return frozenset()
+    try:
+        marks = ",".join("?" for _ in opt)
+        rows = conn.execute("SELECT x.column_name FROM information_schema.columns x WHERE x.table_schema=current_schema() AND x.table_name=? "
+                            f"AND x.column_name IN ({marks}) AND has_column_privilege(current_user, quote_ident(x.table_schema)||'.'||quote_ident(x.table_name), x.column_name, 'UPDATE')",
+                            (entity, *opt)).fetchall()
+        return frozenset(r["column_name"] for r in rows)
+    except Exception:  # noqa: BLE001  (SQLite / fără information_schema)
+        present = {r[1] for r in conn.execute(f"PRAGMA table_info({entity})").fetchall()}
+        return frozenset(c for c in opt if c in present)
+
+
+def _select_sql(entity: str, avail=None) -> str:
     sp = ents.ENTITIES[entity]
-    cols = ", ".join(f"t.{c}" for c in sp["cols"])
+    opt = ents.optional_cols(entity)
+    cols = ", ".join(f"t.{c}" for c in sp["cols"] if not (c in opt and avail is not None and c not in avail))
     fks = "".join(f", (SELECT p.uid FROM {parent} p WHERE p.id = t.{col}) AS {wire}"
                   for col, (parent, wire) in sp["fks"].items())
     return f"SELECT t.id, t.uid, t.version, t.change_seq, t.modified_at, {cols}{fks} FROM {entity} t WHERE {cim.tenant_scope('t')}"
@@ -60,7 +77,7 @@ def _select_sql(entity: str) -> str:
 
 def _row_to_wire(entity: str, row) -> Dict[str, Any]:
     d = dict(row)
-    data = {c: _jsonable(d.get(c)) for c in ents.ENTITIES[entity]["cols"]}
+    data = {c: _jsonable(d.get(c)) for c in ents.ENTITIES[entity]["cols"] if c in d}
     for wire in ents.fk_wire_names(entity):
         data[wire] = d.get(wire)
     return {"uid": d["uid"], "version": int(d["version"] or 0), "seq": int(d["change_seq"] or 0),
@@ -68,7 +85,7 @@ def _row_to_wire(entity: str, row) -> Dict[str, Any]:
 
 
 def _fetch(conn, entity: str, uid: str, lock: bool = False):
-    sql = _select_sql(entity) + " AND t.uid = ?" + (" FOR UPDATE OF t" if lock else "")
+    sql = _select_sql(entity, _avail(conn, entity)) + " AND t.uid = ?" + (" FOR UPDATE OF t" if lock else "")
     return conn.execute(sql, (uid,)).fetchone()
 
 
@@ -145,6 +162,12 @@ def _apply(conn, op: Dict[str, Any], client_id: str) -> Dict[str, Any]:
         return _result(op["op_id"], "applied", version=int(tomb["version"]) if tomb else base + 1, deleted=True)
 
     data = ents.clean_data(entity, op.get("data") or {})
+    avail, opt = _avail(conn, entity), ents.optional_cols(entity)
+    unsup = ents.unsupported_values(entity, data, avail)
+    if unsup:
+        return _result(op["op_id"], "rejected", reason="schema_incompatible", fields=unsup,
+                       detail=f"Serverul nu are încă migrarea 028: {', '.join(unsup)} nu pot fi stocate; valorile rămân pe dispozitiv.")
+    wcols = [c for c in sp["cols"] if c in data and not (c in opt and c not in avail)]
     fk_values, missing = _resolve_fks(conn, entity, data)
     if missing:
         return _result(op["op_id"], "retry", reason=missing)
@@ -155,12 +178,12 @@ def _apply(conn, op: Dict[str, Any], client_id: str) -> Dict[str, Any]:
             return conflict("deleted_on_server", int(tomb["version"]), None)
         nk = sp.get("natural_key")
         if nk and data.get(nk):
-            other = conn.execute(_select_sql(entity) + f" AND t.{nk} = ?", (data[nk],)).fetchone()
+            other = conn.execute(_select_sql(entity, avail) + f" AND t.{nk} = ?", (data[nk],)).fetchone()
             if other is not None:
                 snap = _row_to_wire(entity, other)
                 return conflict("natural_key", snap["version"], snap)
-        cols = list(sp["cols"]) + list(fk_values)
-        vals = [_db_value(sp["cols"][c], data[c]) for c in sp["cols"]] + list(fk_values.values())
+        cols = wcols + list(fk_values)
+        vals = [_db_value(sp["cols"][c], data[c]) for c in wcols] + list(fk_values.values())
         marks = ["CAST(? AS jsonb)" if sp["cols"].get(c) == "j" else "?" for c in cols]
         row = conn.execute(f"INSERT INTO {entity} (uid, {', '.join(cols)}) VALUES (?, {', '.join(marks)}) "
                            "RETURNING version, modified_at", (uid, *vals)).fetchone()
@@ -172,9 +195,9 @@ def _apply(conn, op: Dict[str, Any], client_id: str) -> Dict[str, Any]:
         return _result(op["op_id"], "applied", version=server["version"], updated_at=server["updated_at"], adopted=True)
     if server["version"] != base and not _last_writer_is(conn, client_id, entity, uid, server["version"]):
         return conflict("already_exists" if base == 0 else "version_mismatch", server["version"], server)
-    sets = [f"{c} = {'CAST(? AS jsonb)' if sp['cols'][c] == 'j' else '?'}" for c in sp["cols"]]
+    sets = [f"{c} = {'CAST(? AS jsonb)' if sp['cols'][c] == 'j' else '?'}" for c in wcols]
     sets += [f"{c} = ?" for c in fk_values]
-    vals = [_db_value(sp["cols"][c], data[c]) for c in sp["cols"]] + list(fk_values.values())
+    vals = [_db_value(sp["cols"][c], data[c]) for c in wcols] + list(fk_values.values())
     row = conn.execute(f"UPDATE {entity} SET {', '.join(sets)} WHERE uid = ? AND {cim.tenant_scope()} RETURNING version, modified_at",
                        (*vals, uid)).fetchone()
     return _result(op["op_id"], "applied", version=int(row["version"]), updated_at=_jsonable(row["modified_at"]))
@@ -278,7 +301,7 @@ def pull(request: Request, entity: str, since: int = 0, limit: int = 500):
     limit = max(1, min(int(limit), MAX_PULL))
     conn = cim.get_connection()
     try:
-        rows = conn.execute(_select_sql(entity) + " AND t.change_seq > ? ORDER BY t.change_seq LIMIT ?",
+        rows = conn.execute(_select_sql(entity, _avail(conn, entity)) + " AND t.change_seq > ? ORDER BY t.change_seq LIMIT ?",
                             (since, limit + 1)).fetchall()
         tombs = conn.execute(f"SELECT uid, version, change_seq FROM sync_tombstones WHERE entity=? AND change_seq > ? AND {cim.tenant_scope()} "
                              "ORDER BY change_seq LIMIT ?", (entity, since, limit + 1)).fetchall()

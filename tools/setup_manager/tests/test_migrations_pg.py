@@ -170,14 +170,14 @@ def test_fresh_empty_database_plans_all_in_order(pg_template):
     try:
         url = cf._swap_db(cf.PG_URL, name)
         _, _, plan = _state(url)
-        assert [s["version"] for s in plan["steps"]] == list(range(1, 27)) and plan["executable"]
+        assert [s["version"] for s in plan["steps"]] == list(range(1, 29)) and plan["executable"]
         migs = M.load_migrations(MIG_DIR)
         cfg = {"env_name": "TEST", "project_ref": "fommbiwndlxkfsnlqatq", "supabase_url": "https://fommbiwndlxkfsnlqatq.supabase.co", "storage_bucket": "cimitir-private-test",
                "db_connection_string": "postgresql://postgres.fommbiwndlxkfsnlqatq@aws-0-eu-west-1.pooler.supabase.com:5432/postgres", "db_username": "postgres.fommbiwndlxkfsnlqatq", "docker_port": 8085}
         r = M.apply_plan(url, cfg, migs, plan, plan["confirm_phrase"], GOOD_BACKUP, "execute", connect=_conn)
         assert r["executed"], r
         _, a, plan2 = _state(url)
-        assert plan2["steps"] == [] and _hist(url) == list(range(1, 27)) or len(_hist(url)) == 19   # 7 migrări neverificabile nu se înregistrează fără dovezi
+        assert plan2["steps"] == [] and _hist(url) == list(range(1, 29)) or len(_hist(url)) == 19   # 7 migrări neverificabile nu se înregistrează fără dovezi
     finally:
         with psycopg.connect(cf.PG_URL, autocommit=True) as c:
             c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')

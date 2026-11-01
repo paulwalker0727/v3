@@ -15,6 +15,7 @@ import uuid
 from typing import Any, Dict, List
 
 import cimitir_cloud_control as cc
+import cimitir_entities as ents
 import cimitir_mobile_perms as mp
 import cimitir_sync_v2 as sv
 
@@ -324,8 +325,9 @@ class MobileRegistryService:
                 "SELECT p.uid,p.suma,p.data_plata,p.tip,p.chitanta_nr,p.observatii FROM plati p "
                 "WHERE p.cod_loc=? OR p.contract_id IN (SELECT id FROM contracte WHERE id_loc=(SELECT id FROM locuri_de_veci WHERE uid=?)) "
                 "ORDER BY p.id DESC", (grave["cod_loc"], grave_uid)).fetchall()]
+            pcols = "uid,nr_aviz,data_aviz,lucrare" + "".join("," + k for k in ents.optional_cols("amenajari_avize") if k in sv.available_optional(c, "amenajari_avize", a))
             permits = [_row(r) for r in c.execute(
-                "SELECT uid,nr_aviz,data_aviz,lucrare FROM amenajari_avize WHERE cod_loc=? ORDER BY id DESC",
+                f"SELECT {pcols} FROM amenajari_avize WHERE cod_loc=? ORDER BY id DESC",
                 (grave["cod_loc"],)).fetchall()]
             vis = sv.readable_entities(c, a)      # permisiuni aplicate pe server (rol/capabilități)
             m, _pii = sv.matrix_of(c, a)

@@ -54,10 +54,16 @@ ENTITIES: Dict[str, Dict[str, Any]] = {
     # Pasul 6: avizele de construcție/amenajare se sincronizează ca restul entităților (altfel serverul nu le-ar avea
     # și telefonul n-ar putea atașa documente la un aviz). Legătura cu locul: coloana text `cod_loc` (ca la plăți).
     "amenajari_avize": {
-        "cols": {"cod_loc": "t", "nr_aviz": "t", "data_aviz": "t", "lucrare": "t", "created_at": "t"},
+        "cols": {"cod_loc": "t", "nr_aviz": "t", "data_aviz": "t", "lucrare": "t", "created_at": "t",
+                 "stare": "t", "executant": "t", "data_inceput": "t", "data_finalizare": "t", "observatii": "t"},
         "fks": {},
     },
 }
+
+# Coloane adăugate ulterior (migrarea 028). Un client/server mai vechi nu le cunoaște: cheia lipsă de pe fir înseamnă „nemodificat”
+# (nu „golit”), iar o valoare nevidă pe care destinatarul nu o poate stoca se raportează explicit, niciodată nu se pierde în tăcere.
+OPTIONAL_COLS: Dict[str, Tuple[str, ...]] = {"amenajari_avize": ("stare", "executant", "data_inceput", "data_finalizare", "observatii")}
+AVIZ_STARI = ("planificata", "in_lucru", "finalizata")
 
 VALID_ACTIONS = ("upsert", "delete")
 
@@ -94,10 +100,28 @@ def coerce(kind: str, value: Any) -> Any:
     return None if value is None else str(value)
 
 
+def optional_cols(entity: str) -> Tuple[str, ...]:
+    return OPTIONAL_COLS.get(entity, ())
+
+
+def unsupported_values(entity: str, data: Dict[str, Any], available) -> List[str]:
+    """Coloanele opționale cu valoare NEVIDĂ pe care destinatarul nu le poate stoca (`available` = coloanele opționale disponibile acolo)."""
+    out = []
+    for col in optional_cols(entity):
+        if col in available:
+            continue
+        v = (data or {}).get(col)
+        if v is not None and str(v).strip():
+            out.append(col)
+    return out
+
+
 def clean_data(entity: str, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Doar coloanele cunoscute + FK-urile (uid), cu tipurile normalizate. Orice alt câmp este ignorat."""
+    """Doar coloanele cunoscute + FK-urile (uid), cu tipurile normalizate. Orice alt câmp este ignorat.
+    Coloanele opționale absente din `data` rămân absente (un client vechi nu golește valorile pe care nu le cunoaște)."""
     sp = ENTITIES[entity]
-    out: Dict[str, Any] = {col: coerce(kind, data.get(col)) for col, kind in sp["cols"].items()}
+    opt = OPTIONAL_COLS.get(entity, ())
+    out: Dict[str, Any] = {col: coerce(kind, data.get(col)) for col, kind in sp["cols"].items() if not (col in opt and col not in data)}
     for wire in fk_wire_names(entity):
         value = data.get(wire)
         out[wire] = str(value) if value else None
@@ -117,7 +141,10 @@ def _norm(kind: str, value: Any) -> Any:
 def same_data(entity: str, a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     """Compară două seturi de date (normalizat: None == '' la text, JSON canonic, float rotunjit)."""
     sp = ENTITIES[entity]
+    opt = OPTIONAL_COLS.get(entity, ())
     for col, kind in sp["cols"].items():
+        if col in opt and (col not in a or col not in b):
+            continue
         if _norm(kind, coerce(kind, a.get(col))) != _norm(kind, coerce(kind, b.get(col))):
             return False
     for wire in fk_wire_names(entity):
@@ -128,6 +155,8 @@ def same_data(entity: str, a: Dict[str, Any], b: Dict[str, Any]) -> bool:
 
 def changed_fields(entity: str, a: Dict[str, Any], b: Dict[str, Any]) -> List[str]:
     sp = ENTITIES[entity]
-    out = [c for c, k in sp["cols"].items() if _norm(k, coerce(k, a.get(c))) != _norm(k, coerce(k, b.get(c)))]
+    opt = OPTIONAL_COLS.get(entity, ())
+    out = [c for c, k in sp["cols"].items() if not (c in opt and (c not in a or c not in b))
+           and _norm(k, coerce(k, a.get(c))) != _norm(k, coerce(k, b.get(c)))]
     out += [w for w in fk_wire_names(entity) if (a.get(w) or None) != (b.get(w) or None)]
     return out

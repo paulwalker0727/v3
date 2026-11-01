@@ -17,6 +17,7 @@ pytestmark = pytest.mark.skipif(not ADMIN or urlparse(ADMIN).hostname not in ("1
 REG = ("locuri_de_veci", "concesionari", "contracte", "inhumati", "plati", "amenajari_avize")
 
 
+ROLL_028 = Path(__file__).resolve().parents[1] / "cimitir" / "pg_rollbacks" / "028_avize_complete_ROLLBACK.sql"
 ROLL_027 = Path(__file__).resolve().parents[1] / "cimitir" / "pg_rollbacks" / "027_mobile_permissions_matrix_ROLLBACK.sql"
 
 
@@ -179,7 +180,7 @@ def test_rollback_refuses_when_backup_missing(pre022):
 def test_migrations_are_contiguous_and_have_a_rollback_for_each_destructive_step():
     versions = [_version(f) for f in MIG.glob("*.sql")]
     assert sorted(versions) == list(range(1, max(versions) + 1)), "numerotarea migrărilor trebuie să fie continuă, fără goluri sau duplicate"
-    assert ROLL.exists() and ROLL_027.exists()
+    assert ROLL.exists() and ROLL_027.exists() and ROLL_028.exists()
 
 
 def test_027_requires_022_and_chain_022_to_latest_applies_in_order(pre022):
@@ -205,8 +206,11 @@ def test_rollback_chain_027_then_022_restores_pre022_state_and_keeps_data(pre022
         snap0 = snapshot(c)
         _apply(c, lo=22)
         assert snapshot(c) != snap0
-        c.execute(ROLL_027.read_text(encoding="utf-8"))                      # ordinea inversă: întâi 027, apoi 022
+        c.execute(ROLL_028.read_text(encoding="utf-8"))                      # ordinea inversă: 028, apoi 027, apoi 022
+        c.execute(ROLL_027.read_text(encoding="utf-8"))
         c.execute(ROLL.read_text(encoding="utf-8"))
+        assert c.execute("SELECT count(*) FROM information_schema.columns WHERE table_name='amenajari_avize' AND column_name='stare'").fetchone()[0] == 1   # 028 nu șterge coloane
+        c.execute("ALTER TABLE amenajari_avize DROP COLUMN stare, DROP COLUMN executant, DROP COLUMN data_inceput, DROP COLUMN data_finalizare, DROP COLUMN observatii")   # doar în test (fără date): comparăm cu starea de dinainte de 022
         assert snapshot(c) == snap0
         assert c.execute("SELECT count(*) FROM locuri_de_veci").fetchone()[0] == n_before
         assert _has(c, "sync_v2_permissions")                                 # jurnalele rămân (rollback nedistructiv)
