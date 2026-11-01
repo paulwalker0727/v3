@@ -48,6 +48,24 @@ export async function mirrorClear() {
 }
 export const mirrorAt = () => kvGet('mirror_at');
 
+const PII_ENTITIES = ['concesionari', 'contracte', 'inhumati'];
+/** Starea accesului la date sensibile s-a schimbat: fără acces, CNP/CI se șterg din copia locală și din ciorne; la schimbare (oricare sens) cursoarele registrelor cu date personale se resetează, deci copia se reface cu ce are voie telefonul acum. */
+export async function reconcilePiiCache(viewPii) {
+  const was = await kvGet('pii_cached');
+  const now = !!viewPii;
+  if (was === now) return false;
+  if (!now) {
+    const db = await dbOpen(); const tx = db.transaction(['rows', 'kv'], 'readwrite');
+    purgeSensitive(tx.objectStore('rows'));
+    const c = tx.objectStore('kv').openCursor();
+    c.onsuccess = () => { const cur = c.result; if (!cur) return; if (String(cur.key).startsWith('draft:') && cur.value && typeof cur.value === 'object') { stripSensitive(cur.value); cur.update(cur.value); } cur.continue(); };
+    await done(tx);
+  }
+  for (const e of PII_ENTITIES) await kvDel(`cursor:${e}`);
+  await kvSet('pii_cached', now);
+  return true;
+}
+
 // Descărcare incrementală (cursor change_seq). `api(path)` aruncă Error cu .status. Întoarce {rows, denied:[...]}.
 export async function mirrorSync(api, base) {
   let rows = 0; const denied = [];

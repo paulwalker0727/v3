@@ -1,4 +1,4 @@
-import {dbOpen,kvGet,kvSet,kvDel,mirrorSync,mirrorClear,mirrorAt,offlineGrave,offlineMap,offlineSearch,offlineList} from './mobile_offline.js';
+import {dbOpen,kvGet,kvSet,kvDel,mirrorSync,mirrorClear,reconcilePiiCache,mirrorAt,offlineGrave,offlineMap,offlineSearch,offlineList} from './mobile_offline.js';
 import * as ext from './mobile_ext.js';
 import {enqueue,flush as flushPhotos,queueList,queueCounts,retryErrors,dropPhoto} from './mobile_photos.js';
 const API = '/api/v1';
@@ -120,7 +120,7 @@ function detailBlock(title,rows){return `<section class="detail-card"><h3>${esc(
 
 /* ---------------- Sync v2: stare, outbox, reluare ---------------- */
 const ENTITY_ORDER=['locuri_de_veci','concesionari','contracte','inhumati','plati','amenajari_avize'];
-const REASONS={field_not_allowed:'Un câmp modificat nu este permis telefonului (blocat din MAIN).',are_dependente:'Nu se poate șterge: înregistrarea are legături (înhumați/contracte/plăți). Șterge întâi legăturile.',duplicate_receipt:'Există deja o chitanță cu acest număr.',not_authorized:'Nu ai dreptul de editare pentru acest registru (se acordă din MAIN).',delete_not_allowed:'Ștergerea/anularea nu este permisă acestui telefon (se acordă din MAIN).',version_mismatch:'Înregistrarea a fost modificată între timp. Se păstrează varianta din MAIN.',natural_key:'Există deja un loc cu acest cod.',deleted_on_server:'Înregistrarea a fost ștearsă între timp.',date_invalide:'Date invalide.'};
+const REASONS={field_not_allowed:'Un câmp (ex. CNP/CI fără acces la date sensibile) nu este permis telefonului. Se acordă din MAIN.',are_dependente:'Nu se poate șterge: înregistrarea are legături (înhumați/contracte/plăți). Șterge întâi legăturile.',duplicate_receipt:'Există deja o chitanță cu acest număr.',not_authorized:'Nu ai dreptul de editare pentru acest registru (se acordă din MAIN).',delete_not_allowed:'Ștergerea/anularea nu este permisă acestui telefon (se acordă din MAIN).',version_mismatch:'Înregistrarea a fost modificată între timp. Se păstrează varianta din MAIN.',natural_key:'Există deja un loc cu acest cod.',deleted_on_server:'Înregistrarea a fost ștearsă între timp.',date_invalide:'Date invalide.'};
 const can=(e,a='edit')=>ext.canDo(e,a);
 const newId=()=>((crypto.randomUUID?.()||`${Date.now().toString(16)}${Math.random().toString(16).slice(2)}0000000000000000`)).replace(/-/g,'').slice(0,32);
 async function outbox(){return (await kvGet('outbox').catch(()=>null))||[];}
@@ -139,7 +139,7 @@ async function syncNow(){
       const r=await api(`${API}/sync-v2/push`,{method:'POST',body:JSON.stringify({ops:chunk.map(o=>({op_id:o.op_id,entity:o.entity,uid:o.uid,action:o.action,base_version:o.base_version,data:o.data}))})});
       ob=await outbox();   // citire proaspătă: operațiile adăugate cât timp cererea era în curs (ex. poligon desenat imediat după crearea locului) NU se pierd
       for(const x of r.results){const o=ob.find(z=>z.op_id===x.op_id);if(!o)continue;
-        if(x.status==='applied'){ob=ob.filter(z=>z!==o);res.applied++;}
+        if(x.status==='applied'){ob=ob.filter(z=>z!==o);res.applied++;if(x.ignored_fields?.length){res.ignored=(res.ignored||[]).concat(x.ignored_fields);}}
         else if(x.status==='conflict'){o.state='conflict';o.reason=x.reason;o.serverVersion=x.server_version;res.conflicts++;}
         else if(x.status==='retry'){o.state='pending';o.error=x.reason;res.retry++;}
         else{o.state='error';o.reason=x.reason;res.errors++;}}
@@ -153,7 +153,7 @@ async function syncNow(){
     res.offline=!e.status;res.error=res.offline?'Fără conexiune la internet. Modificările rămân în coadă.':(e.message||'Eroare');res.errors+=res.offline?0:1;
   }
   state.syncing=false;state.lastSync=res;await kvSet('last_sync',res);renderSyncBtn();if(!document.activeElement?.closest?.('#view input'))renderView();
-  toast(res.offline?res.error:res.error?`Sincronizare incompletă: ${res.error}`:res.conflicts||res.errors?`Sincronizat: ${res.applied} trimise, ${res.conflicts+res.errors} de rezolvat`:`Sincronizat: ${res.applied} modificări trimise, date actualizate.`);
+  toast(res.offline?res.error:res.error?`Sincronizare incompletă: ${res.error}`:res.conflicts||res.errors?`Sincronizat: ${res.applied} trimise, ${res.conflicts+res.errors} de rezolvat`:`Sincronizat: ${res.applied} modificări trimise, date actualizate.`);if(res.ignored?.length)setTimeout(()=>toast(`Atenție: CNP/CI NU a fost salvat (${[...new Set(res.ignored)].join(', ')}) — telefonul nu are acces la date sensibile. Se acordă din MAIN.`),2500);
   if(document.getElementById('sheet')?.classList.contains('show')&&state.panel)openSyncPanel();
   if(state.again){state.again=false;setTimeout(()=>syncNow(),0);}
 }
@@ -179,8 +179,8 @@ const TIPS=['Taxă concesiune','Taxă întreținere','Taxă înhumare','Alt tip'
 const F=(k,l,t='text',x={})=>({k,l,t,...x});
 const FORMS={
   locuri_de_veci:{title:'Loc de veci',fields:[F('cod_loc','Cod loc (ex. A-12)','text',{req:1,newOnly:1}),F('sector','Sector'),F('parcela','Parcelă'),F('rand','Rând'),F('numar','Număr'),F('capacitate','Capacitate'),F('suprafata','Suprafață (m²)','number'),F('stare','Stare'),F('disponibilitate','Disponibilitate'),F('observatii','Observații','textarea')],label:d=>`Loc ${d.cod_loc||''}`.trim()},
-  concesionari:{title:'Concesionar',fields:[F('nume','Nume','text',{req:1}),F('prenume','Prenume'),F('cnp','CNP'),F('telefon','Telefon','tel'),F('email','E-mail','email'),F('adresa','Adresă'),F('observatii','Observații','textarea')],label:d=>`Concesionar: ${d.nume||''} ${d.prenume||''}`.trim()},
-  inhumati:{title:'Persoană înhumată',fields:[F('nume','Nume','text',{req:1}),F('prenume','Prenume'),F('cnp','CNP'),F('sex','Sex'),F('data_nasterii','Data nașterii','date'),F('data_deces','Data decesului','date'),F('data_inhumare','Data înhumării','date'),F('nr_certificat_deces','Nr. certificat deces'),F('nr_adeverinta_inhumare','Nr. adeverință înhumare'),F('observatii','Observații','textarea')],label:d=>`Înhumat: ${d.nume||''} ${d.prenume||''}`.trim()},
+  concesionari:{title:'Concesionar',fields:[F('nume','Nume','text',{req:1}),F('prenume','Prenume'),F('cnp','CNP','text',{pii:1}),F('bi_ci','Serie/nr. CI','text',{pii:1}),F('telefon','Telefon','tel'),F('email','E-mail','email'),F('adresa','Adresă'),F('observatii','Observații','textarea')],label:d=>`Concesionar: ${d.nume||''} ${d.prenume||''}`.trim()},
+  inhumati:{title:'Persoană înhumată',fields:[F('nume','Nume','text',{req:1}),F('prenume','Prenume'),F('cnp','CNP','text',{pii:1}),F('sex','Sex'),F('data_nasterii','Data nașterii','date'),F('data_deces','Data decesului','date'),F('data_inhumare','Data înhumării','date'),F('nr_certificat_deces','Nr. certificat deces'),F('nr_adeverinta_inhumare','Nr. adeverință înhumare'),F('observatii','Observații','textarea')],label:d=>`Înhumat: ${d.nume||''} ${d.prenume||''}`.trim()},
   contracte:{title:'Contract',fields:[F('numar_contract','Număr contract','text',{req:1}),F('concesionar_uid','Concesionar','select',{req:1,opts:'concessionaires'}),F('data_contract','Data contractului','date'),F('data_inceput','Valabil de la','date'),F('data_sfarsit','Valabil până la','date'),F('valabilitate','Valabilitate'),F('owner_address','Adresa titularului (în contract)'),F('owner_phone','Telefon titular','tel'),F('owner_email','E-mail titular','email'),F('cemetery_parcel','Parcelă'),F('cemetery_row','Rând'),F('cemetery_tomb','Nr. loc'),F('tomb_surface_m2','Suprafață (mp)','number'),F('owner_cnp','CNP titular','text',{pii:1}),F('owner_id_card_serie_number','Serie/nr. CI titular','text',{pii:1}),F('observatii','Observații','textarea')],label:d=>`Contract ${d.numar_contract||''}`.trim(),confirm:d=>`Salvezi contractul ${d.numar_contract}?`},
   plati:{title:'Plată',fields:[F('suma','Sumă (lei)','number',{req:1}),F('contract_uid','Contract','select',{opts:'contracts'}),F('data_plata','Data plății','date',{def:TODAY}),F('tip','Tip','select',{opts:TIPS,def:()=>TIPS[0]}),F('chitanta_nr','Nr. chitanță'),F('observatii','Observații','textarea')],label:d=>`Plată ${d.suma||''} lei`,confirm:d=>`Confirmi înregistrarea plății de ${d.suma} lei?`},
   amenajari_avize:{title:'Solicitare aviz lucrări funerare',fields:[F('nr_aviz','Nr. aviz / solicitare'),F('data_aviz','Data','date',{def:TODAY}),F('lucrare','Lucrarea solicitată','textarea',{req:1})],label:d=>`Aviz: ${d.lucrare||d.nr_aviz||''}`.slice(0,60)}
@@ -190,7 +190,7 @@ const friendly=(s,b)=>b?.message&&s<500&&s!==403&&s!==404?b.message:({401:'Asoci
 function renderNet(){const p=document.getElementById('net-pill');if(!p)return;const on=navigator.onLine!==false&&!state.netDown;p.textContent=on?'Conectat':'Offline';p.dataset.state=on?'on':'off';p.setAttribute('data-testid','net-pill');}
 window.addEventListener('online',()=>{state.netDown=false;renderNet();toast('Conexiune restabilită. Se sincronizează modificările.');syncNow();});
 window.addEventListener('offline',()=>{renderNet();toast('Fără internet. Poți consulta datele salvate și introduce modificări; se trimit la reconectare.');});
-async function refreshMirror(){try{const r=await mirrorSync((p)=>api(p),API);state.mirrorAt=Date.now();state.netDown=false;renderNet();if(r.denied.length)state.denied=r.denied;return r;}catch(e){if(!e.status){state.netDown=true;renderNet();}return null;}}
+async function refreshMirror(){try{if(state.syncInfo?.permissions)await reconcilePiiCache(!!state.syncInfo.permissions.view_pii);const r=await mirrorSync((p)=>api(p),API);state.mirrorAt=Date.now();state.netDown=false;renderNet();if(r.denied.length)state.denied=r.denied;return r;}catch(e){if(!e.status){state.netDown=true;renderNet();}return null;}}
 async function getRow(entity,uid){
   try{return await api(`${API}/sync-v2/row?entity=${entity}&uid=${encodeURIComponent(uid)}`);}
   catch(e){if(e.status)throw e;const {rowsOf}=await import('./mobile_offline.js');const r=(await rowsOf(entity)).find(x=>x.uid===uid);if(!r)throw e;return r;}
