@@ -25,7 +25,7 @@ def test_extract_objects_ignores_comments_do_blocks_and_function_bodies():
 
 def test_real_migrations_load_in_order():
     migs = M.load_migrations(MIG_DIR)
-    assert [m.version for m in migs] == list(range(1, 27))
+    assert [m.version for m in migs] == list(range(1, 29))
     assert migs[23].name.startswith("024_") and any(("sync_v2_documents",) == t for t in migs[23].objects["table"])
 
 

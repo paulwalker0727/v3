@@ -31,7 +31,7 @@ MAX_OP_BYTES = 64 * 1024
 MAX_TEXT = 4000
 MAX_POINTS = 500
 RESOLUTIONS = ("keep_main", "accept_incoming", "restore_previous")
-UNRECORDED = ("not_authorized", "field_not_allowed", "delete_not_allowed")      # refuzuri de permisiune: nu se memorează (după o acordare ulterioară, aceeași operațiune poate trece)
+UNRECORDED = ("not_authorized", "field_not_allowed", "delete_not_allowed", "schema_incompatible")      # refuzuri de permisiune: nu se memorează (după o acordare ulterioară, aceeași operațiune poate trece)
 
 # Permisiuni configurabile (aplicate pe SERVER): capabilități -> registre. Rolurile sunt doar șabloane de capabilități; MAIN poate personaliza oricând.
 CAPS: Dict[str, str] = {
@@ -130,9 +130,36 @@ def _loads(v: Any, default=None):
         return default
 
 
-def _select_sql(entity: str) -> str:
+def available_optional(c, entity: str, a: Optional[Dict[str, Any]] = None) -> frozenset:
+    """Coloanele opționale (ex. 028) pe care schema CURENTĂ le poate stoca: există și rolul runtime are drept de scriere pe ele (rollback 028 = indisponibile)."""
+    opt = ents.optional_cols(entity)
+    if not opt:
+        return frozenset()
+    key = "_opt_" + entity
+    if a is not None and key in a:
+        return a[key]
+    marks = ",".join("?" for _ in opt)
+    rows = c.execute("SELECT x.column_name FROM information_schema.columns x WHERE x.table_schema=current_schema() AND x.table_name=? "
+                     f"AND x.column_name IN ({marks}) AND has_column_privilege(current_user, quote_ident(x.table_schema)||'.'||quote_ident(x.table_name), x.column_name, 'UPDATE')",
+                     (entity, *opt)).fetchall()
+    res = frozenset(r["column_name"] for r in rows)
+    if a is not None:
+        a[key] = res
+    return res
+
+
+def _cols_for(entity: str, avail=None) -> list:
+    opt = ents.optional_cols(entity)
+    return [col for col in ents.ENTITIES[entity]["cols"] if not (col in opt and avail is not None and col not in avail)]
+
+
+SCHEMA_INCOMPATIBLE = ("Serverul Cloud nu are încă migrarea 028 (avize complete): câmpurile {fields} nu pot fi stocate acolo. "
+                       "Valorile NU s-au pierdut (rămân pe dispozitiv); cere administratorului aplicarea migrării 028 pe Cloud.")
+
+
+def _select_sql(entity: str, avail=None) -> str:
     sp = ents.ENTITIES[entity]
-    cols = ", ".join(f"t.{c}" for c in sp["cols"])
+    cols = ", ".join(f"t.{c}" for c in _cols_for(entity, avail))
     fks = "".join(f", (SELECT p.uid FROM {parent} p WHERE p.id=t.{col}) AS {wire}" for col, (parent, wire) in sp["fks"].items())
     return (f"SELECT t.id, t.uid, t.version, t.change_seq, t.modified_at, {cols}{fks} FROM {entity} t "
             "WHERE t.organization_uid=CAST(? AS uuid) AND t.cemetery_uid=CAST(? AS uuid)")
@@ -141,7 +168,7 @@ def _select_sql(entity: str) -> str:
 def _wire(entity: str, row, hidden: set = frozenset()) -> Dict[str, Any]:
     d = {k: row[k] for k in row.keys()}
     sp = ents.ENTITIES[entity]
-    data = {c: (ents.coerce("j", d[c]) if kind == "j" else _jsonable(d[c])) for c, kind in sp["cols"].items()}
+    data = {c: (ents.coerce("j", d[c]) if kind == "j" else _jsonable(d[c])) for c, kind in sp["cols"].items() if c in d}
     for w in ents.fk_wire_names(entity):
         data[w] = d.get(w)
     w = {"uid": d["uid"], "version": int(d["version"] or 0), "seq": int(d["change_seq"] or 0),
@@ -215,7 +242,7 @@ class SyncV2Service:
 
     # ------------------------------------------------------------------ citire
     def _fetch(self, c, a, entity: str, uid: str, lock: bool = False):
-        return c.execute(_select_sql(entity) + " AND t.uid=?" + (" FOR UPDATE OF t" if lock else ""), (*self._scope(a), uid)).fetchone()
+        return c.execute(_select_sql(entity, available_optional(c, entity, a)) + " AND t.uid=?" + (" FOR UPDATE OF t" if lock else ""), (*self._scope(a), uid)).fetchone()
 
     def status(self, binding_key: str) -> Dict[str, Any]:
         a = self._auth(binding_key)
@@ -236,7 +263,8 @@ class SyncV2Service:
             return {"device_type": a["device_type"], "counts": counts, "max_seq": seqs, "open_conflicts": open_n,
                     "editable": self._editable(c, a), "entities": visible, "role": self._role(c, a),
                     "capabilities": self._caps_view(c, a), "permissions": self._perm_view(c, a),
-                    "last_run": {k: _jsonable(last[k]) for k in last.keys()} if last else None}
+                    "last_run": {k: _jsonable(last[k]) for k in last.keys()} if last else None,
+                    "features": {"avize_extended": set(ents.optional_cols("amenajari_avize")) <= set(available_optional(c, "amenajari_avize", a))}}
         finally:
             c.close()
 
@@ -297,7 +325,7 @@ class SyncV2Service:
         try:
             self._need_read(c, a, entity)
             sc = self._scope(a)
-            rows = c.execute(_select_sql(entity) + " AND t.change_seq > ? ORDER BY t.change_seq LIMIT ?", (*sc, since, limit + 1)).fetchall()
+            rows = c.execute(_select_sql(entity, available_optional(c, entity, a)) + " AND t.change_seq > ? ORDER BY t.change_seq LIMIT ?", (*sc, since, limit + 1)).fetchall()
             tombs = c.execute("SELECT uid, version, change_seq FROM sync_tombstones WHERE entity=? AND change_seq > ? AND organization_uid=CAST(? AS uuid) "
                               "AND cemetery_uid=CAST(? AS uuid) ORDER BY change_seq LIMIT ?", (entity, since, *sc, limit + 1)).fetchall()
             hid = hidden_for(c, a, entity)
@@ -387,7 +415,7 @@ class SyncV2Service:
             except BaseException:
                 c.execute("ROLLBACK")
                 raise
-            if result["status"] == "rejected" and result.get("reason") in UNRECORDED and a["device_type"] != "MAIN":
+            if result["status"] == "rejected" and result.get("reason") in UNRECORDED and result.get("reason") != "schema_incompatible" and a["device_type"] != "MAIN":
                 self._audit_safe(c, a, "denied", op["entity"], op["uid"], {"op_id": op["op_id"], "action": op["action"], "reason": result.get("reason"), "detail": result.get("detail")})
             return result
         except sqlite3.IntegrityError as exc:
@@ -464,6 +492,9 @@ class SyncV2Service:
 
         self._check_data(entity, op["data"])
         data = ents.clean_data(entity, op["data"])
+        unsup = ents.unsupported_values(entity, data, available_optional(c, entity, a))
+        if unsup:        # schema fără 028: nu se pierde nimic în tăcere — operațiunea este refuzată explicit și rămâne pe dispozitiv
+            return {"status": "rejected", "reason": "schema_incompatible", "fields": unsup, "detail": SCHEMA_INCOMPATIBLE.format(fields=", ".join(unsup))}
         if not is_main:
             hid = hidden_for(c, a, entity)
             op["_ignored"] = [col for col in SENSITIVE.get(entity, ())      # contract păstrat: valoarea se ignoră, dar NU în tăcere — răspunsul listează câmpurile ignorate
@@ -490,7 +521,7 @@ class SyncV2Service:
                     return res
             nk = sp.get("natural_key")
             if nk and data.get(nk):
-                other = c.execute(_select_sql(entity) + f" AND t.{nk}=?", (*self._scope(a), data[nk])).fetchone()
+                other = c.execute(_select_sql(entity, available_optional(c, entity, a)) + f" AND t.{nk}=?", (*self._scope(a), data[nk])).fetchone()
                 if other is not None:     # alt UID, aceeași cheie naturală: niciodată duplicat; revizuire explicită
                     snap = _wire(entity, other)
                     cid = self._record_conflict(c, a, op, "natural_key", snap)
@@ -543,8 +574,10 @@ class SyncV2Service:
 
     def _write(self, c, a, entity, uid, data, fk_values, insert: bool) -> Dict[str, Any]:
         sp = ents.ENTITIES[entity]
-        cols = list(sp["cols"]) + list(fk_values)
-        vals = [_db_value(sp["cols"][k], data[k]) for k in sp["cols"]] + list(fk_values.values())
+        avail, opt = available_optional(c, entity, a), ents.optional_cols(entity)
+        wcols = [k for k in sp["cols"] if k in data and not (k in opt and k not in avail)]      # opționale absente (client vechi) sau neacceptate de schemă (fără valoare) rămân neatinse
+        cols = wcols + list(fk_values)
+        vals = [_db_value(sp["cols"][k], data[k]) for k in wcols] + list(fk_values.values())
         marks = ["CAST(? AS jsonb)" if sp["cols"].get(k) == "j" else "?" for k in cols]
         if insert:
             row = c.execute(f"INSERT INTO {entity} (uid, organization_uid, cemetery_uid, {', '.join(cols)}) VALUES (?, CAST(? AS uuid), CAST(? AS uuid), {', '.join(marks)}) "

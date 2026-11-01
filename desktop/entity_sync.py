@@ -163,10 +163,43 @@ def ensure_tracking(force: bool = False) -> bool:
             conn.execute(f"UPDATE {entity} SET version=0 WHERE version IS NULL")
             conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{entity}_uid ON {entity}(uid)")
             _create_triggers(conn, entity)
+        _backfill_avize_ext(conn)
     finally:
         conn.close()
     _READY.add(key)
     return True
+
+
+SET_AVIZE_BACKFILL = "entity_sync_avize_ext_backfill"
+INCOMPAT_028 = ("Serverul Cloud nu acceptă încă câmpurile complete ale avizelor (stare, executant, date, observații; migrarea 028). "
+                "Valorile rămân în MAIN și se trimit automat după actualizarea serverului; nimic nu s-a pierdut.")
+
+
+def _backfill_avize_ext(conn) -> None:
+    """O singură dată, la prima rulare după actualizare: avizele deja sincronizate care au valori în câmpurile noi intră în coadă, ca să ajungă în cloud."""
+    if conn.execute("SELECT 1 FROM settings WHERE key=?", (SET_AVIZE_BACKFILL,)).fetchone():
+        return
+    present = set(_columns(conn, "amenajari_avize"))
+    opt = [c for c in ents.optional_cols("amenajari_avize") if c in present]
+    if opt:
+        cond = " OR ".join(f"COALESCE(TRIM({c}),'')<>''" for c in opt)
+        conn.execute(
+            f"INSERT INTO cloud_sync_outbox ({_OUTBOX_COLS}) SELECT 'entity','amenajari_avize',uid,'upsert',COALESCE(version,0),'pending',lower(hex(randomblob(16))),{_NOW},0,'','','','{{}}' "
+            f"FROM amenajari_avize WHERE COALESCE(version,0)>0 AND uid IS NOT NULL AND ({cond}) AND uid NOT IN "
+            "(SELECT entity_uid FROM cloud_sync_outbox WHERE kind='entity' AND entity='amenajari_avize' AND entity_uid IS NOT NULL AND COALESCE(state,'pending') IN ('pending','conflict'))")
+    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, '1')", (SET_AVIZE_BACKFILL,))
+
+
+def _server_avize_ext() -> Optional[bool]:
+    """True/False = serverul Sync v2 anunță (nu) câmpurile complete ale avizelor; None = necunoscut (alt tip de server / eroare de rețea)."""
+    try:
+        st = _call("GET", "status").json()
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(st, dict) and ("device_type" in st or "counts" in st):
+        f = st.get("features")
+        return bool(isinstance(f, dict) and f.get("avize_extended"))
+    return None
 
 
 def disable_tracking() -> None:
@@ -243,8 +276,9 @@ def _has_open_op(conn, entity: str, uid: str, states=("pending", "conflict")) ->
 def _wire_to_local(conn, entity: str, data: Dict[str, Any]) -> Dict[str, Any]:
     sp, present = ents.ENTITIES[entity], set(_columns(conn, entity))
     values: Dict[str, Any] = {}
+    opt = ents.optional_cols(entity)
     for col, kind in sp["cols"].items():
-        if col not in present:
+        if col not in present or (col in opt and col not in data):      # server mai vechi: cheia lipsă = „necunoscut”, nu „gol” (valoarea locală se păstrează)
             continue
         value = ents.coerce(kind, data.get(col))
         values[col] = json.dumps(value) if kind == "j" else value
@@ -351,6 +385,9 @@ def _handle_result(op: Dict[str, Any], res: Dict[str, Any]) -> str:
     if status == "retry":
         _set_op_state(op["id"], "pending", str(res.get("reason") or "retry"))
         return "retry"
+    if status == "rejected" and res.get("reason") == "schema_incompatible":      # valorile nu se pierd: operațiunea rămâne în coadă până serverul are migrarea 028
+        _set_op_state(op["id"], "pending", "schema_incompatible: " + ", ".join(res.get("fields") or []))
+        return "retry"
     _set_op_state(op["id"], "error", str(res.get("reason") or "rejected"))
     return "error"
 
@@ -363,6 +400,8 @@ def flush_entities() -> Tuple[bool, List[str], Dict[str, int]]:
     enqueue_bootstrap()
     ops = sorted(pending_entity_ops(), key=_state_rank)
     lines: List[str] = []
+    ext_ok: List[Optional[bool]] = []
+    held = 0
     for start in range(0, len(ops), BATCH):
         chunk, wire_ops, by_op = ops[start:start + BATCH], [], {}
         conn = db.get_connection()
@@ -376,6 +415,14 @@ def flush_entities() -> Tuple[bool, List[str], Dict[str, int]]:
                     if row is None:       # rândul a dispărut între timp (ștergerea are propria operațiune)
                         cs._delete_op(op["id"])
                         continue
+                    if ents.optional_cols(op["entity"]) and ents.unsupported_values(op["entity"], row["data"], ()):
+                        if not ext_ok:
+                            ext_ok.append(_server_avize_ext())
+                        if ext_ok[0] is False:      # server mai vechi: nu trimitem (ar ignora câmpurile în tăcere); rămâne în coadă
+                            _set_op_state(op["id"], "pending", "server_incompatible_028")
+                            counts["retry"] += 1
+                            held += 1
+                            continue
                     wire_ops.append({"op_id": op["op_id"], "entity": op["entity"], "uid": op["entity_uid"],
                                      "action": "upsert", "base_version": row["version"], "data": row["data"]})
                 by_op[op["op_id"]] = op
@@ -399,6 +446,10 @@ def flush_entities() -> Tuple[bool, List[str], Dict[str, int]]:
             op = by_op.get(res.get("op_id"))
             if op is not None:
                 counts[_handle_result(op, res)] += 1
+                if res.get("status") == "rejected" and res.get("reason") == "schema_incompatible":
+                    held += 1
+    if held:
+        lines.append(f"{INCOMPAT_028} ({held} aviz(e) în așteptare)")
     if counts["sent"]:
         lines.append(f"Entități trimise: {counts['sent']} (confirmate {counts['applied']}, conflicte {counts['conflict']}, "
                      f"de reluat {counts['retry']}, erori {counts['error']})")
