@@ -8,6 +8,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 import cimitir_test_guard as _guard  # noqa: E402
 
 
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _modules_in(directory: Path) -> set:
+    return {f.stem for f in directory.glob("*.py")}
+
+
+COLLIDING_MODULES = sorted((_modules_in(_ROOT / "backend") | _modules_in(_ROOT / "backend" / "cimitir")) & _modules_in(_ROOT / "desktop"))   # același nume în backend/ și desktop/ (database, mobile_upload …)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _isolate_colliding_modules():
+    """Testele backend reîncarcă `server`/`database`/… din backend/; la finalul modulului se restaurează modulele și sys.path, ca testele desktop rulate după ele să vadă propriile module."""
+    saved_modules = {n: sys.modules[n] for n in COLLIDING_MODULES if n in sys.modules}
+    saved_path = list(sys.path)
+    try:
+        yield
+    finally:
+        for n in COLLIDING_MODULES:
+            if n in saved_modules:
+                sys.modules[n] = saved_modules[n]
+            else:
+                sys.modules.pop(n, None)
+        sys.path[:] = saved_path
+
+
 def pytest_configure(config):
     _guard.enforce_or_exit()
 
