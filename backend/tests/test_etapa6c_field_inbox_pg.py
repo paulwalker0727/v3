@@ -448,8 +448,10 @@ def test_production_is_hard_blocked(fw):
         fi.FieldInboxService(fw["cp"], type("M", (), {"storage": _S()})())
     with pytest.raises(RuntimeError):
         ccp.PostgresControlPlane(url="postgresql://cimitir_cp_app.txuxkjgftopznvmooexq:x@aws-0-eu.pooler.supabase.com:6543/postgres")
-    migs = [f.name for f in sorted(MIG.glob("*.sql"))]
-    assert migs[-5:] == ["015_field_storage.sql", "016_field_storage_cleanup.sql", "017_revoke_cleanup_role_membership.sql", "018_field_inbox.sql", "019_phone_pairing.sql"]
+    by_version = {int(f.name.split("_", 1)[0]): f.name for f in MIG.glob("*.sql")}
+    assert sorted(by_version) == list(range(1, max(by_version) + 1)), "migrările trebuie să fie numerotate continuu, fără goluri/duplicate"
+    for version, marker in ((15, "field_storage"), (16, "cleanup"), (17, "revoke_cleanup"), (18, "field_inbox"), (19, "phone_pairing")):
+        assert marker in by_version[version], (version, by_version.get(version))      # migrările Field Inbox/Pairing rămân la locul lor; cele noi doar se adaugă după 019
 
 
 # ===================================================================== 6. API HTTP (aceleași reguli, prin FastAPI)

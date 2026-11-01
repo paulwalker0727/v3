@@ -8,6 +8,7 @@ from test_field_import import add, loc, rows  # noqa: F401,I001
 from test_field_inbox_main import client, env, make_profile, qapp  # noqa: F401,I001
 import database as db  # noqa: E402
 import field_import as fim  # noqa: E402
+import field_import_history as fih  # noqa: E402  (la colectare, legat de același modul `database` ca `db`; nu la rulare)
 
 LEGACY_DDL = """
 CREATE TABLE locuri_de_veci (id INTEGER PRIMARY KEY AUTOINCREMENT, cod_loc TEXT UNIQUE NOT NULL);
@@ -160,9 +161,16 @@ def test_existing_identical_work_stays_idempotent_and_different_conflicts(env, l
 
 
 def test_cloud_migrations_untouched():
+    """Invariant: câmpurile native MAIN nu cer modificări distructive ale schemei cloud — migrările sunt continue și nu șterg/redenumesc nimic din amenajari_avize."""
+    import re
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    mig = sorted(os.listdir(os.path.join(root, "backend", "cimitir", "pg_migrations")))
-    assert not any(m.startswith("020") for m in mig)
+    mig_dir = os.path.join(root, "backend", "cimitir", "pg_migrations")
+    files = sorted(f for f in os.listdir(mig_dir) if f.endswith(".sql"))
+    versions = [int(f.split("_", 1)[0]) for f in files]
+    assert versions == list(range(1, len(versions) + 1)), "migrări continue, fără goluri sau duplicate"
+    destructive = re.compile(r"DROP\s+TABLE\s+(IF\s+EXISTS\s+)?amenajari_avize\b|ALTER\s+TABLE\s+(IF\s+EXISTS\s+)?amenajari_avize\s+(DROP|RENAME)\b", re.I)
+    offenders = [f for f in files if destructive.search(open(os.path.join(mig_dir, f), encoding="utf-8").read())]
+    assert offenders == []
 
 
 # ------------------------------------------------------------------ MAIN UI
@@ -180,7 +188,6 @@ def test_add_dialog_empty_start_date_stays_empty_and_values_roundtrip(qapp):
 
 
 def test_history_details_show_native_work_fields(env, loc):
-    import field_import_history as fih
     uid = add(env, loc, "WORK", payload={"descriere": "P", "data_inceput": "01.05.2026", "executant": "SC M"})
     fim.import_item(client(env), uid)
     d = fih.local_details(uid)

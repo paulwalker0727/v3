@@ -17,6 +17,23 @@ pytestmark = pytest.mark.skipif(not ADMIN or urlparse(ADMIN).hostname not in ("1
 REG = ("locuri_de_veci", "concesionari", "contracte", "inhumati", "plati", "amenajari_avize")
 
 
+ROLL_027 = Path(__file__).resolve().parents[1] / "cimitir" / "pg_rollbacks" / "027_mobile_permissions_matrix_ROLLBACK.sql"
+
+
+def _version(path: Path) -> int:
+    return int(path.name.split("_", 1)[0])
+
+
+def _apply(c, lo=1, upto=None):
+    """Aplică migrările lo..upto în ordinea numerică (upto=None: toate)."""
+    done = []
+    for f in sorted(MIG.glob("*.sql"), key=_version):
+        if _version(f) >= lo and (upto is None or _version(f) <= upto):
+            c.execute(f.read_text(encoding="utf-8"))
+            done.append(_version(f))
+    return done
+
+
 def _dsn(db, user=None):
     u = urlparse(ADMIN)
     return u._replace(path="/" + db, netloc=f"{user or u.username}@{u.hostname}:{u.port}").geturl()
@@ -33,9 +50,7 @@ def pre022():
     with psycopg.connect(_dsn(name), autocommit=True) as c:
         c.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated")     # simulează Supabase
         c.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated")
-        for f in sorted(MIG.glob("*.sql")):
-            if not f.name.startswith("022"):
-                c.execute(f.read_text(encoding="utf-8"))
+        _apply(c, upto=21)                          # starea reală de dinainte de 022; 023+ depind de 022 (ex. 027 modifică sync_v2_permissions) și se aplică în teste, după 022
     yield {"name": name, "admin": _dsn(name), "app": _dsn(name, "cimitir_cp_app")}
     with psycopg.connect(ADMIN, autocommit=True) as c:
         c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
@@ -159,3 +174,39 @@ def test_rollback_refuses_when_backup_missing(pre022):
             c.execute(ROLL.read_text(encoding="utf-8"))
         c.execute("ROLLBACK")
         assert c.execute("SELECT has_table_privilege('cimitir_cp_app','inhumati','DELETE')").fetchone()[0]    # nimic modificat de rollback eșuat
+
+
+def test_migrations_are_contiguous_and_have_a_rollback_for_each_destructive_step():
+    versions = [_version(f) for f in MIG.glob("*.sql")]
+    assert sorted(versions) == list(range(1, max(versions) + 1)), "numerotarea migrărilor trebuie să fie continuă, fără goluri sau duplicate"
+    assert ROLL.exists() and ROLL_027.exists()
+
+
+def test_027_requires_022_and_chain_022_to_latest_applies_in_order(pre022):
+    last = max(_version(f) for f in MIG.glob("*.sql"))
+    with psycopg.connect(pre022["admin"], autocommit=True) as c:
+        assert not _has(c, "sync_v2_permissions")
+        with pytest.raises(psycopg.errors.UndefinedTable):                   # dependența reală: 027 fără 022 trebuie să eșueze explicit
+            c.execute((MIG / "027_mobile_permissions_matrix.sql").read_text(encoding="utf-8"))
+        applied = _apply(c, lo=22)
+        assert applied == list(range(22, last + 1))
+        for t in ("sync_v2_permissions", "sync_v2_profiles", "sync_v2_audit", "sync_v2_issued", "sync_v2_ops"):
+            assert _has(c, t), t
+        assert c.execute("SELECT count(*) FROM information_schema.columns WHERE table_name='sync_v2_permissions' AND column_name='detail'").fetchone()[0] == 1
+        again = _apply(c, lo=22)                                             # a doua trecere (022..ultima): migrările aditive rămân repetabile
+        assert again == applied
+        assert c.execute("SELECT count(*) FROM sync_v2_migration_backup WHERE batch='pre-022' AND kind='fingerprint'").fetchone()[0] == 1
+
+
+def test_rollback_chain_027_then_022_restores_pre022_state_and_keeps_data(pre022):
+    with psycopg.connect(pre022["admin"], autocommit=True) as c:
+        seed(c)
+        n_before = c.execute("SELECT count(*) FROM locuri_de_veci").fetchone()[0]
+        snap0 = snapshot(c)
+        _apply(c, lo=22)
+        assert snapshot(c) != snap0
+        c.execute(ROLL_027.read_text(encoding="utf-8"))                      # ordinea inversă: întâi 027, apoi 022
+        c.execute(ROLL.read_text(encoding="utf-8"))
+        assert snapshot(c) == snap0
+        assert c.execute("SELECT count(*) FROM locuri_de_veci").fetchone()[0] == n_before
+        assert _has(c, "sync_v2_permissions")                                 # jurnalele rămân (rollback nedistructiv)

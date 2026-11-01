@@ -31,11 +31,21 @@ OPEN_ADMIN_PATHS = {"/admin/access", "/admin/access/login", "/admin/logout"}
 INFRA_PATHS = {"/", "/api/health", "/static", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect", "/public/loc/{cod_loc}"}  # ultima: redirect pentru QR-urile tipărite
 
 
+def _colliding_modules():
+    names = lambda d: {f.stem for f in d.glob("*.py")}  # noqa: E731
+    return sorted((names(BACKEND_DIR) | names(BACKEND_DIR / "cimitir")) & names(DESKTOP_DIR))
+
+
 def _clear_modules():
+    COLLIDING_MODULES = _colliding_modules()
     for name in ["server", "store", "database", "auth", "web_public", "mongo_store",
                  "cimitir_config", "cimitir_database", "cimitir_auth", "cimitir_public", "sync_api",
-                 "cimitir_notify", "cimitir_requests", "citizen_api"]:
+                 "cimitir_notify", "cimitir_requests", "citizen_api", *COLLIDING_MODULES]:
         sys.modules.pop(name, None)
+    for p in (str(BACKEND_DIR / "cimitir"), str(BACKEND_DIR)):      # modulele backend au prioritate față de homonimele din desktop/ (mobile_upload, database …)
+        if p in sys.path:
+            sys.path.remove(p)
+        sys.path.insert(0, p)
 
 
 def _load_server(data_dir: Path):
