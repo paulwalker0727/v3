@@ -353,6 +353,13 @@ class SyncV2Service:
         finally:
             c.close()
 
+    @staticmethod
+    def _journal_safe(result: Dict[str, Any]) -> Dict[str, Any]:
+        """Jurnalul operațiilor (răspunsul memorat pentru reluare) nu păstrează CNP/serie CI în clar; starea completă pentru rezolvarea conflictelor rămâne în `sync_v2_conflicts` (doar MAIN)."""
+        if isinstance(result.get("server"), dict) and result.get("entity"):
+            return {**result, "server": redact_wire(result["entity"], result["server"])}
+        return result
+
     def _process(self, c, a, raw: Any, editable: set) -> Dict[str, Any]:
         try:
             op = self._validate(raw)
@@ -367,13 +374,15 @@ class SyncV2Service:
             try:
                 result = self._decide(c, a, op, editable)
                 result.update(op_id=op["op_id"], entity=op["entity"], uid=op["uid"])
+                if op.get("_ignored") and result["status"] == "applied":
+                    result["ignored_fields"] = op["_ignored"]
                 if a["device_type"] != "MAIN" and isinstance(result.get("server"), dict):
                     result["server"] = drop_wire(result["server"], hidden_for(c, a, op["entity"]))     # răspunsul (și jurnalul) pentru telefon nu conțin date ascunse/sensibile
                 if result["status"] in ("applied", "conflict") or (result["status"] == "rejected" and result.get("reason") not in UNRECORDED):
                     c.execute("INSERT INTO sync_v2_ops (op_id,organization_uid,cemetery_uid,binding_uid,device_type,entity,entity_uid,action,base_version,status,new_version,reason,response) "
                               "VALUES (?,CAST(? AS uuid),CAST(? AS uuid),CAST(? AS uuid),?,?,?,?,?,?,?,?,CAST(? AS jsonb))",
                               (op["op_id"], *sc, a["binding_uid"], a["device_type"], op["entity"], op["uid"], op["action"], op["base_version"], result["status"],
-                               result.get("version"), result.get("reason"), json.dumps(result, default=str)))
+                               result.get("version"), result.get("reason"), json.dumps(self._journal_safe(result), default=str)))
                 c.execute("COMMIT")
             except BaseException:
                 c.execute("ROLLBACK")
@@ -456,7 +465,10 @@ class SyncV2Service:
         self._check_data(entity, op["data"])
         data = ents.clean_data(entity, op["data"])
         if not is_main:
-            for col in hidden_for(c, a, entity):      # telefonul nu poate citi/scrie coloanele ascunse (sensibile, poligon fără „Vede hartă"): se păstrează valoarea din server
+            hid = hidden_for(c, a, entity)
+            op["_ignored"] = [col for col in SENSITIVE.get(entity, ())      # contract păstrat: valoarea se ignoră, dar NU în tăcere — răspunsul listează câmpurile ignorate
+                              if col in hid and (data.get(col) or "").strip() and (data.get(col) or "").strip() != ((server["data"].get(col) if server else None) or "").strip()]
+            for col in hid:      # telefonul nu poate citi/scrie coloanele ascunse (sensibile, poligon fără „Vede hartă"): se păstrează valoarea din server
                 data[col] = server["data"].get(col) if server else None
             why = mp.authorize_write(matrix, entity, "update" if existing is not None else "insert", server["data"] if server else None, data)
             if why:

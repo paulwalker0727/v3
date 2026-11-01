@@ -1,4 +1,4 @@
-const CACHE = 'cimitir-mobile-shell-v7';
+const CACHE = 'cimitir-mobile-shell-v8';
 const SHELL = [
   '/mobile/',
   '/mobile/manifest.webmanifest',
