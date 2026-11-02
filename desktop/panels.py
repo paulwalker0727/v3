@@ -223,8 +223,9 @@ class PhotoGallery(QWidget):
 class AddAvizDialog(QDialog):
     def __init__(self, parent=None, existing: Optional[Dict] = None):
         super().__init__(parent)
-        self.setWindowTitle("Adaugă aviz construcție")
-        self.setMinimumSize(420, 180)
+        self._is_edit = bool(existing)
+        self.setWindowTitle("Editează aviz" if self._is_edit else "Adaugă aviz construcție")
+        self.setMinimumSize(440, 320)
         layout = QVBoxLayout()
         form = QFormLayout()
 
@@ -244,6 +245,24 @@ class AddAvizDialog(QDialog):
         self.date_inceput.setSpecialValueText("—")
         self.date_inceput.setDate(self.date_inceput.minimumDate())
 
+        # stare lucrare (migrarea 028): planificată / în lucru / finalizată, sau nespecificată
+        self.cmb_stare = QComboBox()
+        self.cmb_stare.addItem("Nespecificată", "")
+        for key, label in wd.STARI.items():
+            self.cmb_stare.addItem(label, key)
+
+        # data finalizării (migrarea 028)
+        self.date_finalizare = QDateEdit()
+        self.date_finalizare.setDisplayFormat("dd.MM.yyyy")
+        self.date_finalizare.setCalendarPopup(True)
+        self.date_finalizare.setMinimumDate(QDate(1900, 1, 1))
+        self.date_finalizare.setSpecialValueText("—")
+        self.date_finalizare.setDate(self.date_finalizare.minimumDate())
+
+        # observații (migrarea 028)
+        self.txt_observatii = QTextEdit()
+        self.txt_observatii.setMaximumHeight(70)
+
         # selectare fotografie pentru aviz
         photo_row = QHBoxLayout()
         self.lbl_photo_selected = QLabel("Nicio fotografie selectată")
@@ -256,12 +275,15 @@ class AddAvizDialog(QDialog):
         form.addRow("Lucrare efectuată:", self.txt_lucrare)
         form.addRow("Executant:", self.txt_executant)
         form.addRow("Data început:", self.date_inceput)
+        form.addRow("Stare lucrare:", self.cmb_stare)
+        form.addRow("Data finalizare:", self.date_finalizare)
+        form.addRow("Observații:", self.txt_observatii)
         form.addRow("Fotografie aviz:", photo_row)
 
         layout.addLayout(form)
 
         btns = QHBoxLayout()
-        self.btn_ok = QPushButton("Adaugă")
+        self.btn_ok = QPushButton("Salvează" if self._is_edit else "Adaugă")
         self.btn_cancel = QPushButton("Anulează")
         btns.addStretch()
         btns.addWidget(self.btn_ok)
@@ -287,6 +309,17 @@ class AddAvizDialog(QDialog):
             _pi = _cd.parse_date(existing.get("data_inceput", ""))
             if _pi is not None:
                 self.date_inceput.setDate(QDate(_pi.year, _pi.month, _pi.day))
+            _pf = _cd.parse_date(existing.get("data_finalizare", ""))
+            if _pf is not None:
+                self.date_finalizare.setDate(QDate(_pf.year, _pf.month, _pf.day))
+            stare_existing = str(existing.get("stare", "") or "")
+            idx = self.cmb_stare.findData(stare_existing)
+            if idx < 0 and stare_existing:
+                self.cmb_stare.addItem(stare_existing, stare_existing)
+                idx = self.cmb_stare.count() - 1
+            if idx >= 0:
+                self.cmb_stare.setCurrentIndex(idx)
+            self.txt_observatii.setPlainText(str(existing.get("observatii", "") or ""))
             p = existing.get("photo", "") or existing.get("photo_path", "")
             if p:
                 self._photo_path = p
@@ -307,8 +340,17 @@ class AddAvizDialog(QDialog):
             show_message(self, "Eroare", "Completați numărul avizului.", level="warning")
             return
         start = "" if self.date_inceput.date() == self.date_inceput.minimumDate() else self.date_inceput.date().toString("dd.MM.yyyy")
+        final = "" if self.date_finalizare.date() == self.date_finalizare.minimumDate() else self.date_finalizare.date().toString("dd.MM.yyyy")
+        stare = self.cmb_stare.currentData() or ""
+        if stare == "finalizata" and not final:
+            show_message(self, "Eroare", "Completați data finalizării pentru o lucrare finalizată.", level="warning")
+            return
+        if start and final and self.date_finalizare.date() < self.date_inceput.date():
+            show_message(self, "Eroare", "Data finalizării nu poate fi înaintea datei de început.", level="warning")
+            return
         self._result = {"nr": nr, "data": d, "lucrare": lucrare, "photo": self._photo_path,
-                        "executant": self.txt_executant.text().strip(), "data_inceput": start}
+                        "executant": self.txt_executant.text().strip(), "data_inceput": start,
+                        "stare": stare, "data_finalizare": final, "observatii": self.txt_observatii.toPlainText().strip()}
         self.accept()
 
     def get_result(self) -> Optional[Dict]:
@@ -1037,8 +1079,10 @@ class RightPanel(QWidget):
         v = QVBoxLayout()
         top = QHBoxLayout()
         self.btn_add_aviz = QPushButton("Adaugă aviz")
+        self.btn_edit_aviz = QPushButton("Editează aviz")
         self.btn_remove_aviz = QPushButton("Șterge aviz selectat")
         top.addWidget(self.btn_add_aviz)
+        top.addWidget(self.btn_edit_aviz)
         top.addWidget(self.btn_remove_aviz)
         top.addStretch()
         v.addLayout(top)
@@ -1070,10 +1114,12 @@ class RightPanel(QWidget):
 
         # Connect actions
         self.btn_add_aviz.clicked.connect(self._add_aviz)
+        self.btn_edit_aviz.clicked.connect(self._edit_aviz)
         self.btn_remove_aviz.clicked.connect(self._remove_selected_aviz)
 
         # initial state
         self.btn_add_aviz.setEnabled(True)
+        self.btn_edit_aviz.setEnabled(False)
         self.btn_remove_aviz.setEnabled(False)
 
         # enable remove button when a row is selected (and editing enabled)
@@ -1085,6 +1131,7 @@ class RightPanel(QWidget):
 
     def _on_aviz_selection_changed(self):
         sel = self.tbl_avize.selectedItems()
+        self.btn_edit_aviz.setEnabled(bool(sel) and self._editing_enabled)
         self.btn_remove_aviz.setEnabled(bool(sel) and self._editing_enabled)
         # actualizează doc strip pentru avizul selectat
         try:
@@ -1478,6 +1525,8 @@ class RightPanel(QWidget):
         self.cmb_concesionar.setEnabled(enabled)
         # Avize: allow adding always, deletion only in edit mode
         self.btn_add_aviz.setEnabled(True)
+        has_aviz_selection = self.tbl_avize.currentRow() >= 0
+        self.btn_edit_aviz.setEnabled(enabled and has_aviz_selection)
         self.btn_remove_aviz.setEnabled(enabled and self.tbl_avize.rowCount() > 0)
         # Plăți: adăugare mereu permisă, ștergere doar în mod editare
         try:
@@ -1606,6 +1655,68 @@ class RightPanel(QWidget):
         except Exception:
             avize = []
         self._populate_avize_table(avize)
+        self._load_istoric()
+
+    def _edit_aviz(self):
+        row = self.tbl_avize.currentRow()
+        if row < 0:
+            show_message(self, "Info", "Selectați un aviz pentru editare.")
+            return
+        nr_item = self.tbl_avize.item(row, 0)
+        aid = nr_item.data(Qt.UserRole) if nr_item else None
+        if aid is None:
+            show_message(self, "Eroare", "Nu am putut identifica avizul selectat.", level="warning")
+            return
+        try:
+            existing = db.get_aviz(int(aid))
+        except Exception as e:
+            show_message(self, "Eroare", f"Nu am putut încărca avizul: {e}", level="error")
+            return
+        if not existing:
+            show_message(self, "Eroare", "Avizul nu a mai fost găsit (poate a fost șters între timp).", level="warning")
+            return
+        # fotografia deja atașată avizului (dacă există), ca să nu fie dublată la salvare
+        try:
+            docs = db.list_documents("aviz", int(aid), "foto_lucrare") or []
+            if docs:
+                existing["photo"] = docs[-1].get("file_path", "")
+        except Exception:
+            pass
+        dlg = AddAvizDialog(self, existing=existing)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        res = dlg.get_result()
+        if not res:
+            return
+        fields = {"nr": res.get("nr", ""), "data": res.get("data", ""), "lucrare": res.get("lucrare", ""),
+                  "executant": res.get("executant", ""), "data_inceput": res.get("data_inceput", ""),
+                  "stare": res.get("stare", ""), "data_finalizare": res.get("data_finalizare", ""),
+                  "observatii": res.get("observatii", "")}
+        try:
+            ok = db.update_aviz(int(aid), fields)
+        except Exception as e:
+            show_message(self, "Eroare", f"Nu am putut salva modificările: {e}", level="error")
+            return
+        if not ok:
+            show_message(self, "Eroare", "Salvarea modificărilor a eșuat.", level="warning")
+            return
+        # fotografie nouă aleasă (diferită de cea existentă) -> salvată ca document nou, fără duplicare
+        photo = res.get("photo")
+        if photo and photo != existing.get("photo"):
+            try:
+                db.add_document("aviz", int(aid), "foto_lucrare", photo, caption=res.get("lucrare", ""))
+            except Exception as e:
+                show_message(self, "Atenție", f"Avizul s-a actualizat, dar nu am putut salva fotografia: {e}", level="warning")
+        # reîncarcă tabelul din DB (fără duplicate: aceeași înregistrare, doar actualizată)
+        try:
+            avize = db.list_avize_for_loc(self.current_cod_loc) or []
+        except Exception:
+            avize = []
+        self._populate_avize_table(avize)
+        try:
+            self.doc_strip_aviz.set_entity("aviz", int(aid))
+        except Exception:
+            pass
         self._load_istoric()
 
     def _remove_selected_aviz(self):
