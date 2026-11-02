@@ -262,15 +262,26 @@ def _burials_elems(inhumati: list, ss) -> list:
     return elems
 
 
+_STARE_LUCRARE_LABEL = {"planificata": "Planificată", "in_lucru": "În lucru", "finalizata": "Finalizată"}
+
+
+def _stare_label(a: dict) -> str:
+    s = str(a.get("stare") or "").strip()
+    return _STARE_LUCRARE_LABEL.get(s, s) if s else "—"
+
+
 def _notices_elems(avize: list, ss) -> list:
     elems = _section(f"Lucrări efectuate / Avize ({len(avize)})", ss)
     if not avize:
         return elems + [Paragraph("Nicio lucrare / aviz.", ss["Cell"])]
     elems.append(_grid_table(
-        ["Nr. aviz", "Data", "Lucrare"],
-        [[a.get("nr"), a.get("data"), a.get("lucrare")] for a in avize],
-        ss, col_widths=[30 * mm, 30 * mm, 110 * mm]))
+        ["Nr. aviz", "Data", "Lucrare", "Stare", "Executant", "Început", "Finalizat"],
+        [[a.get("nr"), a.get("data"), a.get("lucrare"), _stare_label(a), a.get("executant"),
+          a.get("data_inceput"), a.get("data_finalizare")] for a in avize],
+        ss, col_widths=[18 * mm, 18 * mm, 40 * mm, 18 * mm, 28 * mm, 16 * mm, 16 * mm]))
     for a in avize:
+        if a.get("observatii"):
+            elems.append(Paragraph(f"<b>Observații (aviz {a.get('nr') or a['id']}):</b> {a['observatii']}", ss["Cell"]))
         _add_documents(elems, db.list_documents("aviz", a["id"]), ss,
                        f"Documente aviz {a.get('nr') or a['id']}")
     return elems
