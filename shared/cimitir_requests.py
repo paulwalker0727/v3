@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 import cimitir_db_router as db
 import cimitir_public
+import cimitir_redact
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_DOCS_PER_REQUEST = 10
@@ -29,6 +30,7 @@ class ApprovalError(Exception):
 
 
 def audit(actor_type: str, actor: str, action: str, target: str = "", detail: str = "") -> None:
+    target, detail = cimitir_redact.redact_text(target), cimitir_redact.redact_detail(detail)     # F-02: fără CNP/CI în jurnal (mesaje de eroare, JSON, text liber)
     conn = db.get_connection()
     try:
         conn.execute("INSERT INTO audit_log (ts, actor_type, actor, action, target, detail) VALUES (?,?,?,?,?,?)",

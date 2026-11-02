@@ -16,71 +16,18 @@ Documente:
 from typing import Optional, Dict, List
 import os
 
-from PySide6.QtCore import QDate, QUrl, Qt
+from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLineEdit, QTextEdit, QPushButton, QComboBox, QMessageBox, QDateEdit,
+    QLineEdit, QTextEdit, QPushButton, QComboBox, QMessageBox,
     QFileDialog, QLabel, QWidget, QGroupBox, QScrollArea, QFrame,
 )
 
 import database as db
 
 
-BLANK_DATE = QDate(1800, 1, 1)  # valoare internă „fără dată”; NU se salvează niciodată
-_DATE_FORMATS = ("dd.MM.yyyy", "ddMMyyyy", "yyyy-MM-dd")
-
-
-class OptionalDateEdit(QDateEdit):
-    """QDateEdit care poate reprezenta „fără dată”. `value_str()` întoarce "" când nu există dată (niciodată sentinelul)."""
-
-    def __init__(self):
-        super().__init__()
-        self.setDisplayFormat("dd.MM.yyyy")
-        self.setCalendarPopup(True)
-        self.setMinimumDate(BLANK_DATE)
-        self.setSpecialValueText("fără dată")
-        self._raw = ""
-        self.set_blank()
-        self.dateChanged.connect(self._on_user_change)
-
-    def _on_user_change(self, _d):
-        self._raw = ""
-        self.setSpecialValueText("fără dată")
-
-    def is_blank(self) -> bool:
-        return self.date() == BLANK_DATE
-
-    def set_blank(self):
-        self._raw = ""
-        self.setSpecialValueText("fără dată")
-        self.setDate(BLANK_DATE)
-
-    def set_from_text(self, value):
-        """Setează din textul din DB; un text nerecunoscut e păstrat neschimbat (nu se pierde la Save)."""
-        value = str(value or "").strip()
-        if not value:
-            self.set_blank()
-            return
-        for fmt in _DATE_FORMATS:
-            d = QDate.fromString(value, fmt)
-            if d.isValid() and d > BLANK_DATE:
-                self.setDate(d)
-                return
-        self.set_blank()
-        self._raw = value
-        self.setSpecialValueText(value)
-
-    def value_str(self) -> str:
-        if self.is_blank():
-            return self._raw
-        return self.date().toString("dd.MM.yyyy")
-
-    def keyPressEvent(self, event):
-        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and (event.modifiers() & Qt.ControlModifier or self.is_blank()):
-            self.set_blank()
-            return
-        super().keyPressEvent(event)
+from optional_date_edit import BLANK_DATE, OptionalDateEdit  # noqa: E402,F401
 
 
 def _date_row(edit: OptionalDateEdit) -> QWidget:

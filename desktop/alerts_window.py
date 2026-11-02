@@ -68,7 +68,7 @@ class AlertsWindow(QDialog):
             exp = _pick(r, r.get("_date_col", ""), "data_sfarsit", "data_expirare")
             stare = "activ"
             try:
-                d = datetime.date.fromisoformat(str(exp)[:10])
+                d = datetime.date.fromisoformat(str(r.get("_expira") or exp)[:10])      # F-03: `_expira` este ISO chiar și pentru contractele create în MAIN (zz.ll.aaaa)
                 if d < today:
                     stare = "EXPIRAT"
                     expired_n += 1

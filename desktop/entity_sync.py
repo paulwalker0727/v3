@@ -27,6 +27,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+import cimitir_dates as dates
 import cimitir_entities as ents
 import cloud_sync as cs
 import database as db
@@ -273,14 +274,18 @@ def _has_open_op(conn, entity: str, uid: str, states=("pending", "conflict")) ->
                         f"AND COALESCE(state,'pending') IN ({marks})", (entity, uid, *states)).fetchone() is not None
 
 
-def _wire_to_local(conn, entity: str, data: Dict[str, Any]) -> Dict[str, Any]:
+def _wire_to_local(conn, entity: str, data: Dict[str, Any], existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     sp, present = ents.ENTITIES[entity], set(_columns(conn, entity))
     values: Dict[str, Any] = {}
     opt = ents.optional_cols(entity)
+    date_cols = set(ents.date_cols(entity))
+    existing = existing or {}
     for col, kind in sp["cols"].items():
         if col not in present or (col in opt and col not in data):      # server mai vechi: cheia lipsă = „necunoscut”, nu „gol” (valoarea locală se păstrează)
             continue
         value = ents.coerce(kind, data.get(col))
+        if col in date_cols:      # ISO din Cloud -> zz.ll.aaaa (MAIN); aceeași zi deja stocată local rămâne neschimbată; nerecunoscut/gol -> neschimbat
+            value = dates.for_local(existing.get(col), value)
         values[col] = json.dumps(value) if kind == "j" else value
     for col, (parent, wire) in sp["fks"].items():
         if col in present:
@@ -296,7 +301,8 @@ def _apply_remote(conn, entity: str, change: Dict[str, Any], respect_pending: bo
     if change.get("deleted"):
         conn.execute(f"DELETE FROM {entity} WHERE uid=?", (uid,))
         return "deleted"
-    values = _wire_to_local(conn, entity, change.get("data") or {})
+    prev = conn.execute(f"SELECT * FROM {entity} WHERE uid=?", (uid,)).fetchone()
+    values = _wire_to_local(conn, entity, change.get("data") or {}, dict(prev) if prev is not None else None)
     stamp = change.get("updated_at")
     row = conn.execute(f"SELECT id, COALESCE(version,0) AS version FROM {entity} WHERE uid=?", (uid,)).fetchone()
     if row is None:
@@ -335,7 +341,7 @@ def _read_wire(conn, entity: str, uid: str) -> Optional[Dict[str, Any]]:
     data = {c: (ents.coerce("j", d[c]) if sp["cols"][c] == "j" else d[c]) for c in cols}
     for wire in ents.fk_wire_names(entity):
         data[wire] = d.get(wire)
-    return {"version": int(d["_version"]), "data": data}
+    return {"version": int(d["_version"]), "data": ents.canon_dates(entity, data)}
 
 
 def _state_rank(op: Dict[str, Any]) -> Tuple[int, int, int]:

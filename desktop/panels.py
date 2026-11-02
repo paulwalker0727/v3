@@ -37,6 +37,7 @@ from PySide6.QtGui import QPixmap
 
 from ui_utils import show_message, ask_confirmation, ask_text_input
 import database as db
+import cimitir_dates as _cd
 import work_details as wd
 
 # -------------------------
@@ -278,16 +279,14 @@ class AddAvizDialog(QDialog):
         # populate if existing
         if existing:
             self.txt_nr.setText(str(existing.get("nr", "") or ""))
-            d = existing.get("data", "")
-            if d:
-                qd = QDate.fromString(d, "dd.MM.yyyy")
-                if qd.isValid():
-                    self.date_aviz.setDate(qd)
+            _pd = _cd.parse_date(existing.get("data", ""))
+            if _pd is not None:
+                self.date_aviz.setDate(QDate(_pd.year, _pd.month, _pd.day))
             self.txt_lucrare.setText(str(existing.get("lucrare", "") or ""))
             self.txt_executant.setText(str(existing.get("executant", "") or ""))
-            qi = QDate.fromString(str(existing.get("data_inceput", "") or ""), "dd.MM.yyyy")
-            if qi.isValid():
-                self.date_inceput.setDate(qi)
+            _pi = _cd.parse_date(existing.get("data_inceput", ""))
+            if _pi is not None:
+                self.date_inceput.setDate(QDate(_pi.year, _pi.month, _pi.day))
             p = existing.get("photo", "") or existing.get("photo_path", "")
             if p:
                 self._photo_path = p
