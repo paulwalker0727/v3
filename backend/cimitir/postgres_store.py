@@ -20,10 +20,11 @@ import os
 import sys
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import cimitir_dates as _dates
 import pg_compat
 from pg_compat import get_pool, close_pool  # noqa: F401  (re-export)
 
@@ -880,20 +881,25 @@ def total_plati(cod_loc: Optional[str] = None) -> float:
 
 
 def expiring_contracts(days: int = 30) -> List[Dict[str, Any]]:
-    """Contracte cu `data_sfarsit` (ISO yyyy-mm-dd) în următoarele `days` zile sau deja expirate."""
+    """Contracte cu `data_sfarsit` (zz.ll.aaaa sau aaaa-ll-zz) în următoarele `days` zile (inclusiv azi) sau deja expirate (F-03).
+    Filtrarea pe zi se face în Python: o cast `::date` ar eșua pe tot setul la prima valoare neinterpretabilă. Valorile goale/neinterpretabile nu se ghicesc."""
     try:
+        limit = date.today() + timedelta(days=int(days))
         with _db() as conn:
-            rows = conn.execute(
-                "SELECT * FROM contracte WHERE cemetery_uid = app_default_cemetery_uid() AND data_sfarsit ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' "
-                "AND substr(data_sfarsit, 1, 10)::date <= (current_date + ?::int) ORDER BY data_sfarsit ASC",
-                (int(days),)).fetchall()
-            out = []
-            for r in rows:
-                d = _plain(r)
-                d["_date_col"] = "data_sfarsit"
-                d["_expira"] = d.get("data_sfarsit")
-                out.append(d)
-            return out
+            rows = conn.execute("SELECT * FROM contracte WHERE cemetery_uid = app_default_cemetery_uid() "
+                                "AND data_sfarsit IS NOT NULL AND btrim(data_sfarsit) <> ''").fetchall()
+        found = []
+        for r in rows:
+            d = _plain(r)
+            when = _dates.parse_date(d.get("data_sfarsit"), allow_time=True)
+            if when is None or when > limit:
+                continue
+            d["_date_col"] = "data_sfarsit"
+            d["_expira_raw"] = d.get("data_sfarsit")
+            d["_expira"] = when.isoformat()
+            found.append((when, d.get("id") or 0, d))
+        found.sort(key=lambda t: (t[0], t[1]))
+        return [t[2] for t in found]
     except Exception as e:
         print(f"[PG ERROR expiring_contracts] {e}")
         return []

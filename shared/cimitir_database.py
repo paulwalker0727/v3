@@ -17,7 +17,7 @@ import os
 import json
 import shutil
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 # -----------------------------------------------------------------------------
 # CALE DB — o singură sursă: cimitir_config (CIMITIR_DATA_DIR / .env)
@@ -27,6 +27,7 @@ _SELF_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SELF_DIR not in _sys.path:
     _sys.path.insert(0, _SELF_DIR)
 import cimitir_config as _config
+import cimitir_dates as _dates
 
 
 def _resolve_data_dir() -> str:
@@ -1419,7 +1420,8 @@ def total_plati(cod_loc: Optional[str] = None) -> float:
 
 
 def expiring_contracts(days: int = 30) -> List[Dict[str, Any]]:
-    """Contracte a căror dată de sfârșit e în următoarele `days` zile sau deja expirate."""
+    """Contracte a căror dată de sfârșit (zz.ll.aaaa sau aaaa-ll-zz) este în următoarele `days` zile (inclusiv azi) sau deja expirată.
+    `_expira` = ziua în ISO (aaaa-ll-zz); `_expira_raw` = textul original din bază."""
     conn = get_connection()
     try:
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(contracte)").fetchall()]
@@ -1430,18 +1432,21 @@ def expiring_contracts(days: int = 30) -> List[Dict[str, Any]]:
                 break
         if not date_col:
             return []
-        rows = conn.execute(
-            f"SELECT * FROM contracte WHERE {date_col} IS NOT NULL AND {date_col} != '' "
-            f"AND date({date_col}) <= date('now', '+{int(days)} days') "
-            f"ORDER BY {date_col} ASC"
-        ).fetchall()
-        out = []
-        for r in rows:
+        # F-03: MAIN scrie zz.ll.aaaa, Cloud/Mobile aaaa-ll-zz; `date()` din SQLite înțelege doar ISO, deci filtrarea se face aici, pe data interpretată.
+        # Datele goale/neinterpretabile nu se ghicesc (nu apar în raport) și nu se modifică în bază.
+        limit = date.today() + timedelta(days=int(days))
+        found = []
+        for r in conn.execute(f"SELECT * FROM contracte WHERE {date_col} IS NOT NULL AND TRIM({date_col}) != ''").fetchall():
             d = dict(r)
+            when = _dates.parse_date(d.get(date_col), allow_time=True)
+            if when is None or when > limit:
+                continue
             d["_date_col"] = date_col
-            d["_expira"] = d.get(date_col)
-            out.append(d)
-        return out
+            d["_expira_raw"] = d.get(date_col)
+            d["_expira"] = when.isoformat()
+            found.append((when, d.get("id") or 0, d))
+        found.sort(key=lambda t: (t[0], t[1]))
+        return [t[2] for t in found]
     except Exception as e:
         print(f"[DB ERROR expiring_contracts] {e}")
         return []
