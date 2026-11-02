@@ -23,6 +23,7 @@ import psycopg
 
 import cimitir_cloud_control as cc
 import cimitir_entities as ents
+import cimitir_redact
 import cimitir_mobile_perms as mp
 
 MAX_OPS = 200
@@ -171,6 +172,7 @@ def _wire(entity: str, row, hidden: set = frozenset()) -> Dict[str, Any]:
     data = {c: (ents.coerce("j", d[c]) if kind == "j" else _jsonable(d[c])) for c, kind in sp["cols"].items() if c in d}
     for w in ents.fk_wire_names(entity):
         data[w] = d.get(w)
+    data = ents.canon_dates(entity, data)        # formatul canonic pe fir este ISO; stocarea veche (zz.ll.aaaa) nu se modifică
     w = {"uid": d["uid"], "version": int(d["version"] or 0), "seq": int(d["change_seq"] or 0),
          "updated_at": _jsonable(d["modified_at"]), "deleted": False, "data": data}
     return drop_wire(w, set(hidden))
@@ -711,7 +713,7 @@ class SyncV2Service:
     def _audit(self, c, a, kind: str, entity: Optional[str], uid: Optional[str], detail: Dict[str, Any]) -> None:
         c.execute("INSERT INTO sync_v2_audit (organization_uid,cemetery_uid,binding_uid,device_type,kind,entity,entity_uid,detail) "
                   "VALUES (CAST(? AS uuid),CAST(? AS uuid),CAST(? AS uuid),?,?,?,?,CAST(? AS jsonb))",
-                  (*self._scope(a), a["binding_uid"], a["device_type"], kind, entity, uid, json.dumps(detail, default=str)))
+                  (*self._scope(a), a["binding_uid"], a["device_type"], kind, entity, uid, json.dumps(cimitir_redact.redact_obj(detail), default=str)))      # F-02: fără CNP/CI în jurnal
 
     def _audit_safe(self, c, a, kind, entity, uid, detail) -> None:
         try:

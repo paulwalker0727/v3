@@ -2,11 +2,13 @@
 from typing import Optional, Dict, List, Any
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QLineEdit, QDateEdit, QTableWidget, QTableWidgetItem,
+    QLineEdit, QTableWidget, QTableWidgetItem,
     QFormLayout, QMessageBox, QGroupBox, QWidget, QTextEdit,
     QComboBox, QCompleter, QAbstractItemView, QFileDialog
 )
 from PySide6.QtCore import Qt, QDate
+
+from optional_date_edit import OptionalDateEdit
 
 # încercăm să folosim adaptorul actions dacă este disponibil, altfel fallback la modul database
 try:
@@ -37,17 +39,9 @@ class AddContractDialog(QDialog):
 
         # date contract
         self.txt_numar = QLineEdit()
-        self.date_contract = QDateEdit()
-        self.date_contract.setDisplayFormat("dd.MM.yyyy")
-        self.date_contract.setCalendarPopup(True)
-
-        self.date_inceput = QDateEdit()
-        self.date_inceput.setDisplayFormat("dd.MM.yyyy")
-        self.date_inceput.setCalendarPopup(True)
-
-        self.date_sfarsit = QDateEdit()
-        self.date_sfarsit.setDisplayFormat("dd.MM.yyyy")
-        self.date_sfarsit.setCalendarPopup(True)
+        self.date_contract = OptionalDateEdit()
+        self.date_inceput = OptionalDateEdit()
+        self.date_sfarsit = OptionalDateEdit()
 
         # cod loc
         self.cmb_cod_loc = QComboBox()
@@ -290,16 +284,10 @@ class AddContractDialog(QDialog):
     def _populate(self, data: Dict):
         self.txt_numar.setText(data.get("numar_contract", ""))
 
-        def set_date(field, value):
-            if not value:
-                return
-            d = QDate.fromString(value, "dd.MM.yyyy")
-            if d.isValid():
-                field.setDate(d)
-
-        set_date(self.date_contract, data.get("data_contract", ""))
-        set_date(self.date_inceput, data.get("data_inceput", ""))
-        set_date(self.date_sfarsit, data.get("data_sfarsit", ""))
+        # F-01: acceptă zz.ll.aaaa, aaaa-ll-zz, zzllaaaa; gol rămâne gol; textul nerecunoscut se păstrează (nu devine data curentă)
+        self.date_contract.set_from_text(data.get("data_contract"))
+        self.date_inceput.set_from_text(data.get("data_inceput"))
+        self.date_sfarsit.set_from_text(data.get("data_sfarsit"))
 
         self.cmb_cod_loc.setCurrentText(data.get("cod_loc", ""))
 
@@ -361,9 +349,9 @@ class AddContractDialog(QDialog):
 
         return {
             "numar_contract": self.txt_numar.text().strip(),
-            "data_contract": self.date_contract.date().toString("dd.MM.yyyy"),
-            "data_inceput": self.date_inceput.date().toString("dd.MM.yyyy"),
-            "data_sfarsit": self.date_sfarsit.date().toString("dd.MM.yyyy"),
+            "data_contract": self.date_contract.value_str(),
+            "data_inceput": self.date_inceput.value_str(),
+            "data_sfarsit": self.date_sfarsit.value_str(),
             "cod_loc": cod_loc_val,
             "concesionar_id": concesionar_id,
             "observatii": self.txt_observatii.toPlainText().strip(),

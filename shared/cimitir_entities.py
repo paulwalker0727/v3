@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
+import cimitir_dates as dates
+
 # Ordinea contează: părinții înaintea copiilor (la descărcare și la trimitere).
 ORDER: List[str] = ["locuri_de_veci", "concesionari", "contracte", "inhumati", "plati", "amenajari_avize"]
 
@@ -65,6 +67,15 @@ ENTITIES: Dict[str, Dict[str, Any]] = {
 OPTIONAL_COLS: Dict[str, Tuple[str, ...]] = {"amenajari_avize": ("stare", "executant", "data_inceput", "data_finalizare", "observatii")}
 AVIZ_STARI = ("planificata", "in_lucru", "finalizata")
 
+# Coloane de tip dată calendaristică (F-01). Pe fir și în Cloud formatul canonic este ISO `YYYY-MM-DD`; MAIN afișează/stochează `zz.ll.aaaa`.
+# `created_at` și `updated_at` sunt marcaje de timp, nu date calendaristice, și nu intră aici.
+DATE_COLS: Dict[str, Tuple[str, ...]] = {
+    "contracte": ("data_contract", "data_inceput", "data_sfarsit"),
+    "inhumati": ("data_nasterii", "data_deces", "data_inhumare", "data_deshumare"),
+    "plati": ("data_plata",),
+    "amenajari_avize": ("data_aviz", "data_inceput", "data_finalizare"),
+}
+
 VALID_ACTIONS = ("upsert", "delete")
 
 
@@ -100,6 +111,26 @@ def coerce(kind: str, value: Any) -> Any:
     return None if value is None else str(value)
 
 
+def date_cols(entity: str) -> Tuple[str, ...]:
+    return DATE_COLS.get(entity, ())
+
+
+def canon_dates(entity: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Copie a lui `data` cu coloanele de dată valide convertite în ISO; golul și valorile neinterpretabile rămân neschimbate."""
+    out = dict(data)
+    for col in date_cols(entity):
+        if col in out:
+            out[col] = dates.to_iso(out[col])
+    return out
+
+
+def _cmp(entity: str, col: str, kind: str, value: Any) -> Any:
+    value = coerce(kind, value)
+    if col in DATE_COLS.get(entity, ()):
+        value = dates.to_iso(value)
+    return _norm(kind, value)
+
+
 def optional_cols(entity: str) -> Tuple[str, ...]:
     return OPTIONAL_COLS.get(entity, ())
 
@@ -125,7 +156,7 @@ def clean_data(entity: str, data: Dict[str, Any]) -> Dict[str, Any]:
     for wire in fk_wire_names(entity):
         value = data.get(wire)
         out[wire] = str(value) if value else None
-    return out
+    return canon_dates(entity, out)
 
 
 def _norm(kind: str, value: Any) -> Any:
@@ -145,7 +176,7 @@ def same_data(entity: str, a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     for col, kind in sp["cols"].items():
         if col in opt and (col not in a or col not in b):
             continue
-        if _norm(kind, coerce(kind, a.get(col))) != _norm(kind, coerce(kind, b.get(col))):
+        if _cmp(entity, col, kind, a.get(col)) != _cmp(entity, col, kind, b.get(col)):
             return False
     for wire in fk_wire_names(entity):
         if (a.get(wire) or None) != (b.get(wire) or None):
@@ -157,6 +188,6 @@ def changed_fields(entity: str, a: Dict[str, Any], b: Dict[str, Any]) -> List[st
     sp = ENTITIES[entity]
     opt = OPTIONAL_COLS.get(entity, ())
     out = [c for c, k in sp["cols"].items() if not (c in opt and (c not in a or c not in b))
-           and _norm(k, coerce(k, a.get(c))) != _norm(k, coerce(k, b.get(c)))]
+           and _cmp(entity, c, k, a.get(c)) != _cmp(entity, c, k, b.get(c))]
     out += [w for w in fk_wire_names(entity) if (a.get(w) or None) != (b.get(w) or None)]
     return out

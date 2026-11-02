@@ -1,5 +1,6 @@
 import {dbOpen,kvGet,kvSet,kvDel,mirrorSync,mirrorClear,reconcilePiiCache,mirrorAt,offlineGrave,offlineMap,offlineSearch,offlineList} from './mobile_offline.js';
 import * as ext from './mobile_ext.js';
+const {dateState,todayLocal,isValidIso}=ext;
 import {enqueue,flush as flushPhotos,queueList,queueCounts,retryErrors,dropPhoto} from './mobile_photos.js';
 const API = '/api/v1';
 const app = document.getElementById('mobile-app');
@@ -175,7 +176,7 @@ ext.initExt({get state(){return state;},API,api,toast,outbox,saveOutbox,syncNow:
 
 /* ---------------- Mobile v2 (Etapele B/C/E): registre, fișă, formulare, offline ---------------- */
 const plotColor=(p)=>p.occupied?'#9f5a52':/rezerv|concesion|vândut|vandut/i.test(`${p.state||''} ${p.availability||''}`)?'#c9993a':'#4f8a68';
-const TODAY=()=>new Date().toISOString().slice(0,10);
+const TODAY=()=>todayLocal();
 const TIPS=['Taxă concesiune','Taxă întreținere','Taxă înhumare','Alt tip'];
 const F=(k,l,t='text',x={})=>({k,l,t,...x});
 const AVIZ_STARI=[['','— nespecificată —'],['planificata','Planificată'],['in_lucru','În lucru'],['finalizata','Finalizată']];
@@ -214,6 +215,7 @@ async function openRecordForm(entity,uid){
   const input=(x)=>{const id=`f-${x.k}`,v=esc(val(x)),req=(x.req&&!lock(x)?' required':'')+(lock(x)?' disabled title="Blocat din MAIN"':'');
     if(x.t==='textarea')return `<textarea id="${id}" data-testid="field-${x.k}" name="${x.k}" rows="3"${req}>${v}</textarea>`;
     if(x.t==='select'){const list=Array.isArray(x.opts)?x.opts.map(o=>Array.isArray(o)?o:[o,o]):(opts[x.opts]||[]);return `<select id="${id}" data-testid="field-${x.k}" name="${x.k}"${req}><option value="">— alege —</option>${list.map(([a,b])=>`<option value="${esc(a)}"${String(val(x))===String(a)?' selected':''}>${esc(b)}</option>`).join('')}</select>`;}
+    if(x.t==='date'){const st=dateState(val(x));if(st.kind==='keep')return `<input id="${id}" data-testid="field-${x.k}" data-date-keep="1" type="text" value="${esc(st.raw)}" disabled title="Format necunoscut: valoarea se păstrează neschimbată"><div class="micro" data-testid="date-keep-${x.k}">Format necunoscut — valoarea existentă se păstrează.</div>`;return `<input id="${id}" data-testid="field-${x.k}" name="${x.k}" type="date" value="${esc(st.iso)}"${req} autocomplete="off">`;}
     return `<input id="${id}" data-testid="field-${x.k}" name="${x.k}" type="${x.t==='number'?'text':x.t}"${x.t==='number'?' inputmode="decimal"':''} value="${v}"${req} autocomplete="off">`;};
   body.innerHTML=`<div class="sheet-head"><button id="sheet-x" data-testid="form-close">×</button><div class="micro">${row?'EDITARE':'ADĂUGARE'}</div><h2>${esc(f.title)}</h2>${g.cod_loc&&entity!=='concesionari'?`<div>Loc ${esc(g.cod_loc)}</div>`:''}</div><div class="sheet-body">${entity==='amenajari_avize'&&!avizExtOk()?'<div class="micro" data-testid="aviz-ext-incompat" style="color:var(--danger)">Serverul Cloud nu are încă migrarea 028: câmpurile stare, executant, date și observații sunt dezactivate. Valorile existente nu se pierd; cere administratorului actualizarea serverului.</div>':''}<form id="rec-form" novalidate>${FIELDS.map(x=>`<div class="field"><label for="f-${x.k}">${esc(x.l)}${x.req?' *':''}${lock(x)?' 🔒':''}</label>${input(x)}</div>`).join('')}<div class="micro" id="form-err" style="color:var(--danger);min-height:18px" data-testid="form-error"></div><button class="edit-btn" id="rec-save" type="submit" data-testid="record-save">Salvează</button><button class="edit-btn" id="rec-cancel" type="button" data-testid="record-cancel">Anulează</button>${row&&ext.canDo(entity,'delete')?'<button class="edit-btn danger" id="rec-del" type="button" data-testid="record-delete">Șterge / Anulează</button>':''}</form></div>`;
   const close=()=>document.getElementById('sheet').classList.remove('show');
@@ -223,7 +225,7 @@ async function openRecordForm(entity,uid){
   form.oninput=()=>kvSet(draftKey,Object.fromEntries(new FormData(form).entries()));
   form.onsubmit=async(e)=>{e.preventDefault();if(state.saving)return;
     const vals=Object.fromEntries(new FormData(form).entries());const er=document.getElementById('form-err');
-    for(const x of FIELDS){if(lock(x))continue;if(x.req&&!String(vals[x.k]||'').trim()){er.textContent=`Completează câmpul „${x.l}”.`;return;}if(x.t==='date'&&vals[x.k]&&!/^\d{4}-\d{2}-\d{2}$/.test(vals[x.k])){er.textContent=`Data din „${x.l}” nu este validă.`;return;}}
+    for(const x of FIELDS){if(lock(x))continue;if(x.req&&!String(vals[x.k]||'').trim()){er.textContent=`Completează câmpul „${x.l}”.`;return;}if(x.t==='date'&&vals[x.k]&&!isValidIso(vals[x.k])){er.textContent=`Data din „${x.l}” nu este validă.`;return;}}
     if(entity==='amenajari_avize'&&vals.data_inceput&&vals.data_finalizare&&vals.data_finalizare<vals.data_inceput){er.textContent='Data finalizării nu poate fi înaintea datei începerii.';return;}
     for(const k of NUMERIC)if(k in vals){if(vals[k]===''){vals[k]=null;continue;}const n=Number(String(vals[k]).replace(',','.'));if(!isFinite(n)||n<0||(k==='suma'&&n<=0)){er.textContent=k==='suma'?'Suma trebuie să fie un număr pozitiv.':'Valoare numerică invalidă.';return;}vals[k]=n;}
     const data={...cur,...vals};

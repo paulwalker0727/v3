@@ -8,7 +8,8 @@ Fiecare creare / modificare / ștergere produce un rând în `audit_log`:
     detail (JSON)          -> {"entity","uid","version","old":{...},"new":{...}}
                               la modificare: doar câmpurile schimbate; la creare old=null; la ștergere new=null.
 Nu se înregistrează niciodată parole, token-uri, chei, JWT, DATABASE_URL sau conținut de documente (câmpurile cu astfel de nume
-sunt eliminate, iar valorile lungi sunt trunchiate).
+sunt eliminate, iar valorile lungi sunt trunchiate). CNP și datele CI (cnp, owner_cnp, bi_ci, owner_id_card_*) apar în jurnal doar ca `[REDACTAT]`
+(cheia rămâne, deci se vede CE câmp s-a modificat); vezi shared/cimitir_redact.py.
 """
 from __future__ import annotations
 
@@ -20,6 +21,8 @@ import logging
 import re
 from datetime import datetime
 from typing import Any, Dict, Optional
+
+import cimitir_redact
 
 log = logging.getLogger("cimitir.audit")
 
@@ -66,6 +69,7 @@ def record(conn, actor_type: str, actor: str, entity: str, uid: str, old: Option
         old, new = _diff(old, new)
         if not new:
             return False        # nicio schimbare efectivă
+    old, new = cimitir_redact.redact_obj(old), cimitir_redact.redact_obj(new)      # F-02: după diff (o schimbare doar de CNP rămâne vizibilă ca „câmp modificat"), înainte de scriere
     detail = json.dumps({"entity": entity, "uid": uid, "version": version, "old": old, "new": new}, ensure_ascii=False, default=str)
     conn.execute("INSERT INTO audit_log (ts, actor_type, actor, action, target, detail) VALUES (?,?,?,?,?,?)",
                  (datetime.now().isoformat(timespec="seconds"), actor_type, str(actor)[:80], f"{entity}.{action}", f"{entity}:{uid}"[:120], detail))

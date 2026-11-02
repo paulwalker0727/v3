@@ -81,7 +81,7 @@ def _row_to_wire(entity: str, row) -> Dict[str, Any]:
     for wire in ents.fk_wire_names(entity):
         data[wire] = d.get(wire)
     return {"uid": d["uid"], "version": int(d["version"] or 0), "seq": int(d["change_seq"] or 0),
-            "updated_at": _jsonable(d["modified_at"]), "deleted": False, "data": data}
+            "updated_at": _jsonable(d["modified_at"]), "deleted": False, "data": ents.canon_dates(entity, data)}
 
 
 def _fetch(conn, entity: str, uid: str, lock: bool = False):

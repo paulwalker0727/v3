@@ -151,3 +151,43 @@ export async function deleteDocument(doc){
   if(!await askConfirm('Confirmi ștergerea?',`${doc.filename||'Documentul'} va fi anulat. Operațiunea este auditată; fișierul rămâne în arhivă.`,'Șterge',true))return false;
   try{await C.api(`${C.API}/sync-v2/documents/${encodeURIComponent(doc.uid)}`,{method:'DELETE'});C.toast('Document șters.');return true;}
   catch(e){C.toast(e.status===403?'Nu ai dreptul de ștergere.':'Ștergerea necesită conexiune la internet.');return false;}}
+
+// F-01: conversii de dată pentru formularele Mobile. <input type="date"> lucrează numai cu AAAA-LL-ZZ; MAIN scrie ZZ.LL.AAAA.
+// Nicio valoare existentă nu se pierde: ce nu poate fi interpretat rămâne neatins (câmp doar-citire, exclus din trimitere).
+function mk(y, m, d) {
+  y = +y; m = +m; d = +d;
+  const t = new Date(Date.UTC(2000, 0, 1)); t.setUTCFullYear(y, m - 1, d);
+  if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d) return null;
+  const p = (n, l) => String(n).padStart(l, '0');
+  return `${p(y, 4)}-${p(m, 2)}-${p(d, 2)}`;
+}
+
+// ISO (AAAA-LL-ZZ) pentru o dată validă în ISO, ZZ.LL.AAAA (și variantele cu / sau -), ZZLLAAAA; altfel null. Gol -> null.
+export function isoOf(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m) return mk(m[1], m[2], m[3]);
+  m = /^(\d{1,2})([./-])(\d{1,2})\2(\d{4})$/.exec(s);
+  if (m) return mk(m[4], m[3], m[1]);
+  m = /^(\d{2})(\d{2})(\d{4})$/.exec(s);
+  if (m) return mk(m[3], m[2], m[1]);
+  return null;
+}
+
+export const isBlank = (v) => v === null || v === undefined || String(v).trim() === '';
+
+// Starea unui câmp de dată la deschiderea formularului: {kind:'empty'|'ok'|'keep', iso, raw}
+export function dateState(v) {
+  if (isBlank(v)) return { kind: 'empty', iso: '', raw: '' };
+  const iso = isoOf(v);
+  return iso ? { kind: 'ok', iso, raw: String(v) } : { kind: 'keep', iso: '', raw: String(v) };
+}
+
+export function todayLocal(now = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+}
+
+export const isValidIso = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) && isoOf(s) === s;

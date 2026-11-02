@@ -273,8 +273,9 @@ out["old"] = q("SELECT stare, observatii FROM amenajari_avize WHERE nr_aviz='AV-
 out["n"] = q("SELECT count(*) AS n FROM amenajari_avize")[0]["n"]
 """)
     assert back["rep"]["ok"] and back["rep"]["errors"] == 0 and back["n"] == 2, back
-    assert back["row"] == {"stare": "finalizata", "executant": "Popa SRL", "data_inceput": "2026-03-05", "data_finalizare": "2026-03-28",
-                           "observatii": "predat de pe telefon", "lucrare": "monument"}
+    assert back["row"] == {"stare": "finalizata", "executant": "Popa SRL", "data_inceput": "2026-03-05",
+                           # F-01: ziua schimbată în Cloud/Mobile (ISO) se scrie în MAIN în formatul MAIN (zz.ll.aaaa); ziua neschimbată își păstrează textul local
+                           "data_finalizare": "28.03.2026", "observatii": "predat de pe telefon", "lucrare": "monument"}
     assert back["old"] == {"stare": None, "observatii": None} or back["old"]["stare"] in (None, "")
     assert pg(w, "SELECT count(*) FROM amenajari_avize")[0][0] == 2
 
