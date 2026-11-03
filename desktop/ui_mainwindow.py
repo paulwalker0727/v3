@@ -352,6 +352,16 @@ class CemeteryUI(QMainWindow):
         act_alerte.triggered.connect(self.open_alerts_window)
         toolbar.addAction(act_alerte)
 
+        act_integritate = QAction("🧪 Verificare integritate", self)
+        act_integritate.setObjectName("act_integrity_check")
+        act_integritate.triggered.connect(self.open_integrity_window)
+        toolbar.addAction(act_integritate)
+
+        act_duplicate = QAction("🔁 Persoane duplicate", self)
+        act_duplicate.setObjectName("act_duplicate_people")
+        act_duplicate.triggered.connect(self.open_duplicate_people_window)
+        toolbar.addAction(act_duplicate)
+
         self.act_status_color = QAction("🎨 Colorare status", self)
         self.act_status_color.setCheckable(True)
         self.act_status_color.triggered.connect(lambda: self.features.toggle_status_coloring())
@@ -982,6 +992,16 @@ class CemeteryUI(QMainWindow):
     def open_alerts_window(self):
         from alerts_window import AlertsWindow
         dlg = AlertsWindow(self)
+        dlg.exec()
+
+    def open_integrity_window(self):
+        from integrity_window import IntegrityWindow
+        dlg = IntegrityWindow(self)
+        dlg.exec()
+
+    def open_duplicate_people_window(self):
+        from duplicate_people_window import DuplicatePeopleWindow
+        dlg = DuplicatePeopleWindow(self)
         dlg.exec()
 
     def open_export_dialog(self):
