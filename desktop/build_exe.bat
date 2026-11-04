@@ -55,7 +55,9 @@ if not exist "!PY!" (
 REM ---------- 3. Dependinte ----------
 echo [3/6] Instalez dependintele ^(prima rulare poate dura 3-5 minute^) ...
 "!PY!" -m pip install --upgrade pip --quiet
-"!PY!" -m pip install -r requirements.txt --quiet
+REM  emergentintegrations (instalat din Git) nu se livreaza clientului; se exclude ca sa nu ceara Git pe Windows (ca in build-windows.yml)
+findstr /v /b /c:"emergentintegrations" requirements.txt > requirements-build-ci.txt
+"!PY!" -m pip install -r requirements-build-ci.txt --quiet
 if errorlevel 1 (
     echo [EROARE] Instalarea din requirements.txt a esuat.
     pause

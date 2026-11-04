@@ -1,0 +1,23 @@
+diff --git a/.github/workflows/build-windows.yml b/.github/workflows/build-windows.yml
+index 598e2ef..38aff79 100644
+--- a/.github/workflows/build-windows.yml
++++ b/.github/workflows/build-windows.yml
+@@ -48,11 +48,18 @@ jobs:
+           QT_QPA_PLATFORM: offscreen
+         run: python -m pytest tests/test_build_packaging.py tests/test_main_password_gate.py tests/test_startup_unification.py tests/test_backup_window.py -q
+ 
++      - name: Verificare statică a intrărilor build-ului (Etapa 10)
++        run: python ../scripts/windows/verify_build_inputs.py
++
+       - name: PyInstaller — varianta folder
+         env:
+           CIMITIR_ONEFILE: "0"
+         run: python -m PyInstaller --noconfirm --clean cimitir.spec
+ 
++      - name: Verificare post-build (Etapa 10, informativă — nu blochează release-ul)
++        continue-on-error: true
++        run: ../scripts/windows/Verify-CimitirBuild.ps1 -DistDir dist/Cimitir -SkipPortal
++
+       - name: Smoke test — portalul pornește din executabilul înghețat
+         run: |
+           $env:CIMITIR_DATA_DIR = Join-Path $env:RUNNER_TEMP "cimitir-smoke"
