@@ -209,6 +209,8 @@ class IntegrityWindow(QDialog):
                     issue["description"],
                     issue["recommendation"],
                 ])
+                row.setToolTip(3, issue["description"])
+                row.setToolTip(4, issue["recommendation"])
                 color = _SEV_COLORS.get(issue["severity"])
                 if color:
                     row.setForeground(1, QColor(color))

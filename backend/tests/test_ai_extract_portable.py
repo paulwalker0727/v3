@@ -137,6 +137,8 @@ def test_emergent_preferred_when_available(clean_env, png):
 
 def test_app_starts_and_admin_ok_without_ai_key(clean_env):
     from fastapi.testclient import TestClient
+    from module_isolation import purge_colliding_modules
+    purge_colliding_modules()
     import server
     c = TestClient(server.app, follow_redirects=True)
     assert c.get("/api/health").status_code == 200

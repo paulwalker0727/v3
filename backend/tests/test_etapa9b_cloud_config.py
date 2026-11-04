@@ -44,8 +44,9 @@ def test_env_example_has_the_cloud_section_without_secrets():
 
 
 def test_real_env_has_the_cloud_section_and_is_not_tracked():
-    has_section = "CONFIGURARE CLOUD - SUPABASE" in (ROOT / "backend" / ".env").read_text(encoding="utf-8")
-    assert has_section, "backend/.env nu are secțiunea CONFIGURARE CLOUD - SUPABASE"
+    real = ROOT / "backend" / ".env"
+    if real.exists():   # fișier local al dezvoltatorului (nu e versionat): secțiunea se verifică doar dacă există
+        assert "CONFIGURARE CLOUD - SUPABASE" in real.read_text(encoding="utf-8"), "backend/.env nu are secțiunea CONFIGURARE CLOUD - SUPABASE"
     assert _git("ls-files", "backend/.env").stdout.strip() == ""
     assert _git("check-ignore", "-q", "backend/.env").returncode == 0, "backend/.env nu este ignorat de Git"
     assert _git("check-ignore", "-q", "backend/.env.example").returncode == 1, ".env.example trebuie versionat"

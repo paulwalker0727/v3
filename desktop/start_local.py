@@ -117,11 +117,23 @@ def portal_command(host: str, port: int) -> list:
             "--host", host, "--port", str(port), "--log-level", "warning", *proxy_flags()]
 
 
+def _prefer_backend_modules(bdir: Path) -> None:
+    """Modulele backend au prioritate față de homonimele MAIN (ex. `mobile_upload`, `database`): le scoatem din cache și din calea de import."""
+    stems = {f.stem for d in (bdir, bdir / "cimitir") if d.is_dir() for f in d.glob("*.py")}
+    for name in stems & set(sys.modules):
+        mod_file = os.path.abspath(getattr(sys.modules[name], "__file__", "") or "")
+        if mod_file and not mod_file.startswith(str(bdir)):
+            sys.modules.pop(name, None)
+    for p in (str(bdir / "cimitir"), str(bdir)):
+        if p in sys.path:
+            sys.path.remove(p)
+        sys.path.insert(0, p)
+
+
 def serve_portal(host: str, port: int) -> int:
     """Rulează portalul în procesul curent (folosit de `Cimitir.exe --portal`)."""
     os.environ["CIMITIR_BACKEND_DIR"] = str(backend_dir())
-    if str(backend_dir()) not in sys.path:
-        sys.path.insert(0, str(backend_dir()))
+    _prefer_backend_modules(backend_dir())
     import uvicorn
     import server
     uvicorn.run(server.app, host=host, port=port, log_level="warning", proxy_headers=behind_proxy(),

@@ -288,7 +288,9 @@ def test_02_new_documents_upload_in_chunks_metadata_only_in_postgres(key):
     cols = [c[0] for c in _pg().execute("SELECT column_name FROM information_schema.columns WHERE table_name='media_objects' AND table_schema='public' ORDER BY ordinal_position").fetchall()]
     assert cols == ["id", "entity_uid", "filename", "storage_path", "mime", "size", "sha256", "uploaded_by", "uploaded_at", "change_seq",
                     "organization_uid", "cemetery_uid"]   # + tenantul (migrările 009/011)
-    assert _pg().execute("SELECT count(*) FROM information_schema.columns WHERE data_type='bytea' AND table_schema='public'").fetchone()[0] == 0
+    # niciun octet de fișier în tabelele de documente/media; bytea există doar în tabelele de transfer/staging din planul de control (014) și în fundalul hărții (027)
+    bytea = {r[0] for r in _pg().execute("SELECT table_name FROM information_schema.columns WHERE data_type='bytea' AND table_schema='public'").fetchall()}
+    assert bytea <= {"cp_staging_media_chunks", "cp_media_blobs", "sync_v2_map_background"} and not {"documents", "media_objects", "photos"} & bytea
     assert pg_one("SELECT pg_column_size(m.*) FROM media_objects m WHERE id=%s", (mid_big,))[0] < 1000
 
 

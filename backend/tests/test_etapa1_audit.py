@@ -27,6 +27,8 @@ SENTINELS = {
 }
 PUBLIC_PREFIXES = ("/portal", "/api/public")
 ADMIN_PREFIXES = ("/admin", "/api/admin")
+TOKEN_PREFIXES = ("/api/m/",)   # portal mobil de încărcare: autentificare = token QR (hash, TTL, uz limitat), vezi mobile_upload.py
+TOKEN_ROUTES = {("GET", "/api/m/{token}/info"), ("GET", "/api/m/{token}"), ("POST", "/api/m/{token}/upload")}
 OPEN_ADMIN_PATHS = {"/admin/access", "/admin/access/login", "/admin/logout"}
 INFRA_PATHS = {"/", "/api/health", "/static", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect", "/public/loc/{cod_loc}"}  # ultima: redirect pentru QR-urile tipărite
 
@@ -105,8 +107,20 @@ def test_route_inventory_uses_only_clear_prefixes(app_env):
         for method in getattr(route, "methods", None) or {"MOUNT"}:
             assert (method, path) not in seen, f"rută duplicată: {method} {path}"
             seen.add((method, path))
-        assert (path in INFRA_PATHS or path.startswith(PUBLIC_PREFIXES + ADMIN_PREFIXES + ("/static", "/api/sync"))), \
+        assert (path in INFRA_PATHS or path.startswith(PUBLIC_PREFIXES + ADMIN_PREFIXES + TOKEN_PREFIXES + ("/static", "/api/sync"))), \
             f"rută în afara prefixelor /portal /admin /api/public /api/admin: {path}"
+
+
+def test_token_routes_are_exactly_the_documented_ones_and_reject_invalid_tokens(app_env):
+    server, client, _ = app_env
+    got = {(m, r.path) for r in server.app.routes if getattr(r, "path", "").startswith(TOKEN_PREFIXES) for m in r.methods - {"HEAD", "OPTIONS"}}
+    assert got == TOKEN_ROUTES
+    bad = "cimitir." + "x" * 40
+    for method, path in sorted(TOKEN_ROUTES):
+        url = path.replace("{token}", bad)
+        resp = client.request(method, url, files={"file": ("a.jpg", b"x")} if method == "POST" else None, follow_redirects=False)
+        assert resp.status_code in (404, 422, 429), f"{method} {path} -> {resp.status_code}"
+        assert "Traceback" not in resp.text and "cimitir_test" not in resp.text
 
 
 def test_portal_routes_do_not_collide_with_admin(app_env):

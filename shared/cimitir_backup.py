@@ -45,25 +45,44 @@ def backup(data_dir: Path, dest_root: Path) -> Path:
         time.sleep(1)
         target = dest_root / f"cimitir-{datetime.now():%Y%m%d-%H%M%S}"
     target.mkdir(parents=True)
-    src = sqlite3.connect(f"file:{src_db.as_posix()}?mode=ro", uri=True)
-    dst = sqlite3.connect(target / "cimitir.db")
     try:
-        src.backup(dst)
-    finally:
-        dst.close()
-        src.close()
-    if (data_dir / "media").is_dir():
-        shutil.copytree(data_dir / "media", target / "media")
-    manifest = {str(p.relative_to(target)).replace("\\", "/"): _sha(p) for p in sorted(target.rglob("*")) if p.is_file()}
-    (target / "manifest.json").write_text(json.dumps({"created": datetime.now().isoformat(), "files": manifest}, indent=1), encoding="utf-8")
+        src = sqlite3.connect(f"file:{src_db.as_posix()}?mode=ro", uri=True)
+        dst = sqlite3.connect(target / "cimitir.db")
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+        if (data_dir / "media").is_dir():
+            shutil.copytree(data_dir / "media", target / "media")
+        manifest = {str(p.relative_to(target)).replace("\\", "/"): _sha(p) for p in sorted(target.rglob("*")) if p.is_file()}
+        (target / "manifest.json").write_text(json.dumps({"created": datetime.now().isoformat(), "files": manifest}, indent=1), encoding="utf-8")
+    except BaseException:
+        shutil.rmtree(target, ignore_errors=True)       # o copie incompletă nu rămâne pe disc (nu apare în listă și nu poate fi restaurată)
+        raise
     return target
 
 
 def verify(backup_dir: Path) -> list:
+    """Lista problemelor (goală = copie validă). Nu ridică excepții pentru manifest lipsă/corupt sau intrări nesigure."""
     backup_dir = Path(backup_dir).resolve()
-    manifest = json.loads((backup_dir / "manifest.json").read_text(encoding="utf-8"))["files"]
-    problems = [f"lipsește/modificat: {rel}" for rel, digest in manifest.items()
-                if not (backup_dir / rel).is_file() or _sha(backup_dir / rel) != digest]
+    try:
+        manifest = json.loads((backup_dir / "manifest.json").read_text(encoding="utf-8"))["files"]
+        if not isinstance(manifest, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in manifest.items()):
+            raise ValueError("format")
+    except (OSError, ValueError, KeyError, TypeError):
+        return ["manifest.json lipsește sau este corupt"]
+    problems = []
+    if "cimitir.db" not in manifest:
+        problems.append("manifestul nu conține cimitir.db")
+    for rel, digest in manifest.items():
+        path = (backup_dir / rel).resolve()
+        if backup_dir not in path.parents:
+            problems.append(f"cale nesigură în manifest: {rel}")
+        elif not path.is_file() or _sha(path) != digest:
+            problems.append(f"lipsește/modificat: {rel}")
+    if not (backup_dir / "cimitir.db").is_file():
+        return problems
     try:
         conn = sqlite3.connect(f"file:{(backup_dir / 'cimitir.db').as_posix()}?mode=ro", uri=True)
         if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
@@ -74,24 +93,68 @@ def verify(backup_dir: Path) -> list:
     return problems
 
 
+MEDIA_PATH_COLUMNS = (("documents", "file_path"), ("photos", "file_path"))
+
+
+def _rebase_media_paths(db_file: Path, media_dir: Path) -> int:
+    """Căile absolute din documents/photos (…/media/<tip>/<fișier>) se mută pe folderul media restaurat, DOAR dacă fișierul există acolo
+    (restaurare pe alt calculator / alt folder, chiar dacă originalul mai există). Nu atinge căile externe sau fără corespondent. Întoarce numărul de căi actualizate."""
+    changed = 0
+    conn = sqlite3.connect(db_file)
+    try:
+        for table, col in MEDIA_PATH_COLUMNS:
+            try:
+                rows = conn.execute(f"SELECT id, {col} FROM {table}").fetchall()
+            except sqlite3.Error:
+                continue
+            for rid, path in rows:
+                if not path or str(path).replace("\\", "/").startswith(str(media_dir).replace("\\", "/") + "/"):
+                    continue
+                norm = str(path).replace("\\", "/")
+                idx = norm.lower().rfind("/media/")
+                if idx < 0:
+                    continue
+                candidate = media_dir / norm[idx + len("/media/"):]
+                if candidate.is_file():
+                    conn.execute(f"UPDATE {table} SET {col} = ? WHERE id = ?", (str(candidate), rid))
+                    changed += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return changed
+
+
 def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
+    """Restaurare sigură: verifică copia, păstrează starea curentă lângă folder (`.inainte-de-restaurare-*`) și, dacă restaurarea eșuează
+    la jumătate, readuce starea anterioară. Nu suprascrie niciodată un folder nevid fără `force`."""
     backup_dir, data_dir = Path(backup_dir).resolve(), Path(data_dir).resolve()
     problems = verify(backup_dir)
     if problems:
         raise SystemExit("Backup invalid: " + "; ".join(problems))
+    safety: Optional[Path] = None
     if data_dir.exists() and any(data_dir.iterdir()):
         if not force:
             raise SystemExit(f"{data_dir} nu este gol. Folosiți --force (se păstrează o copie de siguranță).")
         safety = data_dir.with_name(data_dir.name + f".inainte-de-restaurare-{datetime.now():%Y%m%d-%H%M%S}")
+        n = 0
+        while safety.exists():
+            n += 1
+            safety = data_dir.with_name(data_dir.name + f".inainte-de-restaurare-{datetime.now():%Y%m%d-%H%M%S}-{n}")
         shutil.move(str(data_dir), str(safety))
-    data_dir.mkdir(parents=True, exist_ok=True)
-    if "safety" in locals() and (safety / ".jwt_secret").is_file():
-        shutil.copy2(safety / ".jwt_secret", data_dir / ".jwt_secret")
-    if "safety" in locals() and (safety / "registry.json").is_file():
-        shutil.copy2(safety / "registry.json", data_dir / "registry.json")
-    shutil.copy2(backup_dir / "cimitir.db", data_dir / _db_name(data_dir))
-    if (backup_dir / "media").is_dir():
-        shutil.copytree(backup_dir / "media", data_dir / "media")
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        for keep in (".jwt_secret", "registry.json"):
+            if safety is not None and (safety / keep).is_file():
+                shutil.copy2(safety / keep, data_dir / keep)
+        shutil.copy2(backup_dir / "cimitir.db", data_dir / _db_name(data_dir))
+        if (backup_dir / "media").is_dir():
+            shutil.copytree(backup_dir / "media", data_dir / "media")
+        _rebase_media_paths(data_dir / _db_name(data_dir), data_dir / "media")
+    except BaseException:
+        shutil.rmtree(data_dir, ignore_errors=True)
+        if safety is not None:
+            shutil.move(str(safety), str(data_dir))      # starea anterioară revine intactă
+        raise
     return data_dir
 
 
