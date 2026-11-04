@@ -24,7 +24,7 @@ build_exe.bat
 ```
 Produce `desktop\dist\Cimitir\Cimitir.exe` (folder), `desktop\dist\Cimitir-portabil.exe` și, dacă există Inno Setup, `desktop\dist_installer\CimitirSetup-<ver>.exe`.
 
-**Varianta B — GitHub Actions:** *Actions → „Construiește Cimitir pentru Windows" → Run workflow* (sau tag `v*`). Rulează testele de packaging, `PyInstaller`, smoke-ul portalului și, pentru informare, verificarea post-build de mai jos.
+**Varianta B — GitHub Actions:** *Actions → „Construiește Cimitir pentru Windows" → Run workflow* (sau tag `v*`). Rulează testele de packaging, `PyInstaller` și smoke-ul portalului. Verificările Etapei 10 (static + post-build) se adaugă în workflow aplicând `git apply scripts/windows/build-windows.workflow.patch` (necesită drepturi de editare a workflow-urilor; nu a putut fi publicat direct din cauza scope-ului tokenului).
 
 Semnare (opțional): `set CIMITIR_CERT=...` / `set CIMITIR_CERT_PASS=...` sau `set CIMITIR_CERT_SUBJECT=...` (vezi `desktop\BUILD.md`). Fără semnare, SmartScreen avertizează.
 

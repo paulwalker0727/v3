@@ -17,7 +17,7 @@ Branch: `feature/etapa10-stabilizare` (pornit din `feature/etapa5-9-finalizare` 
 | Subiect | Starea |
 |---|---|
 | **Backup automat prin Windows Task Scheduler** | **PARȚIAL.** Cod + scripturi scrise (`scripts/windows/Register-CimitirBackupTask.ps1`, `Unregister-…ps1`, CLI `--backup-run`). Partea Python este testată pe Linux. **Scripturile PowerShell NU au fost executate nici măcar sintactic** (nu există `pwsh` în mediu). Înregistrarea activității în Windows = **neverificată** |
-| Pregătire Windows / `Cimitir.exe` | **PARȚIAL.** `Verify-CimitirBuild.ps1` (post-build) scris, **neexecutat**; pasul a fost adăugat în `build-windows.yml` ca `continue-on-error` (informativ), plus pasul static `verify_build_inputs.py`. **Cimitir.exe nu a fost construit și nu a fost validat** (nu există Windows). Instrucțiuni: `ETAPA10_WINDOWS_BUILD.md` |
+| Pregătire Windows / `Cimitir.exe` | **PARȚIAL.** `Verify-CimitirBuild.ps1` (post-build) scris, **neexecutat**; modificarea `build-windows.yml` (pas static `verify_build_inputs.py` + pas post-build informativ, `continue-on-error`) **NU este aplicată în workflow**: tokenul GitHub folosit nu are scope `workflow` și push-ul a fost respins; modificarea este livrată ca patch în `scripts/windows/build-windows.workflow.patch` (se aplică de utilizator: `git apply scripts/windows/build-windows.workflow.patch`). **Cimitir.exe nu a fost construit și nu a fost validat** (nu există Windows). Instrucțiuni: `ETAPA10_WINDOWS_BUILD.md` |
 | **Audit sincronizare MAIN↔Cloud↔Mobile** | **PARȚIAL (audit prin citire de cod + suite existente + 1 probă).** Vezi §5. Nu s-au adăugat teste noi de sincronizare: nu a fost demonstrată nicio lipsă de acoperire, ci o **decizie de politică** (O-1) |
 | Raportul cerut inițial `ETAPA10_RAPORT.md` | înlocuit de acest document |
 
@@ -85,6 +85,6 @@ Telefon: pairing QR, coadă offline (mod avion) cu fotografii/aviz, revocare, pe
 
 ## 10. Commituri noi și fișiere
 Vezi lista exactă mai jos (generată din Git la publicare) — secțiunea „Commituri" din mesajul de livrare.
-Fișiere noi: `ETAPA10_BACKUP_AUTOMAT.md`, `ETAPA10_WINDOWS_BUILD.md`, `ETAPA10_STATUS_FINAL.md`, `scripts/backup_scheduled.py`, `scripts/windows/{Register,Unregister}-CimitirBackupTask.ps1`, `scripts/windows/Verify-CimitirBuild.ps1`, `scripts/windows/verify_build_inputs.py`, `desktop/tests/test_etapa10_{backup_schedule,main_ui,windows_prep}.py`.
-Modificate: `shared/cimitir_backup.py`, `desktop/backup_window.py`, `desktop/ui_mainwindow.py`, `desktop/launcher.py`, `desktop/build_exe.bat`, `.github/workflows/build-windows.yml`, `.gitignore`.
+Fișiere noi: `ETAPA10_BACKUP_AUTOMAT.md`, `ETAPA10_WINDOWS_BUILD.md`, `ETAPA10_STATUS_FINAL.md`, `scripts/backup_scheduled.py`, `scripts/windows/{Register,Unregister}-CimitirBackupTask.ps1`, `scripts/windows/Verify-CimitirBuild.ps1`, `scripts/windows/verify_build_inputs.py`, `scripts/windows/build-windows.workflow.patch`, `desktop/tests/test_etapa10_{backup_schedule,main_ui,windows_prep}.py`.
+Modificate: `shared/cimitir_backup.py`, `desktop/backup_window.py`, `desktop/ui_mainwindow.py`, `desktop/launcher.py`, `desktop/build_exe.bat`, `.gitignore` (workflow-ul NU a fost modificat; vezi patch-ul).
 Scoase din index (rămân pe disc): `shared_data-backups/*/manifest.json` (4), `.emergent/cron/*` (5).
