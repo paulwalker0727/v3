@@ -20,13 +20,13 @@ def purge_colliding_modules() -> None:
         sys.path.insert(0, p)
 
 
-def purge_project_modules() -> None:
-    """Scoate din cache TOATE modulele proiectului (backend/, backend/cimitir/, shared/): un `import server` nou nu mai folosește
-    referințe vechi (ex. `citizen_api` legat de un `store` dintr-un test anterior)."""
-    roots = tuple(str(_ROOT / d) + "/" for d in ("backend", "shared", "desktop"))
+def purge_backend_modules() -> None:
+    """Scoate din cache modulele din backend/ și backend/cimitir/ (nu și shared/, folosit de restul suitei): un `import server` nou
+    nu mai folosește referințe vechi (ex. `citizen_api` legat de un `store` dintr-un test anterior)."""
+    backend = str(_ROOT / "backend") + "/"
     tests_dir = str(_ROOT / "backend" / "tests") + "/"
     for name, mod in list(sys.modules.items()):
         f = getattr(mod, "__file__", None) or ""
-        if f.startswith(roots) and not f.startswith(tests_dir) and "/desktop/tests/" not in f:
+        if f.startswith(backend) and not f.startswith(tests_dir):
             sys.modules.pop(name, None)
     purge_colliding_modules()
