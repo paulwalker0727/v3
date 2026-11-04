@@ -11,10 +11,20 @@ Portul nu se schimbă în tăcere: dacă 8000 e ocupat de alt program, se afișe
 
 Portalul este același cod ca în start_local.py (un singur punct de pornire).
 Executabilul Windows pornește portalul ca proces propriu: `Cimitir.exe --portal --host H --port P`.
+Copia programată (fără interfață): `Cimitir.exe --backup-run` (vezi shared/cimitir_backup.py `cli`).
 
 Rulează:  python launcher.py
 """
 import sys
+
+if "--backup-run" in sys.argv:
+    # copie programată fără interfață (Planificatorul Windows): `Cimitir.exe --backup-run [--data-dir D] [--force]`
+    import os as _os
+    _sys_path = _os.path.dirname(_os.path.abspath(__file__))
+    sys.path.insert(0, _sys_path)
+    sys.path.insert(0, _os.path.join(_os.path.dirname(_sys_path), "shared"))
+    import cimitir_backup
+    raise SystemExit(cimitir_backup.cli([a for a in sys.argv[1:] if a != "--backup-run"]))
 
 if "--portal" in sys.argv:
     import start_local

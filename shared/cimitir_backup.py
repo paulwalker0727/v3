@@ -2,7 +2,12 @@
 
 - copia bazei folosește API-ul de backup SQLite (consistentă chiar dacă aplicația rulează, WAL); media se copiază integral;
 - `manifest.json` conține SHA-256 pentru fiecare fișier; restaurarea verifică manifestul și păstrează o copie de siguranță;
-- copiile automate: `run_scheduled` (zilnic, doar dacă ultima copie e mai veche), păstrare N zile;
+- copiile automate: `run_backup_job` / `run_scheduled` (la interval configurabil, doar dacă ultima copie e mai veche), fiecare copie este
+  verificată imediat (SHA-256 + integrity_check); o copie nevalidă este pusă în carantină (`*.invalid`) și raportată ca EȘEC;
+- jurnal JSONL (`<folder-date>.backup-log.jsonl`): data, rezultat, locație, mărime, eroare; `health` dă avertizarea vizibilă în MAIN;
+- retenție: păstrare N zile, dar niciodată sub `MIN_KEEP_FLOOR` copii, nu se șterge nimic dacă nu există copii valide mai noi și nu se
+  șterg copiile marcate „protejat”; restaurarea rămâne MANUALĂ (nu e apelată niciodată de programare);
+- rulare programată fără interfață: `cli` (Planificatorul de activități Windows: `Cimitir.exe --backup-run` / `scripts/backup_scheduled.py`);
 - restaurare „dintr-un clic": `schedule_restore` pregătește restaurarea, iar la următoarea pornire `apply_pending_restore` o aplică
   înainte de deschiderea bazei (nu se înlocuiește niciodată o bază deschisă).
 """
@@ -19,7 +24,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 PREFIX = "cimitir-"
-DEFAULTS = {"backup_enabled": "1", "backup_keep_days": "14", "backup_interval_hours": "24"}
+DEFAULTS = {"backup_enabled": "1", "backup_keep_days": "14", "backup_interval_hours": "24", "backup_time": "02:00", "backup_keep_min": "3"}
+MIN_KEEP_FLOOR = 3
+PROTECT_MARK = "PROTEJAT"
+LOCK_NAME = ".backup.lock"
+LOCK_STALE_SECONDS = 2 * 3600
+LOG_SUFFIX = ".backup-log.jsonl"
+LOG_MAX_LINES = 500
 
 
 def _sha(path: Path) -> str:
@@ -189,12 +200,44 @@ def list_backups(dest_root: Path) -> List[Dict[str, Any]]:
     return sorted(rows, key=lambda r: r["created"], reverse=True)
 
 
-def prune(dest_root: Path, keep_days: int, keep_min: int = 3) -> int:
-    """Șterge copiile mai vechi de `keep_days`, păstrând mereu cele mai noi `keep_min`. Întoarce câte au fost șterse."""
-    limit, removed = datetime.now() - timedelta(days=max(1, keep_days)), 0
-    for row in list_backups(dest_root)[keep_min:]:
+def is_protected(backup_dir: Path) -> bool:
+    return (Path(backup_dir) / PROTECT_MARK).is_file()
+
+
+def set_protected(backup_dir: Path, on: bool = True) -> None:
+    """Marchează/demarchează o copie ca protejată: retenția nu o șterge niciodată."""
+    marker = Path(backup_dir) / PROTECT_MARK
+    if on:
+        marker.write_text("Copie protejată: nu este ștearsă de retenția automată.\n", encoding="utf-8")
+    else:
+        marker.unlink(missing_ok=True)
+
+
+def _quick_ok(backup_dir: Path) -> bool:
+    """Verificare ieftină (fără SHA): manifestul se citește și toate fișierele din el există."""
+    try:
+        manifest = json.loads((Path(backup_dir) / "manifest.json").read_text(encoding="utf-8"))["files"]
+        return "cimitir.db" in manifest and all((Path(backup_dir) / rel).is_file() for rel in manifest)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def prune(dest_root: Path, keep_days: int, keep_min: int = MIN_KEEP_FLOOR) -> int:
+    """Șterge copiile mai vechi de `keep_days`. Protecții: se păstrează mereu cele mai noi `keep_min` copii (cel puțin 1; programarea din MAIN impune minimum MIN_KEEP_FLOOR);
+    nu se șterge nimic dacă acestea nu sunt toate întregi; copiile marcate „protejat” și legăturile simbolice nu se șterg niciodată;
+    se atinge doar `cimitir-AAAAMMZZ-HHMMSS` cu manifest, direct în folderul de copii. Întoarce câte au fost șterse."""
+    keep_min = max(1, int(keep_min))
+    limit, removed = datetime.now() - timedelta(days=max(1, int(keep_days))), 0
+    rows = list_backups(dest_root)
+    if not all(_quick_ok(Path(r["path"])) for r in rows[:keep_min]):
+        return 0
+    root = Path(dest_root).resolve()
+    for row in rows[keep_min:]:
+        path = Path(row["path"])
+        if path.is_symlink() or path.resolve().parent != root or is_protected(path):
+            continue
         if datetime.fromisoformat(row["created"]) < limit:
-            shutil.rmtree(row["path"], ignore_errors=True)
+            shutil.rmtree(path, ignore_errors=True)
             removed += 1
     return removed
 
@@ -204,23 +247,200 @@ def is_due(dest_root: Path, interval_hours: float = 24) -> bool:
     return not rows or datetime.now() - datetime.fromisoformat(rows[0]["created"]) >= timedelta(hours=interval_hours)
 
 
-def run_scheduled(data_dir: Path, get_setting: Callable[[str], Optional[str]], force: bool = False) -> Optional[Path]:
-    """Face o copie dacă e activată și scadentă; aplică retenția. Nu ridică excepții (returnează None la eșec)."""
-    def cfg(key: str) -> str:
-        return (get_setting(key) or DEFAULTS.get(key, "")).strip()
+# ---------------------------------------------------------------- jurnal
+def log_path(data_dir: Path) -> Path:
+    data_dir = Path(data_dir).resolve()
+    return data_dir.with_name(data_dir.name + LOG_SUFFIX)
+
+
+def log_event(data_dir: Path, entry: Dict[str, Any]) -> None:
+    """Adaugă o linie în jurnal (în afara folderului de date și a folderului de copii: rămâne chiar dacă discul de copii lipsește). Nu ridică excepții."""
     try:
-        if cfg("backup_enabled") == "0" and not force:
-            return None
-        dest = Path(cfg("backup_dir")) if cfg("backup_dir") else default_backup_dir(data_dir)
-        if not force and not is_due(dest, float(cfg("backup_interval_hours") or 24)):
-            return None
+        path = log_path(data_dir)
+        lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+        lines.append(json.dumps(entry, ensure_ascii=False))
+        path.write_text("\n".join(lines[-LOG_MAX_LINES:]) + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"[backup] jurnalul nu a putut fi scris: {exc}")
+
+
+def read_log(data_dir: Path, limit: int = 100) -> List[Dict[str, Any]]:
+    """Cele mai noi intrări primele; liniile corupte sunt ignorate."""
+    path, rows = log_path(data_dir), []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return rows
+    for line in reversed(lines):
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+class _Lock:
+    """Evită două copii simultane (aplicația + Planificatorul Windows). Un lock mai vechi de 2 ore se consideră abandonat."""
+
+    def __init__(self, dest: Path):
+        self.path = Path(dest) / LOCK_NAME
+        self.held = False
+
+    def __enter__(self):
+        for _ in range(2):
+            try:
+                os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                self.held = True
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - self.path.stat().st_mtime > LOCK_STALE_SECONDS:
+                        self.path.unlink()
+                        continue
+                except OSError:
+                    pass
+                break
+        return self
+
+    def __exit__(self, *exc):
+        if self.held:
+            self.path.unlink(missing_ok=True)
+
+
+def _cfg(get_setting: Callable[[str], Optional[str]], key: str) -> str:
+    try:
+        value = get_setting(key)
+    except Exception:
+        value = None
+    return (value or DEFAULTS.get(key, "")).strip()
+
+
+def backup_destination(data_dir: Path, get_setting: Callable[[str], Optional[str]]) -> Path:
+    custom = _cfg(get_setting, "backup_dir")
+    return Path(custom) if custom else default_backup_dir(data_dir)
+
+
+def run_backup_job(data_dir: Path, get_setting: Callable[[str], Optional[str]], force: bool = False, trigger: str = "app") -> Dict[str, Any]:
+    """Copie + verificare + retenție + jurnal. Nu ridică excepții. `result`: ok | failed (jurnalizate) | skipped | disabled | busy (nejurnalizate)."""
+    data_dir = Path(data_dir)
+    if _cfg(get_setting, "backup_enabled") == "0" and not force:
+        return {"result": "disabled"}
+    dest = backup_destination(data_dir, get_setting)
+    try:
+        if not force and not is_due(dest, float(_cfg(get_setting, "backup_interval_hours") or 24)):
+            return {"result": "skipped"}
+    except (ValueError, OSError):
+        pass
+    entry: Dict[str, Any] = {"time": datetime.now().isoformat(timespec="seconds"), "trigger": trigger, "result": "failed", "location": str(dest)}
+    try:
         dest.mkdir(parents=True, exist_ok=True)
-        target = backup(Path(data_dir), dest)
-        prune(dest, int(cfg("backup_keep_days") or 14))
-        return target
+        with _Lock(dest) as lock:
+            if not lock.held:
+                return {"result": "busy"}
+            target = backup(data_dir, dest)
+            problems = verify(target)
+            if problems:
+                bad = target.with_name(target.name + ".invalid")
+                try:
+                    target.rename(bad)
+                except OSError:
+                    pass
+                raise RuntimeError("Copia creată nu a trecut verificarea (pusă în carantină: " + bad.name + "): " + "; ".join(problems[:3]))
+            files = json.loads((target / "manifest.json").read_text(encoding="utf-8"))["files"]
+            entry.update(result="ok", backup=target.name, path=str(target), location=str(target), verified=True, files=len(files),
+                         size=sum(p.stat().st_size for p in target.rglob("*") if p.is_file()))
+            try:
+                entry["pruned"] = prune(dest, int(_cfg(get_setting, "backup_keep_days") or 14),
+                                    max(MIN_KEEP_FLOOR, int(_cfg(get_setting, "backup_keep_min") or MIN_KEEP_FLOOR)))
+            except (OSError, ValueError) as exc:
+                entry["prune_error"] = str(exc)
     except (Exception, SystemExit) as exc:
-        print(f"[backup] eșuat: {exc}")
-        return None
+        entry.update(result="failed", error=str(exc) or exc.__class__.__name__)
+    log_event(data_dir, entry)
+    return entry
+
+
+def run_scheduled(data_dir: Path, get_setting: Callable[[str], Optional[str]], force: bool = False) -> Optional[Path]:
+    """Face o copie dacă e activată și scadentă; aplică retenția. Nu ridică excepții (returnează None la eșec sau dacă nu era scadentă)."""
+    result = run_backup_job(data_dir, get_setting, force=force, trigger="manual" if force else "app")
+    if result["result"] == "failed":
+        print(f"[backup] eșuat: {result.get('error')}")
+    return Path(result["path"]) if result["result"] == "ok" else None
+
+
+def health(data_dir: Path, get_setting: Callable[[str], Optional[str]], now: Optional[datetime] = None) -> Dict[str, str]:
+    """Starea pentru avertizarea din MAIN: level = ok | warning | error | off, plus mesaj. Eșecul cel mai recent rămâne „error” până la o copie reușită."""
+    now = now or datetime.now()
+    events = read_log(data_dir, 200)
+    last_ok = next((e for e in events if e.get("result") == "ok"), None)
+    try:
+        newest = list_backups(backup_destination(data_dir, get_setting))
+    except OSError:
+        newest = []
+    last_ok_time = datetime.fromisoformat(last_ok["time"]) if last_ok else (datetime.fromisoformat(newest[0]["created"]) if newest else None)
+    if events and events[0].get("result") == "failed":
+        return {"level": "error", "message": f"Ultima copie de rezervă a EȘUAT ({events[0].get('time', '?').replace('T', ' ')}): {events[0].get('error', 'eroare necunoscută')}"}
+    if _cfg(get_setting, "backup_enabled") == "0":
+        return {"level": "off", "message": "Copia automată de rezervă este dezactivată."}
+    if last_ok_time is None:
+        return {"level": "warning", "message": "Nu există nicio copie de rezervă. Fă una acum."}
+    try:
+        interval = float(_cfg(get_setting, "backup_interval_hours") or 24)
+    except ValueError:
+        interval = 24.0
+    age = now - last_ok_time
+    if age > timedelta(hours=2 * interval + 1):
+        return {"level": "warning", "message": f"Ultima copie reușită este veche de {int(age.total_seconds() // 3600)} ore ({last_ok_time:%Y-%m-%d %H:%M}). Verifică programarea."}
+    return {"level": "ok", "message": f"Ultima copie reușită: {last_ok_time:%Y-%m-%d %H:%M}."}
+
+
+def _settings_reader(data_dir: Path) -> Callable[[str], Optional[str]]:
+    """Citește setările din baza MAIN, doar în citire, fără interfață (rulare programată)."""
+    db_file = Path(data_dir) / _db_name(Path(data_dir))
+
+    def get(key: str) -> Optional[str]:
+        try:
+            conn = sqlite3.connect(f"file:{db_file.as_posix()}?mode=ro", uri=True, timeout=15)
+            try:
+                row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            finally:
+                conn.close()
+            return row[0] if row else None
+        except sqlite3.Error:
+            return None
+    return get
+
+
+def cli(argv: Optional[List[str]] = None) -> int:
+    """Punct de intrare fără interfață pentru Planificatorul Windows: 0 = reușit/nimic de făcut, 1 = EȘEC (vizibil în Task Scheduler și în MAIN)."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="backup-run", description="Copie de rezervă programată (verificată, jurnalizată). Nu restaurează niciodată.")
+    parser.add_argument("--data-dir", help="folderul de date (implicit CIMITIR_DATA_DIR)")
+    parser.add_argument("--dest", help="folderul de copii (suprascrie setarea din MAIN)")
+    parser.add_argument("--force", action="store_true", help="face copia chiar dacă ultima este recentă sau copia automată este dezactivată")
+    parser.add_argument("--status", action="store_true", help="doar afișează starea")
+    args = parser.parse_args(argv)
+    if args.data_dir:
+        os.environ["CIMITIR_DATA_DIR"] = str(Path(args.data_dir).resolve())
+    import cimitir_config
+    work = Path(cimitir_config.working_dir())
+    base = _settings_reader(work)
+    get = (lambda key: args.dest if key == "backup_dir" and args.dest else base(key))
+    if args.status:
+        state = health(work, get)
+        print(f"[{state['level']}] {state['message']}")
+        return 1 if state["level"] == "error" else 0
+    result = run_backup_job(work, get, force=args.force, trigger="windows-task")
+    if result["result"] == "ok":
+        print(f"[backup] OK: {result['path']} ({result['files']} fișiere, verificat)")
+        return 0
+    if result["result"] == "failed":
+        print(f"[backup] EȘEC: {result.get('error')}")
+        return 1
+    print(f"[backup] {result['result']}: nimic de făcut")
+    return 0
 
 
 def schedule_restore(backup_dir: Path, data_dir: Path) -> Path:

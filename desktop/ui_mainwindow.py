@@ -165,13 +165,6 @@ class CemeteryUI(QMainWindow):
         except Exception:
             pass
 
-        # backup automat zilnic
-        try:
-            import reports_export as rex
-            rex.auto_backup_daily()
-        except Exception:
-            pass
-
         # event filter pe viewport
         try:
             self.map_view.viewport().installEventFilter(self)
@@ -326,7 +319,7 @@ class CemeteryUI(QMainWindow):
         toolbar.addAction(act_cloud_center)
         act_backup = QAction("💾 Copii de rezervă", self)
         act_backup.setObjectName("act-backup")
-        act_backup.setToolTip("Copie zilnică automată a bazei și restaurare dintr-un clic")
+        act_backup.setToolTip("Copii de rezervă: copie acum, programare și retenție, verificare, jurnal, restaurare manuală confirmată")
         act_backup.triggered.connect(self.open_backup_window)
         toolbar.addAction(act_backup)
 
@@ -374,10 +367,6 @@ class CemeteryUI(QMainWindow):
         act_import = QAction("📥 Import locuri", self)
         act_import.triggered.connect(self.import_locuri_dialog)
         toolbar.addAction(act_import)
-
-        act_backup = QAction("💾 Backup", self)
-        act_backup.triggered.connect(self.backup_now)
-        toolbar.addAction(act_backup)
 
         act_map_export = QAction("🗺 Export hartă", self)
         act_map_export.triggered.connect(self.export_map_dialog)
@@ -1048,14 +1037,6 @@ class CemeteryUI(QMainWindow):
         except Exception:
             pass
 
-    def backup_now(self):
-        import reports_export as rex
-        path = rex.backup_db()
-        if path:
-            QMessageBox.information(self, "Backup", f"Backup creat:\n{path}")
-        else:
-            QMessageBox.warning(self, "Backup", "Backup-ul a eșuat.")
-
     def export_map_dialog(self):
         from PySide6.QtWidgets import QFileDialog
         from PySide6.QtGui import QImage, QPainter
@@ -1090,7 +1071,11 @@ class CemeteryUI(QMainWindow):
             QMessageBox.warning(self, "Export hartă", f"Eroare: {e}")
 
     def open_amenajari_window(self):
-        self._open_small_window("Amenajări")
+        """Avizele/amenajările se văd și se editează în fișa locului (tabul „Amenajări”)."""
+        if not getattr(self, "selected_cod_loc", None):
+            QMessageBox.information(self, "Amenajări / Avize", "Selectează mai întâi un loc de veci pe hartă; avizele lui apar în fișa din dreapta, tabul „Amenajări”.")
+            return
+        self.right_panel.menu.setCurrentRow(5)
 
     def open_rapoarte_dialog(self):
         try:
