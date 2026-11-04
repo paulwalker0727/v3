@@ -172,7 +172,7 @@ async function openSyncPanel(){
 }
 
 ext.initExt({get state(){return state;},API,api,toast,outbox,saveOutbox,syncNow:()=>syncNow(),newId,getRow:(e,u)=>getRow(e,u),openRecordForm:(e,u)=>openRecordForm(e,u)});
-(async function boot(){if('serviceWorker' in navigator){navigator.serviceWorker.register('/mobile/sw.js',{scope:'/mobile/'}).catch(()=>{});}let link=takePairCodeFromUrl();try{state.key=await kvGet('binding_key');}catch(_e){}if(link&&state.key&&!confirm('Acest dispozitiv este deja asociat. Îl reasociezi cu noul cod?'))link='';if(link){state.prevKey=state.key;state.key=null;pairingView('',link);}else if(state.key)await loadApp();else pairingView();})();
+(async function boot(){if('serviceWorker' in navigator){navigator.serviceWorker.register('/mobile/sw.js',{scope:'/mobile/'}).catch(()=>{});}try{navigator.storage?.persist?.().catch(()=>{});}catch(_e){}let link=takePairCodeFromUrl();try{state.key=await kvGet('binding_key');}catch(_e){}if(link&&state.key&&!confirm('Acest dispozitiv este deja asociat. Îl reasociezi cu noul cod?'))link='';if(link){state.prevKey=state.key;state.key=null;pairingView('',link);}else if(state.key)await loadApp();else pairingView();})();
 
 /* ---------------- Mobile v2 (Etapele B/C/E): registre, fișă, formulare, offline ---------------- */
 const plotColor=(p)=>p.occupied?'#9f5a52':/rezerv|concesion|vândut|vandut/i.test(`${p.state||''} ${p.availability||''}`)?'#c9993a':'#4f8a68';
