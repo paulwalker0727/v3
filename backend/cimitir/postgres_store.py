@@ -45,6 +45,8 @@ import uuid  # noqa: E402
 import_media_file = _sqlite.import_media_file
 _media_dir = _sqlite._media_dir
 _is_managed_media = _sqlite._is_managed_media
+media_root = _sqlite.media_root
+cache_dir = _sqlite.cache_dir
 
 
 # =============================================================================

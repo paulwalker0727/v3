@@ -31,6 +31,14 @@ TENANT_COLS = ("organization_uid", "cemetery_uid")   # coloane de tenant (migră
 TENANT_TABLES = {"organizations", "cemeteries", "identities", "organization_members", "cemetery_permissions", "devices", "device_cemetery_bindings", "device_pairing_codes"}
 needs_pg = pytest.mark.skipif(not TEST_URL, reason="CIMITIR_TEST_DATABASE_URL nu este setat")
 
+LATEST_MIGRATION = len(list((ROOT / "backend" / "cimitir" / "pg_migrations").glob("*.sql")))   # schema_version = numărul de migrări aplicate
+_SERVER_ONLY_PREFIXES = ("cp_", "sync_v2_")     # planul de control / sincronizarea v2: există doar pe server (nu în SQLite, deci nu în scriptul one-off de migrare)
+
+
+def _server_only(table: str) -> bool:
+    return table.startswith(_SERVER_ONLY_PREFIXES) or table in TENANT_TABLES | {"mobile_upload_tokens"}
+
+
 EXPECTED_TABLES = {
     "locuri_de_veci", "concesionari", "contracte", "inhumati", "sectoare", "settings", "photos", "amenajari_avize",
     "loc_extra", "guides", "rows_ghid", "plati", "documents", "citizens", "citizen_resets", "cereri_concesionare",
@@ -160,10 +168,10 @@ def test_migrations_create_all_tables_and_are_idempotent(pg):
     with pg._db() as c:
         tables = {r[0] for r in c.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()")}
         assert EXPECTED_TABLES <= tables, EXPECTED_TABLES - tables
-        assert pg.schema_version() == 13  # 001 + 002 + 003 (Etapa 6: sincronizare pe entități)
+        assert pg.schema_version() == LATEST_MIGRATION  # 001 + 002 + 003 (Etapa 6: sincronizare pe entități)
     assert pg.migrate() == []  # a doua rulare nu aplică nimic
     pg.init_db(force=True)
-    assert pg.schema_version() == 13
+    assert pg.schema_version() == LATEST_MIGRATION
 
 
 @needs_pg
@@ -451,7 +459,7 @@ def test_sqlite_remains_the_default_engine(monkeypatch):
 @needs_pg
 def test_health_reports_connection_and_hides_secrets(pg, monkeypatch):
     h = pg.health()
-    assert h["engine"] == "postgres" and h["connected"] is True and h["schema_version"] == 13 and h["latency_ms"] >= 0
+    assert h["engine"] == "postgres" and h["connected"] is True and h["schema_version"] == LATEST_MIGRATION and h["latency_ms"] >= 0
     monkeypatch.setenv("CIMITIR_PG_CONNECT_TIMEOUT", "1")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:topsecret@127.0.0.1:1/nope")
     bad = pg.health()
@@ -531,7 +539,7 @@ def test_server_on_postgres_reports_status_and_stores_data_in_postgres(pg_server
         body = server.get("/api/public/status")
         assert body["server"] == "online" and body["status"] == "ok" and body["mode"] == "online"
         db = body["database"]
-        assert db["engine"] == "postgres" and db["connected"] is True and db["schema_version"] == 13
+        assert db["engine"] == "postgres" and db["connected"] is True and db["schema_version"] == LATEST_MIGRATION
         assert "url" not in json.dumps(body).lower() and "password" not in json.dumps(body).lower()
         assert not (tmp_path / "s" / "cimitir.db").exists()  # nu s-a creat nicio bază SQLite
 
@@ -656,7 +664,7 @@ def test_check_script_reports_connection_version_latency_and_schema(pg):
     assert rep["latency_ms"]["samples"] == 5 and rep["latency_ms"]["query_avg"] >= 0
     sc = rep["schema"]
     assert sc["state"] == "complete" and sc["tables_missing"] == [] and sc["migrations_pending"] == []
-    assert sc["migrations_applied"] == list(range(1, 14)) and sc["tables_present"] == sc["tables_expected"] == 39 and sc["can_create"]
+    assert sc["migrations_applied"] == list(range(1, LATEST_MIGRATION + 1)) and sc["tables_present"] == sc["tables_expected"] >= 39 and sc["can_create"]
     assert rep["engine_configured"] == "sqlite"  # scriptul nu activează PostgreSQL
     assert TEST_URL not in out + err
     code, out, _ = _check("--strict", DATABASE_URL=TEST_URL)  # varianta text
@@ -827,7 +835,7 @@ def test_postgres_schema_covers_every_sqlite_table_column_key_fk_and_index(pg, t
 
 @needs_pg
 def test_migration_002_is_repeatable_and_adds_keys_and_indexes(pg):
-    assert pg.schema_version() == 13 and pg.migrate() == []
+    assert pg.schema_version() == LATEST_MIGRATION and pg.migrate() == []
     sql = (ROOT / "backend" / "cimitir" / "pg_migrations" / "002_extra_tables_fks_indexes.sql").read_text(encoding="utf-8")
     with pg._db() as c:  # rulat a doua oară direct: nu eșuează și nu duplică nimic
         c.raw.execute(sql)   # rularea manuală a unei migrări vechi peste schema finală poate re-adăuga FK-uri simple; a doua rulare nu are voie să adauge altele
@@ -1157,10 +1165,10 @@ def test_migration_script_tables_fks_and_uid_tables_match_the_real_schema(pg):
     spec.loader.exec_module(mod)
     with pg._db() as c:
         tables = {r[0] for r in c.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()")} - {"schema_migrations"}
-        tables -= TENANT_TABLES | {"mobile_upload_tokens"}   # tokenii de upload sunt temporari, doar pe server (nu există în SQLite); scriptul one-off SQLite->PostgreSQL nu copiază tabelele multi-tenant (nu există în SQLite)
+        tables = {t for t in tables if not _server_only(t)}   # tokenii de upload sunt temporari, doar pe server (nu există în SQLite); scriptul one-off SQLite->PostgreSQL nu copiază tabelele multi-tenant (nu există în SQLite)
         assert set(mod.TABLE_ORDER) == tables and len(mod.TABLE_ORDER) == len(tables)
         with_uid = {r[0] for r in c.execute("SELECT table_name FROM information_schema.columns WHERE table_schema=current_schema() AND column_name='uid'")}
-        assert mod.UID_TABLES == with_uid - TENANT_TABLES
+        assert mod.UID_TABLES == {t for t in with_uid if not _server_only(t)}
         fks = set()
         for child, parent, ccols, pcols in c.raw.execute(
                 "SELECT r.relname, p.relname, "
@@ -1168,7 +1176,7 @@ def test_migration_script_tables_fks_and_uid_tables_match_the_real_schema(pg):
                 "(SELECT array_agg(b.attname ORDER BY u.ord) FROM unnest(k.confkey) WITH ORDINALITY u(attnum, ord) JOIN pg_attribute b ON b.attrelid=p.oid AND b.attnum=u.attnum) "
                 "FROM pg_constraint k JOIN pg_class r ON r.oid=k.conrelid JOIN pg_class p ON p.oid=k.confrelid "
                 "WHERE k.contype='f' AND r.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema())"):
-            if child in TENANT_TABLES | {"mobile_upload_tokens"} or parent in TENANT_TABLES:
+            if _server_only(child) or _server_only(parent):
                 continue
             pairs = [(cc, pc) for cc, pc in zip(ccols, pcols) if cc not in TENANT_COLS]      # 011/012: cheile sunt compuse (cemetery_uid, id) — logic rămâne FK-ul simplu
             if len(pairs) == 1:
@@ -1178,7 +1186,7 @@ def test_migration_script_tables_fks_and_uid_tables_match_the_real_schema(pg):
         assert all(order[par] < order[ch] for ch, _c, par, _p, _n in mod.LOGICAL_FKS)   # părinții se încarcă primii
         json_cols = {(r[0], r[1]) for r in c.execute("SELECT table_name, column_name FROM information_schema.columns "
                                                      "WHERE table_schema=current_schema() AND data_type='jsonb'")}
-        assert {x for x in json_cols if x[0] not in TENANT_TABLES} == mod.JSON_COLUMNS
+        assert {x for x in json_cols if not _server_only(x[0])} == mod.JSON_COLUMNS
 
 
 @needs_pg

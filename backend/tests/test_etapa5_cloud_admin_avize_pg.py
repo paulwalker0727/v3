@@ -13,6 +13,7 @@ FULL = {"stare": "in_lucru", "executant": "Popa SRL", "data_inceput": "2026-03-0
 
 @pytest.fixture(autouse=True)
 def _plot(pg):
+    pg.avize_optional_cols(refresh=True)      # schema e recreată la fiecare test; cache-ul de detectare (30 s) se reîmprospătează
     pg.save_plot_to_db("A-1", [], "#111")
 
 
@@ -60,3 +61,19 @@ def test_partial_028_is_not_extended(pg):
     pg.update_aviz(aid, {**FULL})
     row = pg.get_aviz(aid)
     assert row["executant"] == "Popa SRL" and row["observatii"] == ""
+
+
+def test_cloud_fisa_pdf_on_postgres_includes_the_028_fields(pg):
+    import fitz
+    import store
+    import fisa_pdf
+    aid = pg.add_aviz("A-1", "AV-9", "2026-03-01", "bordură", executant="Popa SRL", data_inceput="2026-03-05")
+    pg.update_aviz(aid, {"stare": "finalizata", "data_finalizare": "2026-03-20", "observatii": "recepționat fără obiecțiuni"})
+    store.bind_source(store.POSTGRES_SOURCE)
+    try:
+        pdf = fisa_pdf.build_fisa_pdf("A-1")
+    finally:
+        store._engine_ctx.set(None)
+        store._source_ctx.set(None)
+    text = "".join("".join(p.get_text().split()) for p in fitz.open(stream=pdf, filetype="pdf"))   # PDF-ul împarte textul pe rânduri
+    assert all("".join(v.split()) in text for v in ("Popa SRL", "2026-03-05", "2026-03-20", "recepționat fără obiecțiuni"))

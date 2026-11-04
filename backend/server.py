@@ -76,6 +76,25 @@ for _lg in ("psycopg.pool", "psycopg"):
     logging.getLogger(_lg).addFilter(_DbConnLogFilter())
 
 
+class _TokenPathLogFilter(logging.Filter):
+    """Linkul QR de încărcare conține tokenul în cale (/api/m/<token>/…): în jurnalul de acces tokenul se maschează."""
+    _RX = re.compile(r"(/api/m/)[^/?\s]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if isinstance(record.args, tuple):
+                record.args = tuple(self._RX.sub(r"\1[TOKEN]", a) if isinstance(a, str) else a for a in record.args)
+            if isinstance(record.msg, str):
+                record.msg = self._RX.sub(r"\1[TOKEN]", record.msg)
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+
+for _lg in ("uvicorn.access", "uvicorn", "uvicorn.error"):
+    logging.getLogger(_lg).addFilter(_TokenPathLogFilter())
+
+
 import store as cim          # noqa: E402
 from cimitir_loc_options import (LOC_SELECT_FIELDS, is_allowed_value, loc_observatii,  # noqa: E402
                                  observatii_metadata, options_for)
