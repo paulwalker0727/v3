@@ -591,7 +591,7 @@ def test_history_does_not_change_import_mechanism_and_adds_no_migration():
     import subprocess
     root = __import__("pathlib").Path(__file__).resolve().parents[2]
     mig = sorted(p.name for p in (root / "backend" / "cimitir" / "pg_migrations").glob("*.sql"))
-    assert mig[-1].startswith("019_") and not any(n.startswith("020") for n in mig)
+    assert any(n.startswith("019_") for n in mig) and not any("history" in n or "istoric" in n for n in mig)   # istoricul nu adaugă migrare proprie
     ref = subprocess.run(["git", "rev-parse", "--verify", "-q", "main"], cwd=root, capture_output=True, text=True, check=False)
     if ref.returncode != 0:
         pytest.skip("referința main nu există în acest checkout")

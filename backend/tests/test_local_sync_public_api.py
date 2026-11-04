@@ -44,8 +44,8 @@ def _clear_backend_related_modules() -> None:
         "mongo_store",
     ]:
         sys.modules.pop(name, None)
-    from module_isolation import purge_colliding_modules
-    purge_colliding_modules()
+    from module_isolation import purge_project_modules
+    purge_project_modules()
 
 
 def _import_server_with_env(data_dir: Path):

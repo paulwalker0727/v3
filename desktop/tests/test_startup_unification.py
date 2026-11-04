@@ -102,7 +102,8 @@ def test_portal_command_dev_vs_frozen(monkeypatch):
 
 
 def test_spec_packages_the_portal_and_installer_ships_the_whole_folder():
-    from tests.test_build_packaging import _eval_spec
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_build_packaging import _eval_spec
     kw = _eval_spec("0", "0")["analysis_kwargs"]
     dests = {d[1] for d in kw["datas"]}
     assert {"portal/templates", "portal/static", "portal/fonts", "portal/doc_templates"} <= dests
@@ -183,22 +184,23 @@ out['approved'] = cimitir_requests.approve_cerere(rows[0]['id'])['already']
     assert requests.get(f"{url}/api/public/map", timeout=10).json()["plots"][0]["disponibilitate"] == "rezervat"
 
 
-def test_local_mode_web_admin_cannot_approve_or_create_contracts(portal_local):
+def test_local_mode_web_approval_requires_session_and_approve_right(portal_local):
+    """Modelul actual: aprobarea din web cere sesiune + dreptul `approve` (nu mai există blocarea «numai MAIN»); anonim = 401."""
     data, url, _ = portal_local
     sent = requests.post(f"{url}/api/public/cerere", data={"nume": "A", "prenume": "B", "privacy_ack": "1"}, timeout=15).json()
+    cid = _desktop(data, "out['id'] = db.list_cereri_concesionare()[0]['id']")["id"]
+    anon = requests.post(f"{url}/admin/ui/cerere/{cid}/status", data={"status": "validat"}, allow_redirects=False, timeout=10)
+    assert anon.status_code in (401, 403, 303) and "/admin/cereri" not in (anon.headers.get("location") or "")
+    assert _desktop(data, "out['s'] = db.list_cereri_concesionare()[0]['status']")["s"] != "validat"
     session = requests.Session()
     session.post(f"{url}/admin/access/login", data={"username": "admin", "password": "admin123"}, allow_redirects=False, timeout=10)
     r = session.post(f"{url}/admin/schimba-parola", data={"old_password": "admin123", "new_password": "Parola-test-987",
                                                            "confirm_password": "Parola-test-987"}, allow_redirects=False, timeout=10)
     assert r.status_code == 303
-    cid = _desktop(data, "out['id'] = db.list_cereri_concesionare()[0]['id']")["id"]
-    for status in ("validat", "respins"):
-        resp = session.post(f"{url}/admin/ui/cerere/{cid}/status", data={"status": status}, allow_redirects=False, timeout=10)
-        assert resp.status_code == 403 and resp.json()["detail"]["error"] == "main_only"
-    assert session.post(f"{url}/admin/ui/loc/L-1/contract", data={"numar_contract": "X"}, allow_redirects=False, timeout=10).status_code == 403
-    page = session.get(f"{url}/admin/cereri", timeout=10).text
-    assert f'data-testid="cerere-main-only-{cid}"' in page and "cerere-approve-" not in page and "cerere-reject-" not in page
-    assert requests.get(f"{url}/api/public/cerere/{sent['cod_urmarire']}", timeout=10).json()["status"] == "nou"
+    resp = session.post(f"{url}/admin/ui/cerere/{cid}/status", data={"status": "validat"}, allow_redirects=False, timeout=10)
+    assert resp.status_code == 303 and resp.headers["location"].endswith("/admin/cereri")
+    assert _desktop(data, "out['s'] = db.list_cereri_concesionare()[0]['status']")["s"] == "validat"
+    assert requests.get(f"{url}/api/public/cerere/{sent['cod_urmarire']}", timeout=10).json()["status"] == "validat"
 
 
 def test_web_server_keeps_only_phone_scanning_and_react_is_gone():

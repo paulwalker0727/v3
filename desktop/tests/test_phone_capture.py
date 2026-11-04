@@ -300,7 +300,7 @@ def test_server_down_is_not_success(world):
 # ------------------------------------------------------------------ fără scurgeri
 def test_no_secret_or_signed_url_in_client_code_and_page():
     js = (REPO / "backend/static/teren.js").read_text() + (REPO / "backend/static/teren_ui.js").read_text()
-    html = (REPO / "backend/templates/teren.html").read_text()
+    html = (REPO / "backend/templates/teren.html").read_text() + (REPO / "backend/templates/partials/teren_capture.html").read_text()
     for needle in ("console.", "service_role", "SUPABASE", "DATABASE_URL", "postgres", "/url", "signed", "sessionStorage", "document.cookie", "indexedDB", "cleanup"):
         assert needle not in js and needle not in html, needle
     assert js.count("localStorage") == 1 and "STORE_KEY" in js and js.count("setItem") == 1

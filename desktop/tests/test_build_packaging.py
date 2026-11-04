@@ -26,7 +26,7 @@ INSTALLER_DIR = PROJECT_ROOT / "installer"
 BAT = PROJECT_ROOT / "build_exe.bat"
 ISS = INSTALLER_DIR / "cimitir_setup.iss"
 VER_FILE = INSTALLER_DIR / "file_version_info.txt"
-WORKFLOW = Path("/app/.github/workflows/build-windows.yml")
+WORKFLOW = PROJECT_ROOT.parent / ".github" / "workflows" / "build-windows.yml"
 
 
 # ============= FIXTURES =============
@@ -135,7 +135,7 @@ class TestLauncherMain:
         monkeypatch.setattr(theme, "app_icon", _boom)
 
         # Fake db to avoid touching real state
-        monkeypatch.setattr(launcher.db, "init_db", lambda: None)
+        monkeypatch.setattr(launcher.db, "init_db", lambda: None, raising=False)
         monkeypatch.setattr(launcher.db, "get_setting", lambda k: None)
         monkeypatch.setattr(launcher.db, "set_setting", lambda k, v: None)
 

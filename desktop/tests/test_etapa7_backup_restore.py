@@ -43,6 +43,7 @@ def world(tmp_path, monkeypatch):
     data = tmp_path / "data"
     data.mkdir()
     monkeypatch.setattr(db, "DATA_DIR", str(data))
+    previous = db._active_db_path.get()
     db.set_active_db_path(str(data / "cimitir.db"))
     db.init_db()
     db.save_plot_to_db("A-1", [(0, 0), (4, 0), (4, 3)], "#111")
@@ -58,7 +59,8 @@ def world(tmp_path, monkeypatch):
     db.save_photo("A-1", db.import_media_file(str(src), "loc"))
     doc = db.add_document("inhumat", iid, "certificat", str(src), caption="cert")
     assert cid and kid and iid and aid and doc
-    return {"data": data, "tmp": tmp_path, "cid": cid, "kid": kid, "iid": iid, "aid": aid}
+    yield {"data": data, "tmp": tmp_path, "cid": cid, "kid": kid, "iid": iid, "aid": aid}
+    db.set_active_db_path(previous)
 
 
 def test_full_backup_restore_keeps_all_records_relations_and_media_bytes(world):
