@@ -684,37 +684,86 @@ def set_cover_photo(cod_loc: str, photo_id: int) -> bool:
 # =============================================================================
 # AMENAJĂRI / AVIZE
 # =============================================================================
-def list_avize_for_loc(cod_loc: str) -> List[Dict[str, Any]]:
-    with _db() as conn:
-        rows = conn.execute("SELECT id, nr_aviz, data_aviz, lucrare, created_at FROM amenajari_avize "
-                            "WHERE cod_loc = ? AND cemetery_uid = app_default_cemetery_uid() ORDER BY id", (cod_loc,)).fetchall()
-        return [{"id": r["id"], "nr": r["nr_aviz"], "data": r["data_aviz"], "lucrare": r["lucrare"] or "",
-                 "created_at": r["created_at"]} for r in rows]
+_AVIZ_OPT = ("stare", "executant", "data_inceput", "data_finalizare", "observatii")
+_AVIZ_BASE = {"nr": "nr_aviz", "data": "data_aviz", "lucrare": "lucrare"}
+_aviz_opt_cache: Dict[str, Any] = {"t": 0.0, "cols": frozenset()}
 
 
-def add_aviz(cod_loc: str, nr: str, data_aviz: Optional[str], lucrare: str = "") -> Optional[int]:
+def avize_optional_cols(refresh: bool = False) -> frozenset:
+    """Coloanele 028 pe care schema curentă le poate stoca (există + drept UPDATE pentru rolul runtime). Cache scurt; rollback 028 => gol."""
+    now = time.monotonic()
+    if not refresh and now - _aviz_opt_cache["t"] < 30.0 and _aviz_opt_cache["t"]:
+        return _aviz_opt_cache["cols"]
     try:
         with _db() as conn:
-            return conn.execute("INSERT INTO amenajari_avize (cod_loc, nr_aviz, data_aviz, lucrare) VALUES (?, ?, ?, ?)",
-                                (cod_loc, nr, data_aviz, lucrare or "")).lastrowid
+            marks = ",".join("?" for _ in _AVIZ_OPT)
+            rows = conn.execute("SELECT x.column_name FROM information_schema.columns x WHERE x.table_schema=current_schema() "
+                                f"AND x.table_name='amenajari_avize' AND x.column_name IN ({marks}) "
+                                "AND has_column_privilege(current_user, quote_ident(x.table_schema)||'.'||quote_ident(x.table_name), x.column_name, 'UPDATE')",
+                                _AVIZ_OPT).fetchall()
+            cols = frozenset(r["column_name"] for r in rows)
+    except Exception as e:  # noqa: BLE001
+        print(f"[PG ERROR avize_optional_cols] {e}")
+        cols = frozenset()
+    _aviz_opt_cache.update(t=now, cols=cols)
+    return cols
+
+
+def avize_extended() -> bool:
+    """True doar dacă TOATE coloanele 028 sunt disponibile (UI-ul Cloud admin afișează câmpurile complete)."""
+    return set(_AVIZ_OPT) <= set(avize_optional_cols())
+
+
+def _aviz_dict(r, opt) -> Dict[str, Any]:
+    out = {"id": r["id"], "cod_loc": r["cod_loc"], "nr": r["nr_aviz"], "data": r["data_aviz"], "lucrare": r["lucrare"] or "",
+           "created_at": r["created_at"]}
+    for c in _AVIZ_OPT:
+        out[c] = (r[c] or "") if c in opt else ""
+    return out
+
+
+def _aviz_select(opt) -> str:
+    return "id, cod_loc, nr_aviz, data_aviz, lucrare, created_at" + "".join(", " + c for c in _AVIZ_OPT if c in opt)
+
+
+def list_avize_for_loc(cod_loc: str) -> List[Dict[str, Any]]:
+    opt = avize_optional_cols()
+    with _db() as conn:
+        rows = conn.execute(f"SELECT {_aviz_select(opt)} FROM amenajari_avize "
+                            "WHERE cod_loc = ? AND cemetery_uid = app_default_cemetery_uid() ORDER BY id", (cod_loc,)).fetchall()
+        return [_aviz_dict(r, opt) for r in rows]
+
+
+def add_aviz(cod_loc: str, nr: str, data_aviz: Optional[str], lucrare: str = "",
+             executant: Optional[str] = None, data_inceput: Optional[str] = None) -> Optional[int]:
+    opt = avize_optional_cols()
+    cols = ["cod_loc", "nr_aviz", "data_aviz", "lucrare"]
+    vals: List[Any] = [cod_loc, nr, data_aviz, lucrare or ""]
+    for c, v in (("executant", executant), ("data_inceput", data_inceput)):
+        if c in opt:
+            cols.append(c)
+            vals.append((v or "").strip() or None)
+    try:
+        with _db() as conn:
+            return conn.execute(f"INSERT INTO amenajari_avize ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})", tuple(vals)).lastrowid
     except Exception as e:
         print(f"[PG ERROR add_aviz] {e}")
         return None
 
 
 def get_aviz(aviz_id: int) -> Optional[Dict[str, Any]]:
+    opt = avize_optional_cols()
     with _db() as conn:
-        r = conn.execute("SELECT id, cod_loc, nr_aviz, data_aviz, lucrare, created_at FROM amenajari_avize "
+        r = conn.execute(f"SELECT {_aviz_select(opt)} FROM amenajari_avize "
                          "WHERE id = ? AND cemetery_uid = app_default_cemetery_uid()", (aviz_id,)).fetchone()
-        return None if not r else {"id": r["id"], "cod_loc": r["cod_loc"], "nr": r["nr_aviz"], "data": r["data_aviz"],
-                                   "lucrare": r["lucrare"] or "", "stare": "", "observatii": "", "data_finalizare": "",
-                                   "created_at": r["created_at"]}
+        return None if not r else _aviz_dict(r, opt)
 
 
 def update_aviz(aviz_id: int, fields: Dict[str, Any]) -> bool:
-    """PostgreSQL (schema 001–014): doar nr, data, lucrare; stare/observații/finalizare există doar în SQLite local."""
-    cols = {"nr": "nr_aviz", "data": "data_aviz", "lucrare": "lucrare"}
-    sets = [(cols[k], v or "") for k, v in fields.items() if k in cols]
+    """nr/data/lucrare mereu; stare/executant/date/observații doar dacă migrarea 028 e aplicată (altfel sunt ignorate)."""
+    opt = avize_optional_cols()
+    sets = [(_AVIZ_BASE[k], v or "") for k, v in fields.items() if k in _AVIZ_BASE]
+    sets += [(k, v if v is not None else "") for k, v in fields.items() if k in _AVIZ_OPT and k in opt]
     if not sets:
         return False
     try:

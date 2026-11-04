@@ -1124,6 +1124,11 @@ def list_avize_for_loc(cod_loc: str) -> List[Dict[str, Any]]:
         conn.close()
 
 
+def avize_extended() -> bool:
+    """SQLite local: schema are întotdeauna câmpurile complete ale lucrărilor/avizelor."""
+    return True
+
+
 def _aviz_dict(r) -> Dict[str, Any]:
     k = r.keys()
     g = lambda c: (r[c] if c in k else "") or ""  # noqa: E731

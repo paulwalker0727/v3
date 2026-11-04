@@ -1007,7 +1007,7 @@ def _loc_detail(cod_loc: str):
     loc["observatii"] = loc_observatii(loc)
     loc_options = {f: options_for(f, loc.get(f)) for f in LOC_SELECT_FIELDS}
     return {"loc": loc, "loc_options": loc_options, "concesionar": conces, "contracte": contracte, "inhumati": inhumati_l,
-            "avize": avize, "lucrari_extended": getattr(cim, "ENGINE", "") != "postgres", "stari": LUCRARE_STARI, "loc_photos": loc_photos,
+            "avize": avize, "lucrari_extended": _avize_extended(), "stari": LUCRARE_STARI, "loc_photos": loc_photos,
             "plati": {"total": cim.total_plati(cod_loc), "items": cim.list_plati(cod_loc)}}
 
 
@@ -1163,9 +1163,17 @@ async def loc_aviz(request: Request, cod_loc: str):
     _require_writer(request)
     b = dict(await request.form())
     aid = cim.add_aviz(cod_loc, b.get("nr", ""), b.get("data", ""), b.get("lucrare", ""))
-    if aid and getattr(cim, "ENGINE", "") != "postgres":
+    if aid and _avize_extended():
         cim.update_aviz(aid, _lucrare_fields(b, {}))
     return _drawer(request, cod_loc, open_tab="t-avize")
+
+
+def _avize_extended() -> bool:
+    """Câmpurile complete ale lucrărilor (migrarea 028 pe PostgreSQL; mereu pe SQLite)."""
+    try:
+        return bool(cim.avize_extended())
+    except AttributeError:
+        return getattr(cim, "ENGINE", "") != "postgres"
 
 
 def _lucrare_fields(b: dict, current: dict) -> dict:
@@ -1188,7 +1196,7 @@ async def aviz_edit(request: Request, aid: int):
         raise HTTPException(status_code=404, detail="Lucrarea nu există")
     b = dict(await request.form())
     fields = _lucrare_fields(b, cur)
-    if getattr(cim, "ENGINE", "") == "postgres":
+    if not _avize_extended():
         fields = {k: v for k, v in fields.items() if k in ("nr", "data", "lucrare")}
     cim.update_aviz(aid, fields)
     cimitir_requests.audit("staff", (_require(request) or {}).get("username", ""), "aviz.update", f"aviz:{aid}", json.dumps(fields, ensure_ascii=False))
