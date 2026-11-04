@@ -84,6 +84,16 @@ def test_failure_is_logged_and_raises_a_visible_error_until_next_success(tmp_pat
     assert [e["result"] for e in bk.read_log(data)] == ["ok", "failed"]
 
 
+def test_in_app_retry_after_failure_is_throttled_but_windows_task_is_not(tmp_path):
+    data, blocker = make_data(tmp_path), tmp_path / "fisier"
+    blocker.write_text("nu e folder")
+    bad = getter({"backup_dir": str(blocker / "sub")})
+    assert bk.run_backup_job(data, bad, trigger="app")["result"] == "failed"
+    assert bk.run_backup_job(data, bad, trigger="app")["result"] == "skipped"
+    assert bk.run_backup_job(data, bad, trigger="windows-task")["result"] == "failed"
+    assert len(bk.read_log(data)) == 2
+
+
 def test_copy_that_fails_verification_is_quarantined_and_reported(tmp_path, monkeypatch):
     data, dest = make_data(tmp_path), tmp_path / "copii"
     monkeypatch.setattr(bk, "verify", lambda p: ["sumă de control greșită: cimitir.db"])

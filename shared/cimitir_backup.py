@@ -31,6 +31,7 @@ LOCK_NAME = ".backup.lock"
 LOCK_STALE_SECONDS = 2 * 3600
 LOG_SUFFIX = ".backup-log.jsonl"
 LOG_MAX_LINES = 500
+RETRY_AFTER_FAILURE_MIN = 60
 
 
 def _sha(path: Path) -> str:
@@ -328,6 +329,13 @@ def run_backup_job(data_dir: Path, get_setting: Callable[[str], Optional[str]], 
     if _cfg(get_setting, "backup_enabled") == "0" and not force:
         return {"result": "disabled"}
     dest = backup_destination(data_dir, get_setting)
+    if not force and trigger == "app":
+        last = read_log(data_dir, 1)
+        try:
+            if last and last[0].get("result") == "failed" and datetime.now() - datetime.fromisoformat(last[0]["time"]) < timedelta(minutes=RETRY_AFTER_FAILURE_MIN):
+                return {"result": "skipped"}       # nu umple jurnalul cu eșecuri repetate la fiecare verificare din MAIN (30 min)
+        except (KeyError, ValueError):
+            pass
     try:
         if not force and not is_due(dest, float(_cfg(get_setting, "backup_interval_hours") or 24)):
             return {"result": "skipped"}
