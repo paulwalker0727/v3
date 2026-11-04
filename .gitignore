@@ -125,3 +125,20 @@ CimitirSetupManager/
 .cimitir_setup_manager/
 setup_manager_home/
 tools/setup_manager/**/__pycache__/
+
+# Etapa 10: copii de rezervă locale și artefacte de runtime (niciodată în Git; fișierele de pe disc se păstrează)
+shared_data-backups/
+*-backups/
+cimitir-[0-9]*-[0-9]*/
+cimitir-*.invalid/
+*.backup-log.jsonl
+*.restore-pending.json
+*.inainte-de-restaurare-*/
+.backup.lock
+PROTEJAT
+*.tmp
+*.swp
+Thumbs.db
+
+# build local (generat de desktop/build_exe.bat)
+requirements-build-ci.txt
