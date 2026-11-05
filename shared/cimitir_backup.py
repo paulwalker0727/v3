@@ -5,8 +5,8 @@
 - copiile automate: `run_backup_job` / `run_scheduled` (la interval configurabil, doar dacă ultima copie e mai veche), fiecare copie este
   verificată imediat (SHA-256 + integrity_check); o copie nevalidă este pusă în carantină (`*.invalid`) și raportată ca EȘEC;
 - jurnal JSONL (`<folder-date>.backup-log.jsonl`): data, rezultat, locație, mărime, eroare; `health` dă avertizarea vizibilă în MAIN;
-- retenție: păstrare N zile, dar niciodată sub `MIN_KEEP_FLOOR` copii, nu se șterge nimic dacă nu există copii valide mai noi și nu se
-  șterg copiile marcate „protejat”; restaurarea rămâne MANUALĂ (nu e apelată niciodată de programare);
+- retenție: păstrare N zile, dar niciodată sub `MIN_KEEP_FLOOR` copii, nu se șterge nimic dacă cele mai noi nu sunt VALIDE (verificare
+  completă) și nu se șterg copiile marcate „protejat”; restaurarea rămâne MANUALĂ (nu e apelată niciodată de programare);
 - rulare programată fără interfață: `cli` (Planificatorul de activități Windows: `Cimitir.exe --backup-run` / `scripts/backup_scheduled.py`);
 - restaurare „dintr-un clic": `schedule_restore` pregătește restaurarea, iar la următoarea pornire `apply_pending_restore` o aplică
   înainte de deschiderea bazei (nu se înlocuiește niciodată o bază deschisă).
@@ -158,6 +158,21 @@ def _rebase_media_paths(db_file: Path, media_dir: Path) -> int:
     return changed
 
 
+CARRY_OVER = (".jwt_secret", "registry.json", "license.dat", "secrets", "logs", "registry_catalog.sqlite", "registries")
+
+
+def _carry_over(safety: Path, data_dir: Path) -> None:
+    """BUG-02: copia conține doar baza + media; restul stării locale (cheia/profilele Cloud din `secrets/`, licența, jurnalele, catalogul și registrele
+    modului „bază veche”) trăiește în același folder și trebuie să rămână după restaurare. Se COPIAZĂ din folderul de siguranță (care rămâne intact)."""
+    names = list(CARRY_OVER) + sorted(p.name for p in safety.glob("registry_catalog.sqlite-*"))
+    for name in names:
+        src, dst = safety / name, data_dir / name
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        elif src.is_file():
+            shutil.copy2(src, dst)
+
+
 def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
     """Restaurare sigură: verifică copia, păstrează starea curentă lângă folder (`.inainte-de-restaurare-*`) și, dacă restaurarea eșuează
     la jumătate, readuce starea anterioară. Nu suprascrie niciodată un folder nevid fără `force`."""
@@ -166,6 +181,11 @@ def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
     if problems:
         raise SystemExit("Backup invalid: " + "; ".join(problems))
     safety: Optional[Path] = None
+    inside: Optional[Path] = None                  # BUG-03: calea copiei față de data_dir, dacă folderul de copii e în interiorul folderului de date
+    try:
+        inside = backup_dir.relative_to(data_dir)
+    except ValueError:
+        pass
     if data_dir.exists() and any(data_dir.iterdir()):
         if not force:
             raise SystemExit(f"{data_dir} nu este gol. Folosiți --force (se păstrează o copie de siguranță).")
@@ -175,11 +195,12 @@ def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
             n += 1
             safety = data_dir.with_name(data_dir.name + f".inainte-de-restaurare-{datetime.now():%Y%m%d-%H%M%S}-{n}")
         shutil.move(str(data_dir), str(safety))
+        if inside is not None:
+            backup_dir = safety / inside           # folderul de date tocmai s-a mutat, odată cu copia din interior
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
-        for keep in (".jwt_secret", "registry.json"):
-            if safety is not None and (safety / keep).is_file():
-                shutil.copy2(safety / keep, data_dir / keep)
+        if safety is not None:
+            _carry_over(safety, data_dir)
         shutil.copy2(backup_dir / "cimitir.db", data_dir / _db_name(data_dir))
         if (backup_dir / "media").is_dir():
             shutil.copytree(backup_dir / "media", data_dir / "media")
@@ -190,7 +211,22 @@ def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
         if safety is not None:
             shutil.move(str(safety), str(data_dir))      # starea anterioară revine intactă
         raise
+    if safety is not None and inside is not None:
+        _bring_back_backups(safety, data_dir, inside)
     return data_dir
+
+
+def _bring_back_backups(safety: Path, data_dir: Path, inside: Path) -> None:
+    """BUG-03: copiile aflate în folderul de date au plecat odată cu el în folderul de siguranță; le readucem la locul lor (mutare, fără ștergere),
+    ca să rămână vizibile în MAIN. Ultimul pas, după succes; dacă nu se poate, rămân în folderul de siguranță (nu se pierd)."""
+    unit = inside.parent if inside.parent != Path(".") else inside          # folderul de copii; dacă copia e direct în data_dir, doar copia
+    source, target = safety / unit, data_dir / unit
+    try:
+        if source.exists() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(target))
+    except OSError:
+        pass
 
 
 def pending_marker(data_dir: Path) -> Path:
@@ -237,23 +273,15 @@ def set_protected(backup_dir: Path, on: bool = True) -> None:
         marker.unlink(missing_ok=True)
 
 
-def _quick_ok(backup_dir: Path) -> bool:
-    """Verificare ieftină (fără SHA): manifestul se citește și toate fișierele din el există."""
-    try:
-        manifest = json.loads((Path(backup_dir) / "manifest.json").read_text(encoding="utf-8"))["files"]
-        return "cimitir.db" in manifest and all((Path(backup_dir) / rel).is_file() for rel in manifest)
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
-
-
 def prune(dest_root: Path, keep_days: int, keep_min: int = MIN_KEEP_FLOOR) -> int:
     """Șterge copiile mai vechi de `keep_days`. Protecții: se păstrează mereu cele mai noi `keep_min` copii (cel puțin 1; programarea din MAIN impune minimum MIN_KEEP_FLOOR);
-    nu se șterge nimic dacă acestea nu sunt toate întregi; copiile marcate „protejat” și legăturile simbolice nu se șterg niciodată;
+    nu se șterge nimic dacă acestea nu sunt toate VALIDE după `verify` complet (SHA-256 + integrity_check), pentru ca o deteriorare recentă să nu ducă la
+    ștergerea copiilor vechi bune; copiile marcate „protejat” și legăturile simbolice nu se șterg niciodată;
     se atinge doar `cimitir-AAAAMMZZ-HHMMSS` cu manifest, direct în folderul de copii. Întoarce câte au fost șterse."""
     keep_min = max(1, int(keep_min))
     limit, removed = datetime.now() - timedelta(days=max(1, int(keep_days))), 0
     rows = list_backups(dest_root)
-    if not all(_quick_ok(Path(r["path"])) for r in rows[:keep_min]):
+    if not all(not verify(Path(r["path"])) for r in rows[:keep_min]):
         return 0
     root = Path(dest_root).resolve()
     for row in rows[keep_min:]:
@@ -346,8 +374,26 @@ def backup_destination(data_dir: Path, get_setting: Callable[[str], Optional[str
     return Path(custom) if custom else default_backup_dir(data_dir)
 
 
+def _quarantine(target: Path) -> str:
+    """Scoate o copie nevalidă din liste: redenumire `*.invalid`; dacă nu se poate (fișier ținut de alt proces), ștergem manifestul
+    (copia devine invizibilă pentru listă, retenție și restaurare); în ultimă instanță ștergem copia (tocmai creată, nevalidă). Întoarce descrierea."""
+    bad = target.with_name(target.name + ".invalid")
+    try:
+        target.rename(bad)
+        return "pusă în carantină: " + bad.name
+    except OSError:
+        pass
+    try:
+        (target / "manifest.json").unlink()
+        return "carantina prin redenumire a eșuat; manifestul a fost șters, copia nu mai apare în listă: " + target.name
+    except OSError:
+        pass
+    shutil.rmtree(target, ignore_errors=True)
+    return "carantina a eșuat; copia nevalidă a fost ștearsă: " + target.name
+
+
 def run_backup_job(data_dir: Path, get_setting: Callable[[str], Optional[str]], force: bool = False, trigger: str = "app") -> Dict[str, Any]:
-    """Copie + verificare + retenție + jurnal. Nu ridică excepții. `result`: ok | failed (jurnalizate) | skipped | disabled | busy (nejurnalizate)."""
+    """Copie + verificare + retenție + jurnal. Nu ridică excepții. `result`: ok | failed | busy (jurnalizate; `busy` doar dacă declanșarea nu e `app`) | skipped | disabled (nejurnalizate)."""
     data_dir = Path(data_dir)
     if _cfg(get_setting, "backup_enabled") == "0" and not force:
         return {"result": "disabled"}
@@ -369,16 +415,14 @@ def run_backup_job(data_dir: Path, get_setting: Callable[[str], Optional[str]], 
         dest.mkdir(parents=True, exist_ok=True)
         with _Lock(dest) as lock:
             if not lock.held:
-                return {"result": "busy"}
+                entry.update(result="busy", error="Altă copie rulează sau a rămas un lock (.backup.lock); nu s-a făcut nicio copie.")
+                if trigger != "app":
+                    log_event(data_dir, entry)      # rularea programată/manuală trebuie să lase urmă; verificarea periodică din MAIN nu umple jurnalul
+                return entry
             target = backup(data_dir, dest)
             problems = verify(target)
             if problems:
-                bad = target.with_name(target.name + ".invalid")
-                try:
-                    target.rename(bad)
-                except OSError:
-                    pass
-                raise RuntimeError("Copia creată nu a trecut verificarea (pusă în carantină: " + bad.name + "): " + "; ".join(problems[:3]))
+                raise RuntimeError("Copia creată nu a trecut verificarea (" + _quarantine(target) + "): " + "; ".join(problems[:3]))
             files = json.loads((target / "manifest.json").read_text(encoding="utf-8"))["files"]
             entry.update(result="ok", backup=target.name, path=str(target), location=str(target), verified=True, files=len(files),
                          size=sum(p.stat().st_size for p in target.rglob("*") if p.is_file()))
@@ -411,6 +455,8 @@ def health(data_dir: Path, get_setting: Callable[[str], Optional[str]], now: Opt
     except OSError:
         newest = []
     last_ok_time = datetime.fromisoformat(last_ok["time"]) if last_ok else (datetime.fromisoformat(newest[0]["created"]) if newest else None)
+    if events and events[0].get("result") == "busy":
+        return {"level": "warning", "message": f"Ultima rulare programată NU a făcut copie ({events[0].get('time', '?').replace('T', ' ')}): {events[0].get('error', 'alt proces ocupă folderul de copii')}"}
     if events and events[0].get("result") == "failed":
         return {"level": "error", "message": f"Ultima copie de rezervă a EȘUAT ({events[0].get('time', '?').replace('T', ' ')}): {events[0].get('error', 'eroare necunoscută')}"}
     if _cfg(get_setting, "backup_enabled") == "0":
@@ -445,7 +491,7 @@ def _settings_reader(data_dir: Path) -> Callable[[str], Optional[str]]:
 
 
 def cli(argv: Optional[List[str]] = None) -> int:
-    """Punct de intrare fără interfață pentru Planificatorul Windows: 0 = reușit/nimic de făcut, 1 = EȘEC (vizibil în Task Scheduler și în MAIN)."""
+    """Punct de intrare fără interfață pentru Planificatorul Windows: 0 = reușit/nimic de făcut, 1 = EȘEC, 2 = OCUPAT (lock rămas/altă copie în curs, nicio copie făcută); 1 și 2 sunt vizibile în Task Scheduler și în MAIN."""
     import argparse
     parser = argparse.ArgumentParser(prog="backup-run", description="Copie de rezervă programată (verificată, jurnalizată). Nu restaurează niciodată.")
     parser.add_argument("--data-dir", help="folderul de date (implicit CIMITIR_DATA_DIR)")
@@ -470,6 +516,9 @@ def cli(argv: Optional[List[str]] = None) -> int:
     if result["result"] == "failed":
         print(f"[backup] EȘEC: {result.get('error')}")
         return 1
+    if result["result"] == "busy":
+        print(f"[backup] OCUPAT: {result.get('error')}")
+        return 2
     print(f"[backup] {result['result']}: nimic de făcut")
     return 0
 

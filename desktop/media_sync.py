@@ -237,16 +237,25 @@ def _upload(op: Dict[str, Any]) -> str:
         _set_state(op["id"], "error", "fișier gol")
         return "error"
     chunks = 0
-    with open(path, "rb") as fh:
-        for block in iter(lambda: fh.read(CHUNK), b""):
-            cs._request("PUT", f"/media/{media_id}/chunks/{chunks}", data=block, timeout=120,
-                        headers={"Content-Type": "application/octet-stream"})
-            chunks += 1
+    try:
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(CHUNK), b""):
+                cs._request("PUT", f"/media/{media_id}/chunks/{chunks}", data=block, timeout=120,
+                            headers={"Content-Type": "application/octet-stream"})
+                chunks += 1
+    except cs.Rejected as exc:
+        if getattr(exc, "status", None) == 410:        # BUG-07: șters în Cloud -> operațiunea veche (ex. după restaurare) se abandonează
+            cs._delete_op(op["id"])
+            return "dropped"
+        raise
     try:
         cs._request("POST", f"/media/{media_id}/complete", timeout=180, json={
             "entity_uid": entity_uid, "filename": storage_mod.display_name(path), "sha256": sha, "size": size, "chunks": chunks,
             "table": table, "entity_type": etype, "doc_type": dtype, "uploaded_by": db.get_setting("current_user") or cs.client_id()})
     except cs.Rejected as exc:
+        if getattr(exc, "status", None) == 410:        # BUG-07: șters în Cloud -> operațiunea veche (ex. după restaurare) se abandonează; pull-ul elimină rândul local
+            cs._delete_op(op["id"])
+            return "dropped"
         if getattr(exc, "status", None) in (409, 422) or (exc.args and exc.args[0] in (409, 422)):   # bucăți lipsă / sha256 diferit
             _set_state(op["id"], "error" if int(op.get("attempts") or 0) >= 4 else "pending", f"reîncărcare: {exc}")
             return "retry"

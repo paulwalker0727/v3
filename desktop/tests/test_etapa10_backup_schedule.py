@@ -44,8 +44,12 @@ def fake_old(dest: Path, name: str, age_days: int, valid: bool = True) -> Path:
     stamp = (datetime.now() - timedelta(days=age_days)).strftime("%Y%m%d-%H%M%S")
     path = dest / f"cimitir-{stamp}"
     path.mkdir(parents=True)
-    (path / "cimitir.db").write_bytes(b"x")
-    manifest = {"cimitir.db": "0" * 64} if valid else {"cimitir.db": "0" * 64, "lipsa.bin": "0" * 64}
+    conn = sqlite3.connect(path / "cimitir.db")
+    conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    conn.close()
+    digest = bk._sha(path / "cimitir.db")      # copie fictivă dar REALĂ: retenția verifică complet (SHA-256 + integrity_check)
+    manifest = {"cimitir.db": digest} if valid else {"cimitir.db": digest, "lipsa.bin": "0" * 64}
     (path / "manifest.json").write_text(json.dumps({"files": manifest}), encoding="utf-8")
     return path
 

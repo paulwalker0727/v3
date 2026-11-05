@@ -91,6 +91,16 @@ def get_object(media_id: str) -> Optional[Dict[str, Any]]:
         return _row(r) if r else None
 
 
+def is_deleted(media_id: str) -> bool:
+    """BUG-07: obiectul a fost șters din Cloud (există tombstone) și nu mai există; un client cu o operațiune veche (ex. după restaurarea unei copii)
+    nu trebuie să-l recreeze."""
+    with _db() as conn:
+        if conn.execute("SELECT 1 FROM media_objects WHERE id = ?", (media_id,)).fetchone():
+            return False
+        return bool(conn.execute("SELECT 1 FROM sync_tombstones WHERE entity='media_objects' AND uid = ? "
+                                 "AND cemetery_uid = app_default_cemetery_uid()", (media_id,)).fetchone())
+
+
 def register_file(table: str, entity_type: str, doc_type: str, entity_uid: str, local_path: str, filename: str = "",
                   uploaded_by: str = "server", media_id: Optional[str] = None) -> Dict[str, Any]:
     """Pune un fișier local în storage + metadate în PostgreSQL. Idempotent pe `media_id`. Nu șterge fișierul local."""
