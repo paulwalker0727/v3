@@ -19,6 +19,9 @@ from conftest import ROOT
 COMMIT = "6a9774b"
 
 
+@pytest.mark.xfail(strict=True, reason="Comportament Git al unui commit existent în istoric (6a9774b), imposibil de schimbat prin cod fără rescrierea istoricului "
+                   "(interzis: fără force-push). Atenuat procedural: scripts/salveaza_manifeste_backup.py (vezi test_bug09_mitigation.py). "
+                   "strict=True: dacă situația se schimbă (XPASS), testul eșuează și trebuie reanalizat.")
 @pytest.mark.skipif(not shutil.which("git"), reason="git lipsește")
 def test_update_over_6a9774b_keeps_backup_manifests_on_disk(tmp_path):
     if subprocess.run(["git", "-C", str(ROOT), "cat-file", "-e", COMMIT], capture_output=True).returncode != 0:
