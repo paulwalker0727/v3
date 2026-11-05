@@ -166,6 +166,11 @@ def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
     if problems:
         raise SystemExit("Backup invalid: " + "; ".join(problems))
     safety: Optional[Path] = None
+    inside: Optional[Path] = None                  # BUG-03: calea copiei față de data_dir, dacă folderul de copii e în interiorul folderului de date
+    try:
+        inside = backup_dir.relative_to(data_dir)
+    except ValueError:
+        pass
     if data_dir.exists() and any(data_dir.iterdir()):
         if not force:
             raise SystemExit(f"{data_dir} nu este gol. Folosiți --force (se păstrează o copie de siguranță).")
@@ -175,6 +180,8 @@ def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
             n += 1
             safety = data_dir.with_name(data_dir.name + f".inainte-de-restaurare-{datetime.now():%Y%m%d-%H%M%S}-{n}")
         shutil.move(str(data_dir), str(safety))
+        if inside is not None:
+            backup_dir = safety / inside           # folderul de date tocmai s-a mutat, odată cu copia din interior
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
         for keep in (".jwt_secret", "registry.json"):
@@ -190,7 +197,22 @@ def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
         if safety is not None:
             shutil.move(str(safety), str(data_dir))      # starea anterioară revine intactă
         raise
+    if safety is not None and inside is not None:
+        _bring_back_backups(safety, data_dir, inside)
     return data_dir
+
+
+def _bring_back_backups(safety: Path, data_dir: Path, inside: Path) -> None:
+    """BUG-03: copiile aflate în folderul de date au plecat odată cu el în folderul de siguranță; le readucem la locul lor (mutare, fără ștergere),
+    ca să rămână vizibile în MAIN. Ultimul pas, după succes; dacă nu se poate, rămân în folderul de siguranță (nu se pierd)."""
+    unit = inside.parent if inside.parent != Path(".") else inside          # folderul de copii; dacă copia e direct în data_dir, doar copia
+    source, target = safety / unit, data_dir / unit
+    try:
+        if source.exists() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(target))
+    except OSError:
+        pass
 
 
 def pending_marker(data_dir: Path) -> Path:
