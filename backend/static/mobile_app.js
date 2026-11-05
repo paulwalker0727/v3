@@ -124,7 +124,7 @@ const ENTITY_ORDER=['locuri_de_veci','concesionari','contracte','inhumati','plat
 const REASONS={field_not_allowed:'Un câmp (ex. CNP/CI fără acces la date sensibile) nu este permis telefonului. Se acordă din MAIN.',are_dependente:'Nu se poate șterge: înregistrarea are legături (înhumați/contracte/plăți). Șterge întâi legăturile.',duplicate_receipt:'Există deja o chitanță cu acest număr.',not_authorized:'Nu ai dreptul de editare pentru acest registru (se acordă din MAIN).',delete_not_allowed:'Ștergerea/anularea nu este permisă acestui telefon (se acordă din MAIN).',version_mismatch:'Înregistrarea a fost modificată între timp. Se păstrează varianta din MAIN.',natural_key:'Există deja un loc cu acest cod.',deleted_on_server:'Înregistrarea a fost ștearsă între timp.',date_invalide:'Date invalide.'};
 const can=(e,a='edit')=>ext.canDo(e,a);
 const newId=()=>((crypto.randomUUID?.()||`${Date.now().toString(16)}${Math.random().toString(16).slice(2)}0000000000000000`)).replace(/-/g,'').slice(0,32);
-async function outbox(){return (await kvGet('outbox').catch(()=>null))||[];}
+async function outbox(){const v=await kvGet('outbox');return v||[];}
 async function saveOutbox(o){await kvSet('outbox',o);renderSyncBtn();}
 async function loadSyncInfo(){try{state.syncInfo=await api(`${API}/sync-v2/status`);await kvSet('sync_info',state.syncInfo);}catch(e){if(e.status===401)throw e;state.syncInfo=state.syncInfo||await kvGet('sync_info').catch(()=>null);}state.lastSync=state.lastSync||await kvGet('last_sync').catch(()=>null);try{ext.renderPermPill();}catch(_e){}}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.key&&navigator.onLine&&!state.syncing){loadSyncInfo().then(()=>{if(!document.getElementById('sheet')?.classList.contains('show')&&!document.activeElement?.closest?.('#view input'))renderView();}).catch(()=>{});}});
@@ -239,7 +239,7 @@ async function openRecordForm(entity,uid){
       const op={op_id:'m-'+newId(),entity,uid:row?.uid||newId(),action:'upsert',base_version:row?.version||0,data,state:'pending',label:f.label(entity==='locuri_de_veci'?data:{...data,cod_loc:g.cod_loc})};
       let ob=(await outbox()).filter(o=>!(o.uid===op.uid&&o.state==='pending'));ob.push(op);await saveOutbox(ob);await kvDel(draftKey);
       close();if(entity==='locuri_de_veci'&&!row&&ext.canCat('harta','add'))ext.openPolygonEditor(op.uid,data.cod_loc,[]);await syncNow();
-    }finally{state.saving=false;}
+    }catch(_e){toast('Nu s-a putut salva local (stocarea telefonului a răspuns cu eroare). Ciorna a fost păstrată; reîncearcă peste câteva secunde.');}finally{state.saving=false;}
   };
 }
 
