@@ -357,7 +357,7 @@ def _quarantine(target: Path) -> str:
 
 
 def run_backup_job(data_dir: Path, get_setting: Callable[[str], Optional[str]], force: bool = False, trigger: str = "app") -> Dict[str, Any]:
-    """Copie + verificare + retenție + jurnal. Nu ridică excepții. `result`: ok | failed (jurnalizate) | skipped | disabled | busy (nejurnalizate)."""
+    """Copie + verificare + retenție + jurnal. Nu ridică excepții. `result`: ok | failed | busy (jurnalizate; `busy` doar dacă declanșarea nu e `app`) | skipped | disabled (nejurnalizate)."""
     data_dir = Path(data_dir)
     if _cfg(get_setting, "backup_enabled") == "0" and not force:
         return {"result": "disabled"}
@@ -379,7 +379,10 @@ def run_backup_job(data_dir: Path, get_setting: Callable[[str], Optional[str]], 
         dest.mkdir(parents=True, exist_ok=True)
         with _Lock(dest) as lock:
             if not lock.held:
-                return {"result": "busy"}
+                entry.update(result="busy", error="Altă copie rulează sau a rămas un lock (.backup.lock); nu s-a făcut nicio copie.")
+                if trigger != "app":
+                    log_event(data_dir, entry)      # rularea programată/manuală trebuie să lase urmă; verificarea periodică din MAIN nu umple jurnalul
+                return entry
             target = backup(data_dir, dest)
             problems = verify(target)
             if problems:
@@ -416,6 +419,8 @@ def health(data_dir: Path, get_setting: Callable[[str], Optional[str]], now: Opt
     except OSError:
         newest = []
     last_ok_time = datetime.fromisoformat(last_ok["time"]) if last_ok else (datetime.fromisoformat(newest[0]["created"]) if newest else None)
+    if events and events[0].get("result") == "busy":
+        return {"level": "warning", "message": f"Ultima rulare programată NU a făcut copie ({events[0].get('time', '?').replace('T', ' ')}): {events[0].get('error', 'alt proces ocupă folderul de copii')}"}
     if events and events[0].get("result") == "failed":
         return {"level": "error", "message": f"Ultima copie de rezervă a EȘUAT ({events[0].get('time', '?').replace('T', ' ')}): {events[0].get('error', 'eroare necunoscută')}"}
     if _cfg(get_setting, "backup_enabled") == "0":
@@ -450,7 +455,7 @@ def _settings_reader(data_dir: Path) -> Callable[[str], Optional[str]]:
 
 
 def cli(argv: Optional[List[str]] = None) -> int:
-    """Punct de intrare fără interfață pentru Planificatorul Windows: 0 = reușit/nimic de făcut, 1 = EȘEC (vizibil în Task Scheduler și în MAIN)."""
+    """Punct de intrare fără interfață pentru Planificatorul Windows: 0 = reușit/nimic de făcut, 1 = EȘEC, 2 = OCUPAT (lock rămas/altă copie în curs, nicio copie făcută); 1 și 2 sunt vizibile în Task Scheduler și în MAIN."""
     import argparse
     parser = argparse.ArgumentParser(prog="backup-run", description="Copie de rezervă programată (verificată, jurnalizată). Nu restaurează niciodată.")
     parser.add_argument("--data-dir", help="folderul de date (implicit CIMITIR_DATA_DIR)")
@@ -475,6 +480,9 @@ def cli(argv: Optional[List[str]] = None) -> int:
     if result["result"] == "failed":
         print(f"[backup] EȘEC: {result.get('error')}")
         return 1
+    if result["result"] == "busy":
+        print(f"[backup] OCUPAT: {result.get('error')}")
+        return 2
     print(f"[backup] {result['result']}: nimic de făcut")
     return 0
 

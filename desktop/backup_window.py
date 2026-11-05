@@ -245,7 +245,7 @@ class BackupWindow(QDialog):
         self.log_table.setRowCount(len(rows))
         for i, e in enumerate(rows):
             detail = e.get("error") or f"{e.get('files', '?')} fișiere, {e.get('size', 0) / 1048576:.1f} MB, verificată" + (f", șterse: {e['pruned']}" if e.get("pruned") else "")
-            values = (str(e.get("time", "")).replace("T", " "), "REUȘIT" if e.get("result") == "ok" else "EȘEC", e.get("trigger", ""), e.get("location", ""), detail)
+            values = (str(e.get("time", "")).replace("T", " "), {"ok": "REUȘIT", "busy": "OCUPAT"}.get(e.get("result"), "EȘEC"), e.get("trigger", ""), e.get("location", ""), detail)
             for col, value in enumerate(values):
                 self.log_table.setItem(i, col, QTableWidgetItem(value))
 
