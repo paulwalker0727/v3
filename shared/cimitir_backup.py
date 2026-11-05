@@ -158,6 +158,21 @@ def _rebase_media_paths(db_file: Path, media_dir: Path) -> int:
     return changed
 
 
+CARRY_OVER = (".jwt_secret", "registry.json", "license.dat", "secrets", "logs", "registry_catalog.sqlite", "registries")
+
+
+def _carry_over(safety: Path, data_dir: Path) -> None:
+    """BUG-02: copia conține doar baza + media; restul stării locale (cheia/profilele Cloud din `secrets/`, licența, jurnalele, catalogul și registrele
+    modului „bază veche”) trăiește în același folder și trebuie să rămână după restaurare. Se COPIAZĂ din folderul de siguranță (care rămâne intact)."""
+    names = list(CARRY_OVER) + sorted(p.name for p in safety.glob("registry_catalog.sqlite-*"))
+    for name in names:
+        src, dst = safety / name, data_dir / name
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        elif src.is_file():
+            shutil.copy2(src, dst)
+
+
 def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
     """Restaurare sigură: verifică copia, păstrează starea curentă lângă folder (`.inainte-de-restaurare-*`) și, dacă restaurarea eșuează
     la jumătate, readuce starea anterioară. Nu suprascrie niciodată un folder nevid fără `force`."""
@@ -184,9 +199,8 @@ def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
             backup_dir = safety / inside           # folderul de date tocmai s-a mutat, odată cu copia din interior
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
-        for keep in (".jwt_secret", "registry.json"):
-            if safety is not None and (safety / keep).is_file():
-                shutil.copy2(safety / keep, data_dir / keep)
+        if safety is not None:
+            _carry_over(safety, data_dir)
         shutil.copy2(backup_dir / "cimitir.db", data_dir / _db_name(data_dir))
         if (backup_dir / "media").is_dir():
             shutil.copytree(backup_dir / "media", data_dir / "media")
