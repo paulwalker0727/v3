@@ -38,12 +38,20 @@ def run_background_backup() -> None:
                      name="cimitir-backup").start()
 
 
-def scheduler_command() -> str:
-    """Comanda pentru Planificatorul de activități Windows (programarea externă, independentă de aplicația deschisă)."""
+def scheduler_run_command() -> str:
+    """Comanda executată de activitatea programată (copie verificată, jurnalizată; nu restaurează)."""
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}" --backup-run'
     script = Path(__file__).resolve().parent.parent / "scripts" / "backup_scheduled.py"
     return f'"{sys.executable}" "{script}"'
+
+
+def scheduler_command(at: str | None = None) -> str:
+    """Comanda COMPLETĂ de înregistrare în Planificatorul de activități Windows, cu ora din setarea `backup_time` (BUG-06):
+    activitatea rulează zilnic la acea oră, independent de aplicația deschisă. Ora se alege din „Ora de pornire (Planificator)”."""
+    at = (at or db.get_setting("backup_time") or cimitir_backup.DEFAULTS["backup_time"]).strip()
+    run = scheduler_run_command().replace('"', '\\"')
+    return f'schtasks /Create /TN "Cimitir - Copie de rezerva" /SC DAILY /ST {at} /TR "{run}" /F'
 
 
 def attach_status_label(main_window) -> QLabel | None:
@@ -183,11 +191,12 @@ class BackupWindow(QDialog):
         btn_save.setObjectName("backup-save-settings")
         btn_save.clicked.connect(self.save_settings)
         lay.addWidget(btn_save)
-        lay.addWidget(QLabel("Programare Windows (rulează și când MAIN este închis) — comanda pentru Planificatorul de activități:"))
-        self.txt_command = QPlainTextEdit(scheduler_command())
+        lay.addWidget(QLabel("Programare Windows (rulează și când MAIN este închis) — comanda de înregistrare (ora = „Ora de pornire”, rulată o dată, ca administrator dacă e cerut):"))
+        self.txt_command = QPlainTextEdit(scheduler_command(self.time_start.time().toString("HH:mm")))
         self.txt_command.setObjectName("backup-scheduler-command")
         self.txt_command.setReadOnly(True)
-        self.txt_command.setMaximumHeight(60)
+        self.txt_command.setMaximumHeight(80)
+        self.time_start.timeChanged.connect(lambda t: self.txt_command.setPlainText(scheduler_command(t.toString("HH:mm"))))
         lay.addWidget(self.txt_command)
         lay.addStretch(1)
         return w
