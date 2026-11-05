@@ -70,6 +70,8 @@ async def put_chunk(request: Request, media_id: str, index: int):
     _check_id(media_id)
     if not 0 <= index < 10000:
         raise HTTPException(status_code=422, detail="index invalid")
+    if index == 0 and media.is_deleted(media_id):
+        raise HTTPException(status_code=410, detail={"error": "deleted", "message": "Documentul a fost șters din Cloud."})
     body = await request.body()
     if not body or len(body) > MAX_CHUNK:
         raise HTTPException(status_code=413 if body else 422, detail=f"bucată goală sau > {MAX_CHUNK} octeți")
@@ -96,6 +98,9 @@ def complete(request: Request, media_id: str, payload: Dict[str, Any] = Body(...
     sha = str(payload.get("sha256") or "").lower()
     if not _SHA.match(sha):
         raise HTTPException(status_code=422, detail="sha256 invalid")
+    if media.is_deleted(media_id):      # BUG-07: documentul șters în Cloud nu se recreează dintr-o operațiune veche (ex. coadă restaurată dintr-o copie)
+        shutil.rmtree(os.path.join(_uploads_root(), media_id), ignore_errors=True)
+        raise HTTPException(status_code=410, detail={"error": "deleted", "message": "Documentul a fost șters din Cloud."})
     existing = media.get_object(media_id)
     if existing:
         if existing["sha256"] != sha:
