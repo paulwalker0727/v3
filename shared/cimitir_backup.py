@@ -5,8 +5,8 @@
 - copiile automate: `run_backup_job` / `run_scheduled` (la interval configurabil, doar dacă ultima copie e mai veche), fiecare copie este
   verificată imediat (SHA-256 + integrity_check); o copie nevalidă este pusă în carantină (`*.invalid`) și raportată ca EȘEC;
 - jurnal JSONL (`<folder-date>.backup-log.jsonl`): data, rezultat, locație, mărime, eroare; `health` dă avertizarea vizibilă în MAIN;
-- retenție: păstrare N zile, dar niciodată sub `MIN_KEEP_FLOOR` copii, nu se șterge nimic dacă nu există copii valide mai noi și nu se
-  șterg copiile marcate „protejat”; restaurarea rămâne MANUALĂ (nu e apelată niciodată de programare);
+- retenție: păstrare N zile, dar niciodată sub `MIN_KEEP_FLOOR` copii, nu se șterge nimic dacă cele mai noi nu sunt VALIDE (verificare
+  completă) și nu se șterg copiile marcate „protejat”; restaurarea rămâne MANUALĂ (nu e apelată niciodată de programare);
 - rulare programată fără interfață: `cli` (Planificatorul de activități Windows: `Cimitir.exe --backup-run` / `scripts/backup_scheduled.py`);
 - restaurare „dintr-un clic": `schedule_restore` pregătește restaurarea, iar la următoarea pornire `apply_pending_restore` o aplică
   înainte de deschiderea bazei (nu se înlocuiește niciodată o bază deschisă).
@@ -237,23 +237,15 @@ def set_protected(backup_dir: Path, on: bool = True) -> None:
         marker.unlink(missing_ok=True)
 
 
-def _quick_ok(backup_dir: Path) -> bool:
-    """Verificare ieftină (fără SHA): manifestul se citește și toate fișierele din el există."""
-    try:
-        manifest = json.loads((Path(backup_dir) / "manifest.json").read_text(encoding="utf-8"))["files"]
-        return "cimitir.db" in manifest and all((Path(backup_dir) / rel).is_file() for rel in manifest)
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
-
-
 def prune(dest_root: Path, keep_days: int, keep_min: int = MIN_KEEP_FLOOR) -> int:
     """Șterge copiile mai vechi de `keep_days`. Protecții: se păstrează mereu cele mai noi `keep_min` copii (cel puțin 1; programarea din MAIN impune minimum MIN_KEEP_FLOOR);
-    nu se șterge nimic dacă acestea nu sunt toate întregi; copiile marcate „protejat” și legăturile simbolice nu se șterg niciodată;
+    nu se șterge nimic dacă acestea nu sunt toate VALIDE după `verify` complet (SHA-256 + integrity_check), pentru ca o deteriorare recentă să nu ducă la
+    ștergerea copiilor vechi bune; copiile marcate „protejat” și legăturile simbolice nu se șterg niciodată;
     se atinge doar `cimitir-AAAAMMZZ-HHMMSS` cu manifest, direct în folderul de copii. Întoarce câte au fost șterse."""
     keep_min = max(1, int(keep_min))
     limit, removed = datetime.now() - timedelta(days=max(1, int(keep_days))), 0
     rows = list_backups(dest_root)
-    if not all(_quick_ok(Path(r["path"])) for r in rows[:keep_min]):
+    if not all(not verify(Path(r["path"])) for r in rows[:keep_min]):
         return 0
     root = Path(dest_root).resolve()
     for row in rows[keep_min:]:
