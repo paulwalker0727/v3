@@ -28,9 +28,11 @@ export async function deleteRecord(entity,uid,label){
   if(!canDo(entity,'delete')){C.toast('Nu ai dreptul de ștergere/anulare (se acordă din MAIN).');return false;}
   if(!await askConfirm('Confirmi ștergerea?',`${label} va fi anulat(ă). Operațiunea este auditată, iar istoricul se păstrează.`,'Șterge',true))return false;
   let row=null;try{row=await C.getRow(entity,uid);}catch(_e){C.toast('Înregistrarea nu poate fi citită acum. Reîncearcă online.');return false;}
-  const ob=(await C.outbox()).filter(o=>!(o.uid===uid&&o.state==='pending'));
-  ob.push({op_id:'m-'+C.newId(),entity,uid,action:'delete',base_version:row.version,data:{},state:'pending',label:`Ștergere: ${label}`});
-  await C.saveOutbox(ob);document.getElementById('sheet')?.classList.remove('show');await C.syncNow();return true;}
+  try{
+    const ob=(await C.outbox()).filter(o=>!(o.uid===uid&&o.state==='pending'));
+    ob.push({op_id:'m-'+C.newId(),entity,uid,action:'delete',base_version:row.version,data:{},state:'pending',label:`Ștergere: ${label}`});
+    await C.saveOutbox(ob);document.getElementById('sheet')?.classList.remove('show');await C.syncNow();return true;
+  }catch(_e){C.toast('Nu s-a putut adăuga ștergerea în coadă (stocarea telefonului a răspuns cu eroare). Reîncearcă peste câteva secunde.');return false;}}
 
 // ---------------------------------------------------------------- PDF: vizualizare, descărcare, tipărire
 async function fetchPdf(path){const r=await fetch(`${C.API}/sync-v2${path}`,{headers:{Authorization:`Binding ${C.state.key}`},cache:'no-store'});

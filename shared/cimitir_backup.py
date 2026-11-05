@@ -108,6 +108,28 @@ def verify(backup_dir: Path) -> list:
 MEDIA_PATH_COLUMNS = (("documents", "file_path"), ("photos", "file_path"))
 
 
+def _reset_cloud_client_id(db_file: Path) -> None:
+    """BUG-04: imediat după restaurare, MAIN trebuie să arate serverului un client NOU.
+    Altfel, `_last_writer_is` (backend/entity_sync_api.py) acceptă `base_version` învechit (pentru că ultimul
+    scriitor pe server este același `cloud_client_id`) și prima editare locală suprascrie în tăcere modificările
+    altor calculatoare făcute între copie și restaurare. Setăm un `restored_at` ca urmă de audit.
+    Dacă baza nu are tabela `settings`, o creăm (schema MAIN: key TEXT PRIMARY KEY, value TEXT).
+    Nu ridicăm excepții: o eroare aici nu trebuie să blocheze restaurarea (rollback-ul s-a încheiat).
+    """
+    try:
+        conn = sqlite3.connect(db_file)
+        try:
+            conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('cloud_client_id', '')")
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('restored_at', ?)",
+                         (datetime.now().isoformat(timespec="seconds"),))
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        pass
+
+
 def _rebase_media_paths(db_file: Path, media_dir: Path) -> int:
     """Căile absolute din documents/photos (…/media/<tip>/<fișier>) se mută pe folderul media restaurat, DOAR dacă fișierul există acolo
     (restaurare pe alt calculator / alt folder, chiar dacă originalul mai există). Nu atinge căile externe sau fără corespondent. Întoarce numărul de căi actualizate."""
@@ -162,6 +184,7 @@ def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
         if (backup_dir / "media").is_dir():
             shutil.copytree(backup_dir / "media", data_dir / "media")
         _rebase_media_paths(data_dir / _db_name(data_dir), data_dir / "media")
+        _reset_cloud_client_id(data_dir / _db_name(data_dir))      # BUG-04: după restaurare, MAIN devine client nou -> serverul raportează conflictul (nu suprascrie orbește)
     except BaseException:
         shutil.rmtree(data_dir, ignore_errors=True)
         if safety is not None:

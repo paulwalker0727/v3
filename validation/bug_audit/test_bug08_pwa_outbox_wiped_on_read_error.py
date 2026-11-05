@@ -28,8 +28,8 @@ const ctx = {store: {}, fail: 0, out: {}, renderSyncBtn() {},
   async kvSet(k, v) { ctx.store[k] = JSON.parse(JSON.stringify(v)); }};
 vm.createContext(ctx);
 vm.runInContext(defs + `
-async function scenarioAdd(){ const op={op_id:'m-new',uid:'u-new',state:'pending'}; ${addOp} }
-async function scenarioSync(){ let ob=[]; ${freshRead}; for(const x of [{op_id:'m-1',status:'applied'}]){const o=ob.find(z=>z.op_id===x.op_id);if(!o)continue;ob=ob.filter(z=>z!==o);} await saveOutbox(ob); }
+async function scenarioAdd(){ try { const op={op_id:'m-new',uid:'u-new',state:'pending'}; ${addOp} } catch(_e){ /* producție: form.onsubmit prinde eroarea și afișează toast; coada rămâne intactă */ } }
+async function scenarioSync(){ try { let ob=[]; ${freshRead}; for(const x of [{op_id:'m-1',status:'applied'}]){const o=ob.find(z=>z.op_id===x.op_id);if(!o)continue;ob=ob.filter(z=>z!==o);} await saveOutbox(ob); } catch(_e){ /* producție: syncNow are try/catch exterior; saveOutbox nu rulează */ } }
 `, ctx);
 (async () => {
   const seed = [{op_id:'m-1',uid:'u1',state:'pending'},{op_id:'m-2',uid:'u2',state:'pending'},{op_id:'m-3',uid:'u3',state:'conflict'}];

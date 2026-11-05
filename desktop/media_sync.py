@@ -62,16 +62,21 @@ def set_capable(info: Any) -> None:
 def _create_triggers(conn, table: str) -> None:
     for suffix in ("ai", "ad"):
         conn.execute(f"DROP TRIGGER IF EXISTS cm_{table}_{suffix}")
+    # BUG-01: documentele carte_identitate / cerere_doc (actele de identitate) NU trebuie să intre în conducta
+    # clasică media_sync (urcare automată în storage-ul clasic). Ele sunt gestionate exclusiv prin Sync v2
+    # (shared/cimitir_sync_v2_docs.py), care aplică filtrele de securitate / permisiuni corespunzătoare.
+    doc_skip = "AND COALESCE(NEW.doc_type,'') NOT IN ('carte_identitate','cerere_doc')" if table == "documents" else ""
+    doc_skip_old = "AND COALESCE(OLD.doc_type,'') NOT IN ('carte_identitate','cerere_doc')" if table == "documents" else ""
     skip_cerere = "AND NEW.entity_type <> 'cerere'" if table == "documents" else ""
     skip_cerere_old = "AND OLD.entity_type <> 'cerere'" if table == "documents" else ""
-    conn.execute(f"""CREATE TRIGGER cm_{table}_ai AFTER INSERT ON {table} WHEN {_NOT_APPLYING} {skip_cerere}
+    conn.execute(f"""CREATE TRIGGER cm_{table}_ai AFTER INSERT ON {table} WHEN {_NOT_APPLYING} {skip_cerere} {doc_skip}
 BEGIN
   UPDATE {table} SET media_id = lower(hex(randomblob(16))) WHERE id = NEW.id AND (media_id IS NULL OR media_id = '');
   INSERT INTO cloud_sync_outbox ({_OUTBOX})
   SELECT 'media','{table}',media_id,'upload',0,'pending',lower(hex(randomblob(16))),{_NOW},0,'','','','{{}}'
   FROM {table} WHERE id = NEW.id;
 END""")
-    conn.execute(f"""CREATE TRIGGER cm_{table}_ad AFTER DELETE ON {table} WHEN {_NOT_APPLYING} AND OLD.media_id IS NOT NULL {skip_cerere_old}
+    conn.execute(f"""CREATE TRIGGER cm_{table}_ad AFTER DELETE ON {table} WHEN {_NOT_APPLYING} AND OLD.media_id IS NOT NULL {skip_cerere_old} {doc_skip_old}
 BEGIN
   INSERT INTO cloud_sync_outbox ({_OUTBOX})
   SELECT 'media','{table}',OLD.media_id,'delete',0,'pending',lower(hex(randomblob(16))),{_NOW},0,'','','','{{}}'
@@ -96,6 +101,16 @@ def ensure_tracking(force: bool = False) -> bool:
             db._add_column_if_missing(conn, table, "media_id TEXT")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_media ON {table}(media_id)")
             _create_triggers(conn, table)
+        # BUG-01: scoate din coada clasică orice operațiune 'upload' pentru acte de identitate
+        # care ar fi putut fi inserată de o versiune anterioară (trigger fără filtrul pe doc_type).
+        # Nu ștergem documentele locale; doar eliminăm trimiterea automată din conducta clasică.
+        if es._table_exists(conn, "cloud_sync_outbox"):
+            conn.execute(
+                "DELETE FROM cloud_sync_outbox WHERE kind='media' AND action='upload' AND COALESCE(state,'pending')='pending' "
+                "AND entity='documents' AND entity_uid IN ("
+                "  SELECT media_id FROM documents WHERE COALESCE(doc_type,'') IN ('carte_identitate','cerere_doc')"
+                ")"
+            )
     finally:
         conn.close()
     db.set_media_resolver(ensure_local)
@@ -123,7 +138,10 @@ def enqueue_existing(limit: int = 0) -> int:
     conn = db.get_connection()
     try:
         for table in TABLES:
-            where = "media_id IS NULL OR media_id=''" + (" AND entity_type <> 'cerere'" if table == "documents" else "")
+            where = "media_id IS NULL OR media_id=''"
+            if table == "documents":
+                # BUG-01: exclude atât 'cerere' (comportament vechi) cât și actele de identitate (securitate/confidențialitate).
+                where += " AND entity_type <> 'cerere' AND COALESCE(doc_type,'') NOT IN ('carte_identitate','cerere_doc')"
             rows = conn.execute(f"SELECT id FROM {table} WHERE {where} ORDER BY id" + (f" LIMIT {int(limit)}" if limit else "")).fetchall()
             for r in rows:
                 mid = os.urandom(16).hex()

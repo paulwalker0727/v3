@@ -85,6 +85,14 @@ def complete(request: Request, media_id: str, payload: Dict[str, Any] = Body(...
     _guard(request)
     _check_id(media_id)
     client_id = sync_api.client_id_of(request)
+    # BUG-01 (securitate / confidențialitate): actele de identitate NU trebuie să intre prin conducta clasică.
+    # Sync v2 (shared/cimitir_sync_v2_docs.py) este singura cale permisă pentru aceste documente, cu filtrele de acces.
+    # Aici refuzăm explicit (apărare în profunzime: dacă un client vechi, o unealtă externă sau un utilizator răuvoitor
+    # lovesc direct acest endpoint, nu stocăm obiectul).
+    if str(payload.get("doc_type") or "").strip().lower() in ("carte_identitate", "cerere_doc"):
+        shutil.rmtree(os.path.join(_uploads_root(), media_id), ignore_errors=True)
+        raise HTTPException(status_code=422, detail={"error": "doc_type_not_allowed",
+                                                     "message": "Actele de identitate se sincronizează doar prin Sync v2."})
     sha = str(payload.get("sha256") or "").lower()
     if not _SHA.match(sha):
         raise HTTPException(status_code=422, detail="sha256 invalid")
