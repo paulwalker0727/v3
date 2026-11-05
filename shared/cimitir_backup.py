@@ -338,6 +338,24 @@ def backup_destination(data_dir: Path, get_setting: Callable[[str], Optional[str
     return Path(custom) if custom else default_backup_dir(data_dir)
 
 
+def _quarantine(target: Path) -> str:
+    """Scoate o copie nevalidă din liste: redenumire `*.invalid`; dacă nu se poate (fișier ținut de alt proces), ștergem manifestul
+    (copia devine invizibilă pentru listă, retenție și restaurare); în ultimă instanță ștergem copia (tocmai creată, nevalidă). Întoarce descrierea."""
+    bad = target.with_name(target.name + ".invalid")
+    try:
+        target.rename(bad)
+        return "pusă în carantină: " + bad.name
+    except OSError:
+        pass
+    try:
+        (target / "manifest.json").unlink()
+        return "carantina prin redenumire a eșuat; manifestul a fost șters, copia nu mai apare în listă: " + target.name
+    except OSError:
+        pass
+    shutil.rmtree(target, ignore_errors=True)
+    return "carantina a eșuat; copia nevalidă a fost ștearsă: " + target.name
+
+
 def run_backup_job(data_dir: Path, get_setting: Callable[[str], Optional[str]], force: bool = False, trigger: str = "app") -> Dict[str, Any]:
     """Copie + verificare + retenție + jurnal. Nu ridică excepții. `result`: ok | failed (jurnalizate) | skipped | disabled | busy (nejurnalizate)."""
     data_dir = Path(data_dir)
@@ -365,12 +383,7 @@ def run_backup_job(data_dir: Path, get_setting: Callable[[str], Optional[str]], 
             target = backup(data_dir, dest)
             problems = verify(target)
             if problems:
-                bad = target.with_name(target.name + ".invalid")
-                try:
-                    target.rename(bad)
-                except OSError:
-                    pass
-                raise RuntimeError("Copia creată nu a trecut verificarea (pusă în carantină: " + bad.name + "): " + "; ".join(problems[:3]))
+                raise RuntimeError("Copia creată nu a trecut verificarea (" + _quarantine(target) + "): " + "; ".join(problems[:3]))
             files = json.loads((target / "manifest.json").read_text(encoding="utf-8"))["files"]
             entry.update(result="ok", backup=target.name, path=str(target), location=str(target), verified=True, files=len(files),
                          size=sum(p.stat().st_size for p in target.rglob("*") if p.is_file()))
