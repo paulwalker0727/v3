@@ -55,6 +55,17 @@ def _call(method: str, op: str, **kw):
     return cs._request(method, f"/entities/{op}", **kw)
 
 
+def _json_body(resp) -> dict:
+    """Corpul JSON al răspunsului; un răspuns trunchiat/ilizibil/neobiect = RetryLater (nimic nu se consideră confirmat)."""
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise cs.RetryLater(f"Răspuns incomplet sau ilizibil de la server: {exc}")
+    if not isinstance(body, dict):
+        raise cs.RetryLater("Răspuns neașteptat de la server (nu este un obiect JSON).")
+    return body
+
+
 # ------------------------------------------------------------------ stare / capabilități
 SET_ENABLED = "cloud_entity_sync_enabled"   # '0' = regim vechi (MAIN publică doar harta); implicit activ
 
@@ -437,8 +448,8 @@ def flush_entities() -> Tuple[bool, List[str], Dict[str, int]]:
         if not wire_ops:
             continue
         try:
-            body = _call("POST", "push", json={
-                "ops": wire_ops, "publish_burials": cs.get_config()["burials"]}, timeout=120).json()
+            body = _json_body(_call("POST", "push", json={
+                "ops": wire_ops, "publish_burials": cs.get_config()["burials"]}, timeout=120))
         except cs.RetryLater as exc:
             for op in chunk:
                 _set_op_state(op["id"], "pending", str(exc))
@@ -448,12 +459,20 @@ def flush_entities() -> Tuple[bool, List[str], Dict[str, int]]:
             lines.append(f"Entități refuzate de server: {exc}")
             return False, lines, counts
         counts["sent"] += len(wire_ops)
-        for res in body.get("results", []):
+        answered = set()
+        for res in body.get("results") or []:
             op = by_op.get(res.get("op_id"))
             if op is not None:
+                answered.add(res.get("op_id"))
                 counts[_handle_result(op, res)] += 1
                 if res.get("status") == "rejected" and res.get("reason") == "schema_incompatible":
                     held += 1
+        unconfirmed = [o for oid, o in by_op.items() if oid not in answered]
+        for op in unconfirmed:      # răspuns incomplet: operația rămâne în coadă (același op_id) și lotul NU e raportat ca reușit
+            _set_op_state(op["id"], "pending", "răspuns incomplet de la server")
+            counts["retry"] += 1
+        if unconfirmed:
+            lines.append(f"Răspuns incomplet de la server: {len(unconfirmed)} operațiune(i) neconfirmate, se retrimit.")
     if held:
         lines.append(f"{INCOMPAT_028} ({held} aviz(e) în așteptare)")
     if counts["sent"]:
@@ -475,7 +494,7 @@ def pull_entities() -> Tuple[bool, str, int]:
         while True:
             since = int(db.get_setting(CURSOR_PREFIX + entity) or 0)
             try:
-                page = _call("GET", "pull", params={"entity": entity, "since": since, "limit": PULL_LIMIT}).json()
+                page = _json_body(_call("GET", "pull", params={"entity": entity, "since": since, "limit": PULL_LIMIT}))
             except (cs.RetryLater, cs.Rejected) as exc:
                 return False, f"Entități (descărcare): {exc}", changed
             with _Applying() as conn:
