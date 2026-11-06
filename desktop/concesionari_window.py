@@ -261,7 +261,7 @@ class ConcesionariWindow(QDialog):
     Uses `actions` (preferred) or `database` fallback to load/save/delete concesionari.
     """
 
-    def __init__(self, parent=None, actions: Optional[Any] = None):
+    def __init__(self, parent=None, actions: Optional[Any] = None, initial_id: Optional[int] = None):
         super().__init__(parent)
         self.setWindowTitle("Concesionari")
         self.setMinimumSize(1100, 700)
@@ -319,9 +319,16 @@ class ConcesionariWindow(QDialog):
         self.btn_phone.setToolTip("Generează un cod QR temporar: încarci un document/fotografie de pe telefon la concesionarul selectat")
         self.btn_delete = QPushButton("Șterge")
         self.btn_reload = QPushButton("Reîncarcă")
+        self.btn_locuri = QPushButton("Locuri de veci")
+        self.btn_locuri.setToolTip("Locurile asociate concesionarului selectat (prin contracte)")
+        self.btn_contract_nou = QPushButton("Contract nou")
+        self.btn_contracte = QPushButton("Contracte / istoric")
         btn_row.addWidget(self.btn_evid)
         btn_row.addWidget(self.btn_rapoarte)
         btn_row.addStretch()
+        btn_row.addWidget(self.btn_locuri)
+        btn_row.addWidget(self.btn_contract_nou)
+        btn_row.addWidget(self.btn_contracte)
         btn_row.addWidget(self.btn_add)
         btn_row.addWidget(self.btn_edit)
         btn_row.addWidget(self.btn_phone)
@@ -359,6 +366,9 @@ class ConcesionariWindow(QDialog):
         self.btn_reload.clicked.connect(self.reload)
         self.btn_evid.clicked.connect(self.highlight_on_map)
         self.btn_rapoarte.clicked.connect(self.open_reports)
+        self.btn_locuri.clicked.connect(self.open_locuri)
+        self.btn_contract_nou.clicked.connect(self.new_contract)
+        self.btn_contracte.clicked.connect(self.open_contracte)
 
         # Filters
         self.filter_nume.textChanged.connect(self.reload)
@@ -377,6 +387,8 @@ class ConcesionariWindow(QDialog):
 
         # initial load
         self.reload()
+        if initial_id:
+            self.select_concesionar(initial_id)
 
     # -------------------------
     # Data loading / rendering
@@ -395,10 +407,66 @@ class ConcesionariWindow(QDialog):
             pass
         return []
 
+    def _with_loc_info(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Completează cod_loc/sector/parcela/rand din contracte (id real) ca să funcționeze coloana și filtrele topologice."""
+        try:
+            import entity_links as links
+            by_id = links.loc_info_by_concesionar()
+        except Exception:
+            return rows
+        out = []
+        for r in rows:
+            info = by_id.get(r.get("id"))
+            if info:
+                r = {**r, **{k: v for k, v in info.items() if not r.get(k)}}
+            out.append(r)
+        return out
+
+    def select_concesionar(self, concesionar_id: int):
+        for i in range(self.table.rowCount()):
+            it = self.table.item(i, 0)
+            if it and it.text() == str(concesionar_id):
+                self.table.selectRow(i)
+                return True
+        return False
+
+    def on_data_changed(self, entity: str, key: str):
+        if entity in ("concesionar", "contract"):
+            self.reload()
+
+    def _selected_or_warn(self) -> Optional[Dict[str, Any]]:
+        row = self._selected_row_data()
+        if not row or not row.get("id"):
+            QMessageBox.information(self, "Info", "Selectați un concesionar.")
+            return None
+        return row
+
+    def open_locuri(self):
+        row = self._selected_or_warn()
+        if row:
+            from entity_links_ui import LinkedRecordsDialog
+            nume = f"{row.get('nume') or ''} {row.get('prenume') or ''}".strip()
+            LinkedRecordsDialog(self, self.actions, "concesionar", row["id"], nume).exec()
+            self.reload()
+
+    def new_contract(self):
+        row = self._selected_or_warn()
+        if row:
+            from entity_links_ui import open_contract_dialog
+            open_contract_dialog(self, self.actions, concesionar_id=row["id"])
+            self.reload()
+
+    def open_contracte(self):
+        row = self._selected_or_warn()
+        if row:
+            from entity_links_ui import open_contracts_window
+            open_contracts_window(self, self.actions, concesionar_id=row["id"])
+            self.reload()
+
     def reload(self):
         self.table.setRowCount(0)
         rows = self._load_all()
-        self._rows = rows or []
+        self._rows = self._with_loc_info(rows or [])
 
         # apply filters in Python for simplicity
         def match(r: Dict[str, Any]) -> bool:

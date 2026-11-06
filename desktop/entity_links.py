@@ -90,3 +90,15 @@ def locuri_for_concesionar(concesionar_id: int) -> List[Dict[str, Any]]:
                                       "rand": r["rand"], "numar": r["numar"], "contracte": 0})
         g["contracte"] += 1
     return list(grouped.values())
+
+
+def loc_info_by_concesionar() -> Dict[int, Dict[str, str]]:
+    """{concesionar_id: {cod_loc, sector, parcela, rand}} — valori distincte unite cu ', ' (pentru coloane/filtre)."""
+    acc: Dict[int, Dict[str, List[str]]] = {}
+    for r in _rows("WHERE c.concesionar_id IS NOT NULL", ()):
+        slot = acc.setdefault(r["concesionar_id"], {"cod_loc": [], "sector": [], "parcela": [], "rand": []})
+        for key, val in (("cod_loc", r["cod_loc"] or r["contract_cod_loc"]), ("sector", r["sector"]),
+                         ("parcela", r["parcela"]), ("rand", r["rand"])):
+            if val and str(val) not in slot[key]:
+                slot[key].append(str(val))
+    return {cid: {k: ", ".join(v) for k, v in d.items()} for cid, d in acc.items()}
