@@ -6,7 +6,7 @@ Trei moduri de output:
     2. Batch PNG-uri pentru mai multe locuri: `generate_qr_batch_pngs(cods, dir)`
     3. PDF pe pagină A4 cu grid de etichete: `generate_qr_labels_pdf(cods, path)`
 
-URL-ul din QR este `<qr_base_url>/loc/<cod_loc>` — configurat în settings.
+URL-ul din QR este `<qr_base_url>/public/loc/<cod_loc>` — configurat în settings.
 Etichetele conțin QR + text (codul locului + sector/parcela).
 """
 from __future__ import annotations

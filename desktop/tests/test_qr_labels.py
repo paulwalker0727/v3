@@ -128,7 +128,7 @@ def run():
     import pdf_reports as pr
     assert pr.get_qr_base_url() == "https://cimitir.test.ro"
     url = pr._build_qr_url("loc", "A-01-01")
-    assert url == "https://cimitir.test.ro/loc/A-01-01", url
+    assert url == "https://cimitir.test.ro/public/loc/A-01-01", url
     print(f"  ✓ URL corect: {url}")
 
     print("\n" + "=" * 70)

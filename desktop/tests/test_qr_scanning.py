@@ -16,7 +16,10 @@ import subprocess
 
 import pytest
 
-pytest.importorskip("pyzbar", reason="pyzbar (+ libzbar) nu este in requirements; test optional")
+try:
+    from pyzbar.pyzbar import decode as _zbar_probe  # noqa: F401
+except ImportError as _exc:      # pyzbar lipsă SAU libzbar (DLL/.so) lipsă: vezi docs/QR_DEPENDENTE.md și scripts/check_qr_env.py
+    pytest.skip(f"decodor QR indisponibil ({_exc}); instalează pyzbar + libzbar (docs/QR_DEPENDENTE.md)", allow_module_level=True)
 
 _TMP = tempfile.mkdtemp(prefix="cimitir_test_scan_")
 os.environ["CIMITIR_DATA_DIR"] = _TMP
@@ -120,7 +123,7 @@ def run():
         png = os.path.join(_TMP, f"single_{cod}.png")
         ql.generate_qr_png(cod, png, include_text=True, only_qr=False)
         urls = _decode_qr(png)
-        expected = f"{BASE_URL}/loc/{cod}"
+        expected = f"{BASE_URL}/public/loc/{cod}"
         if urls and urls[0] == expected:
             print(f"    ✓ {cod:12s} → {urls[0]}")
             passed += 1
@@ -136,7 +139,7 @@ def run():
         png = os.path.join(_TMP, f"only_{cod}.png")
         ql.generate_qr_png(cod, png, include_text=False, only_qr=True)
         urls = _decode_qr(png)
-        expected = f"{BASE_URL}/loc/{cod}"
+        expected = f"{BASE_URL}/public/loc/{cod}"
         if urls and urls[0] == expected:
             print(f"    ✓ {cod:12s} → {urls[0]}")
             passed += 1
@@ -160,7 +163,7 @@ def run():
             urls = _decode_qr(page)
             all_urls.extend(urls)
             print(f"    Pagina {i+1}: {len(urls)} QR-uri decodate")
-        expected_urls = {f"{BASE_URL}/loc/{c}" for c in codes}
+        expected_urls = {f"{BASE_URL}/public/loc/{c}" for c in codes}
         found = set(all_urls)
         missing = expected_urls - found
         extra = found - expected_urls
@@ -227,7 +230,7 @@ def run():
         urls_found = []
         for page in pages:
             urls_found.extend(_decode_qr(page))
-        expected = f"{BASE_URL}/loc/A-01-01"
+        expected = f"{BASE_URL}/public/loc/A-01-01"
         # verificare: URL-ul NU conține CNP, nume etc.
         for url in urls_found:
             assert "Test" not in url, f"URL conține nume: {url}"
