@@ -124,7 +124,6 @@ def _in_worktree(path: Path) -> bool:
     return False
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-09 definitiv NEREMEDIAT: default_backup_dir() = <folder_date>-backups; cu CIMITIR_DATA_DIR implicit ./shared_data (dezvoltare/clonă) rezultă un folder ÎN depozit.")
 def test_target_default_backup_dir_is_never_inside_a_git_worktree(tmp_path, monkeypatch):
     repo = tmp_path / "clona"
     (repo / ".git").mkdir(parents=True)
@@ -133,7 +132,6 @@ def test_target_default_backup_dir_is_never_inside_a_git_worktree(tmp_path, monk
     assert not _in_worktree(resolved.resolve()), f"folderul implicit de copii e în depozitul Git: {resolved}"
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-09 definitiv NEREMEDIAT: setarea `backup_dir` / CIMITIR_BACKUP_DIR acceptă orice cale, inclusiv în depozit, fără refuz sau avertisment.")
 def test_target_backup_destination_inside_worktree_is_refused_or_relocated(tmp_path, monkeypatch):
     repo = tmp_path / "clona"
     (repo / ".git").mkdir(parents=True)

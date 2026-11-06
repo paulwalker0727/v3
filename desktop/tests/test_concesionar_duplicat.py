@@ -157,3 +157,21 @@ d.txt_nume.setText("Nou"); d.btn_save.click()
 out["rows"] = count(); out["nume"] = db.get_concesionar(cid)["nume"]; out["saved"] = d.get_saved_id(); out["cid"] = cid
 ''')
     assert out["rows"] == 1 and out["nume"] == "Nou" and out["saved"] == out["cid"]
+
+
+def test_historical_duplicates_are_reported_for_manual_reconciliation_and_never_removed(tmp_path):
+    out = run(tmp_path, r'''
+import cimitir_integrity as ci
+a = db.save_concesionar({"nume": "Ionescu", "prenume": "Fictiv"})
+b = db.save_concesionar({"nume": "Ionescu", "prenume": "Fictiv"})
+k1 = db.save_contract({"numar_contract": "C-1", "concesionar_id": a})
+k2 = db.save_contract({"numar_contract": "C-2", "concesionar_id": b})
+before = [dict(r) for r in db.load_concesionari()]
+rep = ci.run_on_file(db.DB_PATH, categories=["concesionari"], include_info=True)
+out["codes"] = sorted({i.code for i in rep.issues})
+out["unchanged"] = [dict(r) for r in db.load_concesionari()] == before
+out["contracts_point_to"] = [c["concesionar_id"] for c in db.load_contracte()]
+out["ids"] = [a, b]
+''')
+    assert "CON005" in out["codes"], out["codes"]
+    assert out["unchanged"] and out["contracts_point_to"] == out["ids"]
