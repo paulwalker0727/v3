@@ -93,6 +93,12 @@ class PlatiWindow(QDialog):
         layout.addLayout(btns)
 
         self.setLayout(layout)
+        try:
+            import access_session
+            if access_session.current_user() is not None and not access_session.can("edit"):
+                self.btn_del.setEnabled(False)
+        except Exception:
+            pass
         self.reload()
 
     def add_plata(self):
@@ -103,9 +109,12 @@ class PlatiWindow(QDialog):
         if self.spin_suma.value() <= 0:
             QMessageBox.warning(self, "Plată", "Suma trebuie să fie mai mare ca 0.")
             return
-        db.add_plata(cod, self.spin_suma.value(), self.date.date().toString("yyyy-MM-dd"),
-                     self.cmb_tip.currentText(), self.txt_chitanta.text().strip(),
-                     self.txt_obs.text().strip())
+        pid = db.add_plata(cod, self.spin_suma.value(), self.date.date().toString("yyyy-MM-dd"),
+                           self.cmb_tip.currentText(), self.txt_chitanta.text().strip(),
+                           self.txt_obs.text().strip())
+        if not pid:
+            QMessageBox.warning(self, "Plată", "Plata nu a fost înregistrată. " + db.last_refusal())
+            return
         self.spin_suma.setValue(0)
         self.txt_chitanta.clear()
         self.txt_obs.clear()
@@ -130,7 +139,8 @@ class PlatiWindow(QDialog):
         if QMessageBox.question(self, "Ștergere", "Ștergi această plată?",
                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
-        db.delete_plata(pid)
+        if not db.delete_plata(pid):
+            QMessageBox.warning(self, "Plată", "Plata nu a fost ștearsă. " + db.last_refusal())
         self.reload()
 
     def reload(self):

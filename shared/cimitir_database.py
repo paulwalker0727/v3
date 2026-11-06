@@ -148,6 +148,28 @@ def _audit(conn: sqlite3.Connection, action: str, target: str, detail: str = "")
         print(f"[DB AUDIT WARN] {action} {target}: {exc}")
 
 
+_access_guard = None
+
+
+def set_access_guard(fn) -> None:
+    """Instalează verificarea drepturilor sesiunii MAIN: `fn(right) -> bool`. Fără apel (scripturi, sincronizare, portal) nu se verifică nimic.
+    Cu garda instalată, o eroare la verificare refuză operațiunea (fail-closed)."""
+    global _access_guard
+    _access_guard = fn
+
+
+def _allowed(right: str, what: str) -> bool:
+    if _access_guard is None:
+        return True
+    try:
+        ok = bool(_access_guard(right))
+    except Exception:  # noqa: BLE001
+        ok = False
+    if not ok:
+        _refuse(f"Drepturi insuficiente: {what} cere dreptul „{right}”.")
+    return ok
+
+
 _last_refusal = ""
 
 
@@ -757,6 +779,8 @@ def delete_plot_blockers(cod_loc: str) -> str:
 
 def delete_plot(cod_loc: str) -> bool:
     """Șterge locul DOAR dacă nu are istoric (înhumați, contracte, plăți, fotografii, avize, documente)."""
+    if not _allowed("edit", "ștergerea locului"):
+        return False
     blockers = delete_plot_blockers(cod_loc)
     if blockers:
         _refuse(blockers)
@@ -844,6 +868,8 @@ def search_locuri(filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, An
 # CONCESIONARI
 # =============================================================================
 def save_concesionar(data: Dict[str, Any], concesionar_id: Optional[int] = None) -> Optional[int]:
+    if not _allowed("edit" if concesionar_id else "add", "salvarea concesionarului"):
+        return None
     fields = ["nume", "prenume", "cnp", "bi_ci", "adresa", "telefon", "email", "observatii"]
     values = [data.get(k, "") or "" for k in fields]
     conn = get_connection()
@@ -895,6 +921,8 @@ def get_concesionar(concesionar_id: int) -> Optional[Dict[str, Any]]:
 
 def delete_concesionar(concesionar_id: int) -> bool:
     """Refuză ștergerea unui concesionar care are contracte (altfel contractele ar rămâne fără titular)."""
+    if not _allowed("edit", "ștergerea concesionarului"):
+        return False
     conn = get_connection()
     try:
         n = conn.execute("SELECT COUNT(*) FROM contracte WHERE concesionar_id = ?", (concesionar_id,)).fetchone()[0]
@@ -924,8 +952,17 @@ _CONTRACT_FIELDS = (
 )
 
 
+_CONTRACT_OWNER_FIELDS = (
+    "owner_fullname", "owner_address", "owner_id_card_serie_number", "owner_cnp",
+    "owner_phone", "owner_email", "owner_fullname_2",
+)
+
+
 def save_contract(data: Dict[str, Any], contract_id: Optional[int] = None) -> Optional[int]:
-    """Salvează/actualizează un contract. Autofill din locuri_de_veci după cod_loc."""
+    """Salvează/actualizează un contract. Autofill din locuri_de_veci după cod_loc.
+    La actualizare, câmpurile istorice `owner_*` (instantaneul titularului la emitere) se păstrează dacă cheia lipsește din `data`."""
+    if not _allowed("edit" if contract_id else "add", "salvarea contractului"):
+        return None
     conn = get_connection()
     try:
         cod_loc_val = data.get("cod_loc") or ""
@@ -973,6 +1010,7 @@ def save_contract(data: Dict[str, Any], contract_id: Optional[int] = None) -> Op
 
         if contract_id:
             keep = [f for f in ("valabilitate", "extra_data") if data.get(f) is None]
+            keep += [f for f in _CONTRACT_OWNER_FIELDS if f not in data]
             pairs = [(f, v) for f, v in zip(_CONTRACT_FIELDS, values) if f not in keep]
             set_clause = ", ".join([f"{f}=?" for f, _ in pairs])
             cur = conn.execute(f"UPDATE contracte SET {set_clause} WHERE id=?", (*[v for _, v in pairs], contract_id))
@@ -1034,6 +1072,8 @@ def get_contract(contract_id: int) -> Optional[Dict[str, Any]]:
 
 def delete_contract(contract_id: int) -> bool:
     """Refuză ștergerea unui contract cu plăți sau înhumați asociați (istoric financiar/de evidență)."""
+    if not _allowed("edit", "ștergerea contractului"):
+        return False
     conn = get_connection()
     try:
         np_ = conn.execute("SELECT COUNT(*) FROM plati WHERE contract_id = ?", (contract_id,)).fetchone()[0]
@@ -1070,6 +1110,8 @@ def save_inhumat(cod_loc: str, data: Dict[str, Any],
     - Dacă `inhumat_id` este furnizat → UPDATE.
     - Altfel → INSERT (permite mai mulți înhumați pentru același loc).
     """
+    if not _allowed("edit" if inhumat_id else "add", "salvarea înhumatului"):
+        return None
     id_loc = get_loc_id_by_cod(cod_loc)
     if id_loc is None:
         print(f"[DB WARN save_inhumat] Locul '{cod_loc}' nu există în DB.")
@@ -1176,6 +1218,8 @@ def get_inhumat(inhumat_id: int) -> Optional[Dict[str, Any]]:
 
 
 def delete_inhumat(inhumat_id: int) -> bool:
+    if not _allowed("edit", "ștergerea înhumatului"):
+        return False
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM inhumati WHERE id = ?", (inhumat_id,))
@@ -1563,6 +1607,8 @@ def shift_rows_order(sector_label: str, from_index: int, delta: int = 1) -> None
 def add_plata(cod_loc, suma, data_plata, tip="", chitanta_nr="", observatii="", contract_id=None):
     """Înregistrează o plată. Refuză (None): loc inexistent, sumă nenumerică/≤0, contract inexistent sau al altui loc.
     Retrimiterea aceleiași plăți (aceeași chitanță nenulă, același loc/contract/sumă/dată/tip) întoarce plata existentă."""
+    if not _allowed("add", "înregistrarea plății"):
+        return None
     import math
     cod_loc = (cod_loc or "").strip()
     try:
@@ -1622,6 +1668,8 @@ def list_plati(cod_loc: Optional[str] = None) -> List[Dict[str, Any]]:
 
 
 def delete_plata(plata_id: int) -> bool:
+    if not _allowed("edit", "ștergerea plății"):
+        return False
     conn = get_connection()
     try:
         row = conn.execute("SELECT cod_loc, contract_id, suma, chitanta_nr FROM plati WHERE id = ?", (plata_id,)).fetchone()
@@ -1735,6 +1783,8 @@ def import_media_file(src_path: str, subdir: str = "") -> Optional[str]:
 
 def add_document(entity_type: str, entity_id: Any, doc_type: str, src_path: str,
                  caption: str = "", nr_evidenta: str = "", copy: bool = True) -> Optional[int]:
+    if not _allowed("add", "adăugarea documentului"):
+        return None
     path = import_media_file(src_path, entity_type) if copy else src_path
     if not path:
         return None
@@ -1784,6 +1834,8 @@ def _is_managed_media(path: str) -> bool:
 
 
 def delete_document(doc_id: int) -> bool:
+    if not _allowed("edit", "ștergerea documentului"):
+        return False
     conn = get_connection()
     try:
         row = conn.execute("SELECT file_path FROM documents WHERE id=?", (doc_id,)).fetchone()

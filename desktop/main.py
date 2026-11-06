@@ -146,6 +146,8 @@ def main() -> int:
             try:
                 import database as _dbm
                 _dbm.set_audit_actor(user.get("username", ""))
+                import access_session as _acc
+                _dbm.set_access_guard(_acc.can)
             except Exception:
                 pass
             if auth.password_change_required(user["id"]):

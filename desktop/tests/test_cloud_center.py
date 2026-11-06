@@ -104,7 +104,8 @@ def test_license_and_license_generator_files_unchanged_vs_base():
         subprocess.run(["git", "cat-file", "-e", BASE_COMMIT], cwd=REPO, check=True, capture_output=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         pytest.skip("istoricul Git de bază nu este disponibil")
-    paths = ["desktop/license", "desktop/tools/license_manager.py", "desktop/login_window.py", "desktop/auth.py", "shared/cimitir_auth.py"]
+    # shared/cimitir_auth.py: modificat intenționat în P3-A (drept nou „add”, politică aprobată de proprietar; vezi test_p3_permisiuni_roluri.py)
+    paths = ["desktop/license", "desktop/tools/license_manager.py", "desktop/login_window.py", "desktop/auth.py"]
     out = subprocess.run(["git", "diff", "--name-only", BASE_COMMIT, "--"] + paths, cwd=REPO, capture_output=True, text=True, check=True).stdout
     assert out.strip() == "", f"fișiere interzise modificate: {out}"
 
