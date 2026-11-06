@@ -182,7 +182,8 @@ def download(request: Request, media_id: str):
         raise HTTPException(status_code=503, detail=f"storage indisponibil: {exc}")
     return StreamingResponse(stream, media_type=obj["mime"], headers={
         "X-Sha256": obj["sha256"], "Content-Length": str(obj["size"]),
-        "Content-Disposition": f'attachment; filename="{obj["filename"]}"'})
+        "Content-Disposition": f'attachment; filename="{obj["filename"]}"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.delete("/{media_id}")
