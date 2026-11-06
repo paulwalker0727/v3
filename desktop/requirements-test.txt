@@ -1,0 +1,2 @@
+# Dependențe DOAR pentru teste desktop (decodare QR). Windows: roata pip include libzbar; Linux: apt-get install libzbar0 (vezi docs/QR_DEPENDENTE.md)
+pyzbar>=0.1.9
