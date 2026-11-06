@@ -267,7 +267,7 @@ def build_story() -> list:
 
 
 def main() -> str:
-    out_dir = os.path.join(APP_DIR, "docs")
+    out_dir = os.environ.get("CIMITIR_GUIDE_OUT_DIR") or os.path.join(APP_DIR, "docs")
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "Ghid_Instalare_Cimitir.pdf")
     doc = SimpleDocTemplate(

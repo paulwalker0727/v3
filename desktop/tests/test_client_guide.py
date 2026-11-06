@@ -4,11 +4,15 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+_OUT_DIR = Path(tempfile.mkdtemp(prefix="cimitir_guide_"))
 
 
 def _run_guide() -> Path:
@@ -18,13 +22,14 @@ def _run_guide() -> Path:
     result = subprocess.run(
         [sys.executable, str(script)],
         cwd=str(PROJECT_ROOT),
+        env={**os.environ, "CIMITIR_GUIDE_OUT_DIR": str(_OUT_DIR)},
         capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, (
         f"Scriptul a eșuat: rc={result.returncode}\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
-    return PROJECT_ROOT / "docs" / "Ghid_Instalare_Cimitir.pdf"
+    return _OUT_DIR / "Ghid_Instalare_Cimitir.pdf"
 
 
 class TestClientGuidePDF:

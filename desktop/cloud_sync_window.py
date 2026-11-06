@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 import cloud_profiles
 import cloud_sync
+import thread_guard
 
 
 def _advanced_ui() -> bool:
@@ -329,7 +330,7 @@ class CloudSyncWindow(QDialog):
         self.btn_sync.setEnabled(False)
         self.btn_sync.setText("Se sincronizează…")
         self.log.appendPlainText("— Pornire sincronizare —")
-        self._thread = _SyncThread(self)
+        self._thread = thread_guard.track(_SyncThread(self))
         self._thread.done.connect(self._on_done)
         self._thread.start()
 

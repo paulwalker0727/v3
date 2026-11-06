@@ -8,6 +8,7 @@ from typing import Any, Callable
 from PySide6.QtCore import QCoreApplication, QThread, Signal
 
 import field_import
+import thread_guard
 import field_inbox_client as fic
 
 log = logging.getLogger("cimitir.field_worker")
@@ -49,7 +50,7 @@ _HOOKED = False
 def wait_for_tasks(timeout_ms: int = 15000) -> bool:
     """Așteaptă thread-urile în curs (cererile HTTP au timeout propriu). Un QThread nu are voie să fie distrus cât rulează:
     la ieșirea procesului Qt face abort („Destroyed while thread is still running”). True dacă toate s-au încheiat."""
-    done = True
+    done = thread_guard.wait_all(timeout_ms)
     for task in list(_ACTIVE):
         try:
             if task.isRunning() and not task.wait(timeout_ms):

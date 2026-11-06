@@ -13,6 +13,7 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 import cloud_sync
+import thread_guard
 
 START_DELAY_MS = 5000
 INTERVAL_MS = 5 * 60 * 1000
@@ -101,7 +102,7 @@ class AutoSync(QObject):
             return
         if not (cfg["url"] and cfg["key"] and cfg["auto"]):
             return
-        self._ew = _EntityWorker(self)
+        self._ew = thread_guard.track(_EntityWorker(self))
         self._ew.done.connect(self._on_entities_done)
         self._ew.start()
 
@@ -126,7 +127,7 @@ class AutoSync(QObject):
             return
         if not cfg["auto"] and not force:
             return
-        self._worker = _Worker(self)
+        self._worker = thread_guard.track(_Worker(self))
         self._worker.done.connect(self._on_done)
         self._worker.start()
 

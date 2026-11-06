@@ -18,6 +18,7 @@ SHARED_DIR = Path(__file__).resolve().parent.parent / "shared"
 if str(SHARED_DIR) not in sys.path:
     sys.path.insert(0, str(SHARED_DIR))
 import cimitir_integrity as ci  # noqa: E402
+import thread_guard  # noqa: E402
 
 _SEV_COLORS = {"critical": "#b00020", "error": "#d84315", "warning": "#9a7d0a", "info": "#2e7d32"}
 
@@ -150,7 +151,7 @@ class IntegrityWindow(QDialog):
         self.lbl_summary.setText("")
         self.btn_run.setEnabled(False)
         self.btn_cancel.setEnabled(True)
-        self._worker = IntegrityWorker(db_path, include_info=self.chk_info.isChecked())
+        self._worker = thread_guard.track(IntegrityWorker(db_path, include_info=self.chk_info.isChecked()))
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)

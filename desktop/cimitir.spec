@@ -126,6 +126,7 @@ hiddenimports = [
     "field_devices_window",
     "optional_date_edit",
     "field_worker",
+    "thread_guard",
     "entity_sync",
     "cimitir_entities",
     "cimitir_dates",

@@ -17,6 +17,7 @@ SHARED_DIR = Path(__file__).resolve().parent.parent / "shared"
 if str(SHARED_DIR) not in sys.path:
     sys.path.insert(0, str(SHARED_DIR))
 import cimitir_integrity as ci  # noqa: E402
+import thread_guard  # noqa: E402
 
 # cod -> (categorie, etichetă de încredere afișată utilizatorului)
 _DUP_CODES = {
@@ -108,7 +109,7 @@ class DuplicatePeopleWindow(QDialog):
         self.tree.clear()
         self.lbl_status.setText("Se caută...")
         self.btn_run.setEnabled(False)
-        self._worker = DuplicateScanWorker(db_path)
+        self._worker = thread_guard.track(DuplicateScanWorker(db_path))
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._worker.finished.connect(lambda: self.btn_run.setEnabled(True))
