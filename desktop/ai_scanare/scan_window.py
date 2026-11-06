@@ -1595,7 +1595,9 @@ class AIScanareWindow(QDialog):
                         "adresa": data.get("adresa", existing.get("adresa", "")),
                         "observatii": (existing.get("observatii", "") + " | Actualizat din scanare AI").strip(" |"),
                     }
-                    update_concesionar(existing["id"], updated_data)
+                    if not update_concesionar(existing["id"], updated_data):
+                        QMessageBox.warning(self, "Eroare", f"Concesionarul #{existing['id']} NU a fost actualizat. Nu s-a modificat nimic.")
+                        return
                     entity_id = existing["id"]
                     entity_type = "concesionar"
                     QMessageBox.information(self, "Actualizat", f"Concesionar #{entity_id} actualizat.")
@@ -1615,19 +1617,16 @@ class AIScanareWindow(QDialog):
                 if reply == QMessageBox.Cancel:
                     return
                 if reply == QMessageBox.Yes:
-                    updated_data = {
-                        "nume": data.get("nume", existing.get("nume", "")),
-                        "prenume": data.get("prenume", existing.get("prenume", "")),
-                        "cnp": cnp,
-                        "data_nasterii": data.get("data_nasterii", ""),
-                        "data_deces": data.get("data_deces", ""),
-                        "sex": data.get("sex", ""),
-                        "cauza_deces": data.get("cauza_deces", ""),
-                        "ultima_adresa": data.get("ultima_adresa", ""),
-                        "nr_certificat_deces": data.get("nr_certificat_deces", ""),
-                        "observatii": "Actualizat din scanare AI",
-                    }
-                    update_inhumat(existing["id"], existing.get("cod_loc", ""), updated_data)
+                    # doar valorile extrase (nevide) se scriu; restul înregistrării (data înhumării etc.) rămâne neatins
+                    updated_data = {k: data.get(k) for k in (
+                        "nume", "prenume", "data_nasterii", "data_deces", "sex", "cauza_deces",
+                        "ultima_adresa", "nr_certificat_deces") if data.get(k)}
+                    updated_data["cnp"] = cnp
+                    prev_obs = (existing.get("observatii") or "").strip()
+                    updated_data["observatii"] = (prev_obs + " | Actualizat din scanare AI").strip(" |")
+                    if not update_inhumat(existing["id"], existing.get("cod_loc", ""), updated_data):
+                        QMessageBox.warning(self, "Eroare", f"Înhumatul #{existing['id']} NU a fost actualizat (loc sau înregistrare lipsă). Nu s-a modificat nimic.")
+                        return
                     entity_id = existing["id"]
                     entity_type = "inhumat"
                     QMessageBox.information(self, "Actualizat", f"Inhumat #{entity_id} actualizat.")

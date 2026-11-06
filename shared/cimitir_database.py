@@ -124,6 +124,44 @@ def _ensure_wal(conn: sqlite3.Connection) -> None:
     print(f"[DB WARN] Nu am putut activa WAL ({last_error}); continui cu modul curent.")
 
 
+_audit_actor = ""
+
+
+def set_audit_actor(username: str) -> None:
+    """Pornește jurnalul de audit al operațiunilor din MAIN pentru utilizatorul curent (doar numele de cont).
+    Fără apel, `_audit` nu scrie nimic (portalul web are propriul jurnal în server.py și evită dublurile)."""
+    global _audit_actor
+    _audit_actor = (username or "local")[:64]
+
+
+def _audit(conn: sqlite3.Connection, action: str, target: str, detail: str = "") -> None:
+    """Urmă în `audit_log` (țintă `tip:id`, ca în portal) pentru operațiuni importante din MAIN. Doar identificatori/sume/numere de
+    document, trecute prin redactarea F-02. Nu ridică excepții: jurnalul nu blochează operațiunea, dar eșecul rămâne vizibil în consolă."""
+    if not _audit_actor:
+        return
+    try:
+        import cimitir_redact
+        conn.execute("INSERT INTO audit_log (ts, actor_type, actor, action, target, detail) VALUES (?,?,?,?,?,?)",
+                     (datetime.now().isoformat(timespec="seconds"), "staff", _audit_actor, action,
+                      cimitir_redact.redact_text(target)[:120], cimitir_redact.redact_detail(detail)[:300]))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[DB AUDIT WARN] {action} {target}: {exc}")
+
+
+_last_refusal = ""
+
+
+def last_refusal() -> str:
+    """Motivul ultimei operații refuzate de protecțiile de integritate (șters/respins), pentru mesaje către utilizator."""
+    return _last_refusal
+
+
+def _refuse(message: str) -> None:
+    global _last_refusal
+    _last_refusal = message
+    print(f"[DB REFUZ] {message}")
+
+
 def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
     """Converteste un sqlite3.Row în dict cu None -> '' (util pentru UI)."""
     if row is None:
@@ -149,367 +187,433 @@ def _add_column_if_missing(conn: sqlite3.Connection, table: str, column_def: str
     if not _column_exists(conn, table, col_name):
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
-        except sqlite3.OperationalError:
-            pass
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
 
 
 # -----------------------------------------------------------------------------
 # INIT / MIGRATIONS
 # -----------------------------------------------------------------------------
+_MIGRATION_COLUMNS = [
+    ("plati", "contract_id INTEGER"),
+    ("contracte", "cod_loc TEXT"),
+    ("contracte", "extra_data TEXT"),
+    ("contracte", "id_loc INTEGER"),
+    ("contracte", "valabilitate TEXT"),
+    ("contracte", "cemetery_parcel TEXT"),
+    ("contracte", "cemetery_row TEXT"),
+    ("contracte", "cemetery_tomb TEXT"),
+    ("contracte", "tomb_surface_m2 REAL"),
+    ("contracte", "owner_fullname TEXT"),
+    ("contracte", "owner_fullname_2 TEXT"),
+    ("contracte", "owner_address TEXT"),
+    ("contracte", "owner_id_card_serie_number TEXT"),
+    ("contracte", "owner_cnp TEXT"),
+    ("contracte", "owner_phone TEXT"),
+    ("contracte", "owner_email TEXT"),
+    ("contracte", "sector TEXT"),
+    ("inhumati", "contract_id INTEGER"),
+    ("inhumati", "nr_certificat_deces TEXT"),
+    ("inhumati", "nr_adeverinta_inhumare TEXT"),
+    ("amenajari_avize", "lucrare TEXT"),
+    ("amenajari_avize", "stare TEXT"),
+    ("amenajari_avize", "observatii TEXT"),
+    ("amenajari_avize", "data_finalizare TEXT"),
+    ("amenajari_avize", "executant TEXT"),
+    ("amenajari_avize", "data_inceput TEXT"),
+    ("locuri_de_veci", "extra_data TEXT"),
+    ("cereri_concesionare", "cod_urmarire TEXT"),
+    ("cereri_concesionare", "sync_version INTEGER DEFAULT 0"),
+    ("cereri_concesionare", "acked INTEGER DEFAULT 0"),
+    ("cereri_concesionare", "citizen_id INTEGER"),
+    ("cereri_concesionare", "tip TEXT DEFAULT 'concesionare'"),
+    ("cereri_concesionare", "payload TEXT"),
+    ("cereri_concesionare", "revision INTEGER DEFAULT 0"),
+    ("cereri_concesionare", "contract_id INTEGER"),
+    ("cereri_concesionare", "privacy_version TEXT"),
+    ("cereri_concesionare", "privacy_ack_at TEXT"),
+    ("cereri_concesionare", "closed_at TEXT"),
+    ("cereri_concesionare", "public_message TEXT"),
+    ("documents", "media_id TEXT"),
+    ("photos", "media_id TEXT"),
+    ("documents", "sha256 TEXT"),
+    ("documents", "size INTEGER"),
+    ("locuri_de_veci", "uid TEXT"),
+    ("locuri_de_veci", "sync_version INTEGER DEFAULT 0"),
+    ("locuri_de_veci", "are_inhumari INTEGER DEFAULT 0"),
+    ("users", "uid TEXT"),
+    ("users", "rights TEXT"),
+    ("users", "active INTEGER DEFAULT 1"),
+    ("users", "cemetery_id TEXT"),
+    ("users", "version INTEGER DEFAULT 1"),
+    ("users", "updated_at TEXT"),
+    ("users", "origin TEXT DEFAULT 'local'"),
+    ("users", "lease_until TEXT"),
+]
+
+
+PRE_MIGRATION_DIR = "pre-migrare"
+PRE_MIGRATION_KEEP = 5
+
+
+def _migration_pending(conn: sqlite3.Connection) -> bool:
+    """True dacă baza are tabele vechi cărora le lipsesc coloane din lista de migrare (adică o actualizare de schemă va modifica date existente)."""
+    existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    for table, column_def in _MIGRATION_COLUMNS:
+        if table in existing and not _column_exists(conn, table, column_def.split()[0]):
+            return True
+    return False
+
+
+def _snapshot_before_migration(conn: sqlite3.Connection) -> None:
+    """Copie consistentă a bazei ÎNAINTE de o migrare care modifică o bază existentă (revenire la versiunea veche a aplicației).
+    Eșecul copiei (disc plin, acces refuzat) oprește migrarea cu eroare explicită: nu se modifică baza fără plasă de siguranță."""
+    if not _migration_pending(conn):
+        return
+    db_file = current_db_path()
+    folder = os.path.join(os.path.dirname(os.path.abspath(db_file)), PRE_MIGRATION_DIR)
+    os.makedirs(folder, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = os.path.join(folder, f"{os.path.basename(db_file)}.{stamp}.bak")
+    n = 0
+    while os.path.exists(target):
+        n += 1
+        target = os.path.join(folder, f"{os.path.basename(db_file)}.{stamp}-{n}.bak")
+    dst = sqlite3.connect(target)
+    try:
+        conn.backup(dst)
+    except BaseException:
+        dst.close()
+        try:
+            os.remove(target)
+        except OSError:
+            pass
+        raise
+    dst.close()
+    old = sorted(f for f in os.listdir(folder) if f.endswith(".bak"))
+    for name in old[:-PRE_MIGRATION_KEEP]:
+        try:
+            os.remove(os.path.join(folder, name))
+        except OSError:
+            pass
+
+
 def init_db() -> None:
-    """Creează sau actualizează schema fără să distrugă datele existente."""
+    """Creează sau actualizează schema fără să distrugă datele existente.
+
+    Migrarea rulează într-o singură tranzacție: la orice eroare (bază blocată, disc plin, bază doar-citire) se anulează
+    integral și excepția ajunge la apelant; nu rămâne o schemă pe jumătate migrată și nicio eroare nu e înghițită.
+    """
     conn = get_connection()
     try:
-        c = conn.cursor()
-
-        # ---- locuri_de_veci ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS locuri_de_veci (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cod_loc TEXT UNIQUE,
-                points TEXT,
-                color TEXT,
-                sector TEXT,
-                parcela TEXT,
-                rand TEXT,
-                numar TEXT,
-                capacitate TEXT,
-                disponibilitate TEXT,
-                tip TEXT,
-                stare TEXT,
-                categorie TEXT,
-                suprafata REAL,
-                nr_vechi TEXT,
-                numar_cf TEXT,
-                ocupat INTEGER DEFAULT 0,
-                observatii TEXT,
-                extra_data TEXT
-            )
-        """)
-
-        # ---- concesionari ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS concesionari (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nume TEXT,
-                prenume TEXT,
-                cnp TEXT,
-                bi_ci TEXT,
-                adresa TEXT,
-                telefon TEXT,
-                email TEXT,
-                observatii TEXT
-            )
-        """)
-
-        # ---- contracte ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS contracte (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                numar_contract TEXT,
-                data_contract TEXT,
-                data_inceput TEXT,
-                data_sfarsit TEXT,
-                concesionar_id INTEGER,
-                id_loc INTEGER,
-                cod_loc TEXT,
-                valabilitate TEXT,
-                observatii TEXT,
-                extra_data TEXT,
-                owner_fullname TEXT,
-                owner_fullname_2 TEXT,
-                owner_address TEXT,
-                owner_id_card_serie_number TEXT,
-                owner_cnp TEXT,
-                owner_phone TEXT,
-                owner_email TEXT,
-                cemetery_parcel TEXT,
-                cemetery_row TEXT,
-                cemetery_tomb TEXT,
-                tomb_surface_m2 REAL,
-                sector TEXT,
-                FOREIGN KEY(concesionar_id) REFERENCES concesionari(id) ON DELETE SET NULL ON UPDATE CASCADE,
-                FOREIGN KEY(id_loc) REFERENCES locuri_de_veci(id) ON DELETE SET NULL ON UPDATE CASCADE
-            )
-        """)
-
-        # ---- inhumati ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS inhumati (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nume TEXT,
-                prenume TEXT,
-                cnp TEXT,
-                data_nasterii TEXT,
-                data_deces TEXT,
-                data_inhumare TEXT,
-                data_deshumare TEXT,
-                sex TEXT,
-                cauza_deces TEXT,
-                profesie TEXT,
-                religie TEXT,
-                ultima_adresa TEXT,
-                observatii TEXT,
-                id_loc INTEGER,
-                contract_id INTEGER,
-                FOREIGN KEY(id_loc) REFERENCES locuri_de_veci(id) ON DELETE SET NULL ON UPDATE CASCADE,
-                FOREIGN KEY(contract_id) REFERENCES contracte(id) ON DELETE SET NULL ON UPDATE CASCADE
-            )
-        """)
-
-        # ---- sectoare ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS sectoare (
-                id TEXT PRIMARY KEY,
-                points TEXT,
-                color TEXT
-            )
-        """)
-
-        # ---- settings ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
-
-        # ---- photos ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS photos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cod_loc TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                caption TEXT,
-                uploader TEXT,
-                date_added TEXT,
-                is_cover INTEGER DEFAULT 0,
-                FOREIGN KEY(cod_loc) REFERENCES locuri_de_veci(cod_loc) ON DELETE CASCADE
-            )
-        """)
-
-        # ---- amenajari_avize ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS amenajari_avize (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cod_loc TEXT NOT NULL,
-                nr_aviz TEXT NOT NULL,
-                data_aviz TEXT,
-                created_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY(cod_loc) REFERENCES locuri_de_veci(cod_loc) ON DELETE CASCADE
-            )
-        """)
-
-        # ---- loc_extra (fallback JSON) ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS loc_extra (
-                cod_loc TEXT PRIMARY KEY,
-                extra_json TEXT
-            )
-        """)
-
-        # ---- guides (linii de ghidare persistente) ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS guides (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kind TEXT,
-                points TEXT,
-                color TEXT
-            )
-        """)
-
-        # ---- rows_ghid (rânduri definite ca linii reale) ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS rows_ghid (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sector_label TEXT,
-                name TEXT,
-                order_index INTEGER,
-                baseline TEXT,
-                width REAL,
-                depth REAL
-            )
-        """)
-
-        # ---- plati ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS plati (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cod_loc TEXT,
-                contract_id INTEGER,
-                suma REAL,
-                data_plata TEXT,
-                tip TEXT,
-                chitanta_nr TEXT,
-                observatii TEXT,
-                created_at TEXT DEFAULT (datetime('now'))
-            )
-        """)
-
-        # ---- documents (poze/documente unificate: loc, inhumat, aviz) ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS documents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                entity_type TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                doc_type TEXT,
-                file_path TEXT NOT NULL,
-                caption TEXT,
-                nr_evidenta TEXT,
-                date_added TEXT
-            )
-        """)
-
-        # ---- cereri de concesionare primite din portalul public ----
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS cereri_concesionare (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TEXT,
-                status TEXT DEFAULT 'nou',
-                cod_loc TEXT,
-                nume TEXT,
-                prenume TEXT,
-                cnp TEXT,
-                bi_ci TEXT,
-                adresa TEXT,
-                telefon TEXT,
-                email TEXT,
-                grad_rudenie TEXT,
-                observatii TEXT,
-                concesionar_id INTEGER,
-                reviewed_at TEXT,
-                review_note TEXT
-            )
-        """)
-
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'user',
-                created_at TEXT NOT NULL,
-                last_login TEXT
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS citizens (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, uid TEXT UNIQUE, email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL, full_name TEXT, created_at TEXT, active INTEGER DEFAULT 1
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, actor_type TEXT, actor TEXT,
-                action TEXT, target TEXT, detail TEXT
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS loc_holders (
-                cod_loc TEXT, holder_hash TEXT, PRIMARY KEY (cod_loc, holder_hash)
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS sync_ops (
-                op_id TEXT PRIMARY KEY,
-                kind TEXT,
-                applied_at TEXT,
-                result TEXT
-            )
-        """)
-
-        # ---- MIGRATIONS: ADD COLUMN IF MISSING ----
-        for col in [
-            ("contracte", "cod_loc TEXT"),
-            ("contracte", "extra_data TEXT"),
-            ("contracte", "id_loc INTEGER"),
-            ("contracte", "valabilitate TEXT"),
-            ("contracte", "cemetery_parcel TEXT"),
-            ("contracte", "cemetery_row TEXT"),
-            ("contracte", "cemetery_tomb TEXT"),
-            ("contracte", "tomb_surface_m2 REAL"),
-            ("contracte", "owner_fullname TEXT"),
-            ("contracte", "owner_fullname_2 TEXT"),
-            ("contracte", "owner_address TEXT"),
-            ("contracte", "owner_id_card_serie_number TEXT"),
-            ("contracte", "owner_cnp TEXT"),
-            ("contracte", "owner_phone TEXT"),
-            ("contracte", "owner_email TEXT"),
-            ("contracte", "sector TEXT"),
-            ("inhumati", "contract_id INTEGER"),
-            ("inhumati", "nr_certificat_deces TEXT"),
-            ("inhumati", "nr_adeverinta_inhumare TEXT"),
-            ("amenajari_avize", "lucrare TEXT"),
-            ("amenajari_avize", "stare TEXT"),
-            ("amenajari_avize", "observatii TEXT"),
-            ("amenajari_avize", "data_finalizare TEXT"),
-            ("amenajari_avize", "executant TEXT"),
-            ("amenajari_avize", "data_inceput TEXT"),
-            ("locuri_de_veci", "extra_data TEXT"),
-            ("cereri_concesionare", "cod_urmarire TEXT"),
-            ("cereri_concesionare", "sync_version INTEGER DEFAULT 0"),
-            ("cereri_concesionare", "acked INTEGER DEFAULT 0"),
-            ("cereri_concesionare", "citizen_id INTEGER"),
-            ("cereri_concesionare", "tip TEXT DEFAULT 'concesionare'"),
-            ("cereri_concesionare", "payload TEXT"),
-            ("cereri_concesionare", "revision INTEGER DEFAULT 0"),
-            ("cereri_concesionare", "contract_id INTEGER"),
-            ("cereri_concesionare", "privacy_version TEXT"),
-            ("cereri_concesionare", "privacy_ack_at TEXT"),
-            ("cereri_concesionare", "closed_at TEXT"),
-            ("cereri_concesionare", "public_message TEXT"),
-            ("documents", "media_id TEXT"),
-            ("photos", "media_id TEXT"),
-            ("documents", "sha256 TEXT"),
-            ("documents", "size INTEGER"),
-            ("locuri_de_veci", "uid TEXT"),
-            ("locuri_de_veci", "sync_version INTEGER DEFAULT 0"),
-            ("locuri_de_veci", "are_inhumari INTEGER DEFAULT 0"),
-            ("users", "uid TEXT"),
-            ("users", "rights TEXT"),
-            ("users", "active INTEGER DEFAULT 1"),
-            ("users", "cemetery_id TEXT"),
-            ("users", "version INTEGER DEFAULT 1"),
-            ("users", "updated_at TEXT"),
-            ("users", "origin TEXT DEFAULT 'local'"),
-            ("users", "lease_until TEXT"),
-        ]:
-            _add_column_if_missing(conn, col[0], col[1])
-
-        # ---- indexuri utile ----
-        for idx in [
-            "CREATE INDEX IF NOT EXISTS idx_locuri_cod ON locuri_de_veci(cod_loc)",
-            "CREATE INDEX IF NOT EXISTS idx_inhumati_loc ON inhumati(id_loc)",
-            "CREATE INDEX IF NOT EXISTS idx_inhumati_contract ON inhumati(contract_id)",
-            "CREATE INDEX IF NOT EXISTS idx_concesionari_nume ON concesionari(nume)",
-            "CREATE INDEX IF NOT EXISTS idx_contracte_loc ON contracte(id_loc)",
-            "CREATE INDEX IF NOT EXISTS idx_contracte_concesionar ON contracte(concesionar_id)",
-            "CREATE INDEX IF NOT EXISTS idx_contracte_numar ON contracte(numar_contract)",
-            "CREATE INDEX IF NOT EXISTS idx_photos_codloc ON photos(cod_loc)",
-            "CREATE INDEX IF NOT EXISTS idx_avize_codloc ON amenajari_avize(cod_loc)",
-            "CREATE INDEX IF NOT EXISTS idx_documents_entity ON documents(entity_type, entity_id)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_cereri_urmarire ON cereri_concesionare(cod_urmarire)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_locuri_uid ON locuri_de_veci(uid)",
-        ]:
-            try:
-                conn.execute(idx)
-            except Exception:
-                pass
-
-        import uuid as _uuid
-        for table in ("locuri_de_veci", "users"):
-            for (rid,) in conn.execute(f"SELECT id FROM {table} WHERE uid IS NULL OR uid=''").fetchall():
-                conn.execute(f"UPDATE {table} SET uid=? WHERE id=?", (str(_uuid.uuid4()), rid))
-        conn.execute("UPDATE users SET active=1 WHERE active IS NULL")
-        conn.execute("UPDATE users SET version=1 WHERE version IS NULL")
-        if not conn.execute("SELECT 1 FROM settings WHERE key='cemetery_id'").fetchone():
-            conn.execute("INSERT INTO settings (key, value) VALUES ('cemetery_id', ?)", (str(_uuid.uuid4()),))
-        for (rid,) in conn.execute(
-                "SELECT id FROM cereri_concesionare WHERE cod_urmarire IS NULL OR cod_urmarire=''").fetchall():
-            conn.execute("UPDATE cereri_concesionare SET cod_urmarire=? WHERE id=?",
-                         (_new_tracking_code(conn), rid))
+        _snapshot_before_migration(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _init_db_steps(conn)
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
     finally:
         conn.close()
+
+
+def _init_db_steps(conn: sqlite3.Connection) -> None:
+    c = conn.cursor()
+
+    # ---- locuri_de_veci ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS locuri_de_veci (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cod_loc TEXT UNIQUE,
+            points TEXT,
+            color TEXT,
+            sector TEXT,
+            parcela TEXT,
+            rand TEXT,
+            numar TEXT,
+            capacitate TEXT,
+            disponibilitate TEXT,
+            tip TEXT,
+            stare TEXT,
+            categorie TEXT,
+            suprafata REAL,
+            nr_vechi TEXT,
+            numar_cf TEXT,
+            ocupat INTEGER DEFAULT 0,
+            observatii TEXT,
+            extra_data TEXT
+        )
+    """)
+
+    # ---- concesionari ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS concesionari (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nume TEXT,
+            prenume TEXT,
+            cnp TEXT,
+            bi_ci TEXT,
+            adresa TEXT,
+            telefon TEXT,
+            email TEXT,
+            observatii TEXT
+        )
+    """)
+
+    # ---- contracte ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS contracte (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numar_contract TEXT,
+            data_contract TEXT,
+            data_inceput TEXT,
+            data_sfarsit TEXT,
+            concesionar_id INTEGER,
+            id_loc INTEGER,
+            cod_loc TEXT,
+            valabilitate TEXT,
+            observatii TEXT,
+            extra_data TEXT,
+            owner_fullname TEXT,
+            owner_fullname_2 TEXT,
+            owner_address TEXT,
+            owner_id_card_serie_number TEXT,
+            owner_cnp TEXT,
+            owner_phone TEXT,
+            owner_email TEXT,
+            cemetery_parcel TEXT,
+            cemetery_row TEXT,
+            cemetery_tomb TEXT,
+            tomb_surface_m2 REAL,
+            sector TEXT,
+            FOREIGN KEY(concesionar_id) REFERENCES concesionari(id) ON DELETE SET NULL ON UPDATE CASCADE,
+            FOREIGN KEY(id_loc) REFERENCES locuri_de_veci(id) ON DELETE SET NULL ON UPDATE CASCADE
+        )
+    """)
+
+    # ---- inhumati ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS inhumati (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nume TEXT,
+            prenume TEXT,
+            cnp TEXT,
+            data_nasterii TEXT,
+            data_deces TEXT,
+            data_inhumare TEXT,
+            data_deshumare TEXT,
+            sex TEXT,
+            cauza_deces TEXT,
+            profesie TEXT,
+            religie TEXT,
+            ultima_adresa TEXT,
+            observatii TEXT,
+            id_loc INTEGER,
+            contract_id INTEGER,
+            FOREIGN KEY(id_loc) REFERENCES locuri_de_veci(id) ON DELETE SET NULL ON UPDATE CASCADE,
+            FOREIGN KEY(contract_id) REFERENCES contracte(id) ON DELETE SET NULL ON UPDATE CASCADE
+        )
+    """)
+
+    # ---- sectoare ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sectoare (
+            id TEXT PRIMARY KEY,
+            points TEXT,
+            color TEXT
+        )
+    """)
+
+    # ---- settings ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
+    # ---- photos ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cod_loc TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            caption TEXT,
+            uploader TEXT,
+            date_added TEXT,
+            is_cover INTEGER DEFAULT 0,
+            FOREIGN KEY(cod_loc) REFERENCES locuri_de_veci(cod_loc) ON DELETE CASCADE
+        )
+    """)
+
+    # ---- amenajari_avize ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS amenajari_avize (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cod_loc TEXT NOT NULL,
+            nr_aviz TEXT NOT NULL,
+            data_aviz TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY(cod_loc) REFERENCES locuri_de_veci(cod_loc) ON DELETE CASCADE
+        )
+    """)
+
+    # ---- loc_extra (fallback JSON) ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS loc_extra (
+            cod_loc TEXT PRIMARY KEY,
+            extra_json TEXT
+        )
+    """)
+
+    # ---- guides (linii de ghidare persistente) ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS guides (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT,
+            points TEXT,
+            color TEXT
+        )
+    """)
+
+    # ---- rows_ghid (rânduri definite ca linii reale) ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS rows_ghid (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sector_label TEXT,
+            name TEXT,
+            order_index INTEGER,
+            baseline TEXT,
+            width REAL,
+            depth REAL
+        )
+    """)
+
+    # ---- plati ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS plati (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cod_loc TEXT,
+            contract_id INTEGER,
+            suma REAL,
+            data_plata TEXT,
+            tip TEXT,
+            chitanta_nr TEXT,
+            observatii TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    # ---- documents (poze/documente unificate: loc, inhumat, aviz) ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            doc_type TEXT,
+            file_path TEXT NOT NULL,
+            caption TEXT,
+            nr_evidenta TEXT,
+            date_added TEXT
+        )
+    """)
+
+    # ---- cereri de concesionare primite din portalul public ----
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS cereri_concesionare (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT,
+            status TEXT DEFAULT 'nou',
+            cod_loc TEXT,
+            nume TEXT,
+            prenume TEXT,
+            cnp TEXT,
+            bi_ci TEXT,
+            adresa TEXT,
+            telefon TEXT,
+            email TEXT,
+            grad_rudenie TEXT,
+            observatii TEXT,
+            concesionar_id INTEGER,
+            reviewed_at TEXT,
+            review_note TEXT
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
+            created_at TEXT NOT NULL,
+            last_login TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS citizens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, uid TEXT UNIQUE, email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL, full_name TEXT, created_at TEXT, active INTEGER DEFAULT 1
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, actor_type TEXT, actor TEXT,
+            action TEXT, target TEXT, detail TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS loc_holders (
+            cod_loc TEXT, holder_hash TEXT, PRIMARY KEY (cod_loc, holder_hash)
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sync_ops (
+            op_id TEXT PRIMARY KEY,
+            kind TEXT,
+            applied_at TEXT,
+            result TEXT
+        )
+    """)
+
+    # ---- MIGRATIONS: ADD COLUMN IF MISSING ----
+    for col in _MIGRATION_COLUMNS:
+        _add_column_if_missing(conn, col[0], col[1])
+
+    # ---- indexuri utile ----
+    for idx in [
+        "CREATE INDEX IF NOT EXISTS idx_locuri_cod ON locuri_de_veci(cod_loc)",
+        "CREATE INDEX IF NOT EXISTS idx_inhumati_loc ON inhumati(id_loc)",
+        "CREATE INDEX IF NOT EXISTS idx_inhumati_contract ON inhumati(contract_id)",
+        "CREATE INDEX IF NOT EXISTS idx_concesionari_nume ON concesionari(nume)",
+        "CREATE INDEX IF NOT EXISTS idx_contracte_loc ON contracte(id_loc)",
+        "CREATE INDEX IF NOT EXISTS idx_contracte_concesionar ON contracte(concesionar_id)",
+        "CREATE INDEX IF NOT EXISTS idx_contracte_numar ON contracte(numar_contract)",
+        "CREATE INDEX IF NOT EXISTS idx_photos_codloc ON photos(cod_loc)",
+        "CREATE INDEX IF NOT EXISTS idx_avize_codloc ON amenajari_avize(cod_loc)",
+        "CREATE INDEX IF NOT EXISTS idx_documents_entity ON documents(entity_type, entity_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cereri_urmarire ON cereri_concesionare(cod_urmarire)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_locuri_uid ON locuri_de_veci(uid)",
+    ]:
+        try:
+            conn.execute(idx)
+        except sqlite3.IntegrityError:
+            pass
+
+    import uuid as _uuid
+    for table in ("locuri_de_veci", "users"):
+        for (rid,) in conn.execute(f"SELECT id FROM {table} WHERE uid IS NULL OR uid=''").fetchall():
+            conn.execute(f"UPDATE {table} SET uid=? WHERE id=?", (str(_uuid.uuid4()), rid))
+    conn.execute("UPDATE users SET active=1 WHERE active IS NULL")
+    conn.execute("UPDATE users SET version=1 WHERE version IS NULL")
+    if not conn.execute("SELECT 1 FROM settings WHERE key='cemetery_id'").fetchone():
+        conn.execute("INSERT INTO settings (key, value) VALUES ('cemetery_id', ?)", (str(_uuid.uuid4()),))
+    for (rid,) in conn.execute(
+            "SELECT id FROM cereri_concesionare WHERE cod_urmarire IS NULL OR cod_urmarire=''").fetchall():
+        conn.execute("UPDATE cereri_concesionare SET cod_urmarire=? WHERE id=?",
+                     (_new_tracking_code(conn), rid))
 
 
 # =============================================================================
@@ -612,10 +716,56 @@ def save_loc_metadata(cod_loc: str, metadata: Dict[str, Any]) -> bool:
         conn.close()
 
 
+_LOC_DEPENDENT_LABELS = (("inhumati", "înhumați"), ("contracte", "contracte"), ("plati", "plăți"),
+                         ("photos", "fotografii"), ("avize", "avize de amenajare"), ("documents", "documente"))
+
+
+def loc_dependents(cod_loc: str) -> Dict[str, int]:
+    """Înregistrările legate de un loc (doar cele cu număr > 0). Folosit pentru a nu șterge un loc cu istoric."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM locuri_de_veci WHERE cod_loc = ?", (cod_loc,)).fetchone()
+        loc_id = row["id"] if row else None
+        q = {
+            "inhumati": ("SELECT COUNT(*) FROM inhumati WHERE id_loc = ?", (loc_id,)),
+            "contracte": ("SELECT COUNT(*) FROM contracte WHERE id_loc = ? OR cod_loc = ?", (loc_id, cod_loc)),
+            "plati": ("SELECT COUNT(*) FROM plati WHERE cod_loc = ?", (cod_loc,)),
+            "photos": ("SELECT COUNT(*) FROM photos WHERE cod_loc = ?", (cod_loc,)),
+            "avize": ("SELECT COUNT(*) FROM amenajari_avize WHERE cod_loc = ?", (cod_loc,)),
+            "documents": ("SELECT COUNT(*) FROM documents WHERE entity_type = 'loc' AND entity_id = ?", (cod_loc,)),
+        }
+        out = {k: conn.execute(sql, args).fetchone()[0] for k, (sql, args) in q.items()}
+        return {k: v for k, v in out.items() if v}
+    finally:
+        conn.close()
+
+
+def _describe(deps: Dict[str, int], labels) -> str:
+    names = dict(labels)
+    return ", ".join(f"{n} {names.get(k, k)}" for k, n in deps.items())
+
+
+def delete_plot_blockers(cod_loc: str) -> str:
+    """Text în română cu motivul pentru care locul nu poate fi șters (gol dacă poate fi șters)."""
+    deps = loc_dependents(cod_loc)
+    if not deps:
+        return ""
+    return (f"Locul {cod_loc} are istoric asociat ({_describe(deps, _LOC_DEPENDENT_LABELS)}). "
+            "Ștergerea ar elimina fotografiile/avizele și ar desprinde înhumații și contractele de loc. "
+            "Mutați sau ștergeți mai întâi înregistrările legate.")
+
+
 def delete_plot(cod_loc: str) -> bool:
+    """Șterge locul DOAR dacă nu are istoric (înhumați, contracte, plăți, fotografii, avize, documente)."""
+    blockers = delete_plot_blockers(cod_loc)
+    if blockers:
+        _refuse(blockers)
+        return False
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM locuri_de_veci WHERE cod_loc = ?", (cod_loc,))
+        if cur.rowcount > 0:
+            _audit(conn, "loc.delete", cod_loc)
         return cur.rowcount > 0
     except Exception as e:
         print(f"[DB ERROR delete_plot] {e}")
@@ -699,8 +849,16 @@ def save_concesionar(data: Dict[str, Any], concesionar_id: Optional[int] = None)
     conn = get_connection()
     try:
         if concesionar_id:
-            set_clause = ", ".join([f"{k}=?" for k in fields])
-            conn.execute(f"UPDATE concesionari SET {set_clause} WHERE id=?", (*values, concesionar_id))
+            present = [k for k in fields if k in data]
+            if present:
+                set_clause = ", ".join([f"{k}=?" for k in present])
+                cur = conn.execute(f"UPDATE concesionari SET {set_clause} WHERE id=?",
+                                   (*[data.get(k, "") or "" for k in present], concesionar_id))
+            else:
+                cur = conn.execute("SELECT 1 FROM concesionari WHERE id=?", (concesionar_id,))
+            if (cur.rowcount if present else (1 if cur.fetchone() else 0)) == 0:
+                _refuse(f"Concesionarul {concesionar_id} nu există; nu s-a modificat nimic.")
+                return None
             return concesionar_id
         cur = conn.execute(
             f"INSERT INTO concesionari ({', '.join(fields)}) VALUES ({', '.join(['?']*len(fields))})",
@@ -736,9 +894,16 @@ def get_concesionar(concesionar_id: int) -> Optional[Dict[str, Any]]:
 
 
 def delete_concesionar(concesionar_id: int) -> bool:
+    """Refuză ștergerea unui concesionar care are contracte (altfel contractele ar rămâne fără titular)."""
     conn = get_connection()
     try:
+        n = conn.execute("SELECT COUNT(*) FROM contracte WHERE concesionar_id = ?", (concesionar_id,)).fetchone()[0]
+        if n:
+            _refuse(f"Concesionarul are {n} contract(e); ștergerea ar desprinde contractele de titular. Ștergeți/transferați mai întâi contractele.")
+            return False
         cur = conn.execute("DELETE FROM concesionari WHERE id = ?", (concesionar_id,))
+        if cur.rowcount > 0:
+            _audit(conn, "concesionar.delete", f"concesionar:{concesionar_id}")
         return cur.rowcount > 0
     except Exception as e:
         print(f"[DB ERROR delete_concesionar] {e}")
@@ -807,13 +972,20 @@ def save_contract(data: Dict[str, Any], contract_id: Optional[int] = None) -> Op
         ]
 
         if contract_id:
-            set_clause = ", ".join([f"{f}=?" for f in _CONTRACT_FIELDS])
-            conn.execute(f"UPDATE contracte SET {set_clause} WHERE id=?", (*values, contract_id))
+            keep = [f for f in ("valabilitate", "extra_data") if data.get(f) is None]
+            pairs = [(f, v) for f, v in zip(_CONTRACT_FIELDS, values) if f not in keep]
+            set_clause = ", ".join([f"{f}=?" for f, _ in pairs])
+            cur = conn.execute(f"UPDATE contracte SET {set_clause} WHERE id=?", (*[v for _, v in pairs], contract_id))
+            if cur.rowcount == 0:
+                _refuse(f"Contractul {contract_id} nu există; nu s-a modificat nimic.")
+                return None
+            _audit(conn, "contract.update", f"contract:{contract_id}", f"nr={norm(data.get('numar_contract'))} loc={cod_loc_val}")
             return contract_id
         cur = conn.execute(
             f"INSERT INTO contracte ({', '.join(_CONTRACT_FIELDS)}) VALUES ({', '.join(['?']*len(_CONTRACT_FIELDS))})",
             tuple(values)
         )
+        _audit(conn, "contract.create", f"contract:{cur.lastrowid}", f"nr={norm(data.get('numar_contract'))} loc={cod_loc_val}")
         return cur.lastrowid
     except Exception as e:
         print(f"[DB ERROR save_contract] {e}")
@@ -861,9 +1033,17 @@ def get_contract(contract_id: int) -> Optional[Dict[str, Any]]:
 
 
 def delete_contract(contract_id: int) -> bool:
+    """Refuză ștergerea unui contract cu plăți sau înhumați asociați (istoric financiar/de evidență)."""
     conn = get_connection()
     try:
+        np_ = conn.execute("SELECT COUNT(*) FROM plati WHERE contract_id = ?", (contract_id,)).fetchone()[0]
+        ni = conn.execute("SELECT COUNT(*) FROM inhumati WHERE contract_id = ?", (contract_id,)).fetchone()[0]
+        if np_ or ni:
+            _refuse(f"Contractul are {np_} plată(plăți) și {ni} înhumat(ți) asociați; nu poate fi șters fără a altera istoricul.")
+            return False
         cur = conn.execute("DELETE FROM contracte WHERE id = ?", (contract_id,))
+        if cur.rowcount > 0:
+            _audit(conn, "contract.delete", f"contract:{contract_id}")
         return cur.rowcount > 0
     except Exception as e:
         print(f"[DB ERROR delete_contract] {e}")
@@ -899,14 +1079,20 @@ def save_inhumat(cod_loc: str, data: Dict[str, Any],
     conn = get_connection()
     try:
         if inhumat_id:
-            set_clause = ", ".join([f"{k}=?" for k in _INHUMAT_FIELDS] + ["id_loc=?"])
-            conn.execute(f"UPDATE inhumati SET {set_clause} WHERE id=?",
-                         (*values, id_loc, inhumat_id))
+            present = [k for k in _INHUMAT_FIELDS if k in data]
+            set_clause = ", ".join([f"{k}=?" for k in present] + ["id_loc=?"])
+            cur = conn.execute(f"UPDATE inhumati SET {set_clause} WHERE id=?",
+                               (*[data.get(k, "") or "" for k in present], id_loc, inhumat_id))
+            if cur.rowcount == 0:
+                _refuse(f"Înhumatul {inhumat_id} nu există; nu s-a modificat nimic.")
+                return None
+            _audit(conn, "inhumat.update", f"inhumat:{inhumat_id}", f"loc={cod_loc}")
             return inhumat_id
         cols = ", ".join(_INHUMAT_FIELDS + ["id_loc"])
         placeholders = ", ".join(["?"] * (len(_INHUMAT_FIELDS) + 1))
         cur = conn.execute(f"INSERT INTO inhumati ({cols}) VALUES ({placeholders})",
                            (*values, id_loc))
+        _audit(conn, "inhumat.create", f"inhumat:{cur.lastrowid}", f"loc={cod_loc}")
         return cur.lastrowid
     except Exception as e:
         print(f"[DB ERROR save_inhumat] {e}")
@@ -993,6 +1179,8 @@ def delete_inhumat(inhumat_id: int) -> bool:
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM inhumati WHERE id = ?", (inhumat_id,))
+        if cur.rowcount > 0:
+            _audit(conn, "inhumat.delete", f"inhumat:{inhumat_id}")
         return cur.rowcount > 0
     except Exception as e:
         print(f"[DB ERROR delete_inhumat] {e}")
@@ -1373,13 +1561,44 @@ def shift_rows_order(sector_label: str, from_index: int, delta: int = 1) -> None
 # PLATI
 # =============================================================================
 def add_plata(cod_loc, suma, data_plata, tip="", chitanta_nr="", observatii="", contract_id=None):
+    """Înregistrează o plată. Refuză (None): loc inexistent, sumă nenumerică/≤0, contract inexistent sau al altui loc.
+    Retrimiterea aceleiași plăți (aceeași chitanță nenulă, același loc/contract/sumă/dată/tip) întoarce plata existentă."""
+    import math
+    cod_loc = (cod_loc or "").strip()
+    try:
+        suma_f = float(suma)
+    except (TypeError, ValueError):
+        suma_f = float("nan")
+    if not math.isfinite(suma_f) or suma_f <= 0:
+        _refuse("Suma plății trebuie să fie un număr mai mare ca 0.")
+        return None
     conn = get_connection()
     try:
+        if not cod_loc or not conn.execute("SELECT 1 FROM locuri_de_veci WHERE cod_loc = ?", (cod_loc,)).fetchone():
+            _refuse(f"Locul '{cod_loc}' nu există; plata nu a fost înregistrată.")
+            return None
+        if contract_id:
+            crow = conn.execute("SELECT cod_loc FROM contracte WHERE id = ?", (contract_id,)).fetchone()
+            if not crow:
+                _refuse(f"Contractul {contract_id} nu există; plata nu a fost înregistrată.")
+                return None
+            if (crow["cod_loc"] or "") not in ("", cod_loc):
+                _refuse(f"Contractul {contract_id} aparține altui loc ({crow['cod_loc']}); plata nu a fost înregistrată.")
+                return None
+        chit = (chitanta_nr or "").strip()
+        if chit:
+            dup = conn.execute(
+                "SELECT id FROM plati WHERE cod_loc = ? AND COALESCE(contract_id,0) = ? AND suma = ? AND data_plata = ? "
+                "AND COALESCE(tip,'') = ? AND chitanta_nr = ? ORDER BY id LIMIT 1",
+                (cod_loc, contract_id or 0, suma_f, data_plata, tip or "", chit)).fetchone()
+            if dup:
+                return dup["id"]
         cur = conn.execute(
             "INSERT INTO plati (cod_loc, contract_id, suma, data_plata, tip, chitanta_nr, observatii) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (cod_loc, contract_id, float(suma or 0), data_plata, tip, chitanta_nr, observatii),
+            (cod_loc, contract_id, suma_f, data_plata, tip, chit or chitanta_nr, observatii),
         )
+        _audit(conn, "plata.create", f"plata:{cur.lastrowid}", f"loc={cod_loc} contract={contract_id or ''} suma={suma_f:.2f} chitanta={chit}")
         return cur.lastrowid
     except Exception as e:
         print(f"[DB ERROR add_plata] {e}")
@@ -1405,7 +1624,11 @@ def list_plati(cod_loc: Optional[str] = None) -> List[Dict[str, Any]]:
 def delete_plata(plata_id: int) -> bool:
     conn = get_connection()
     try:
+        row = conn.execute("SELECT cod_loc, contract_id, suma, chitanta_nr FROM plati WHERE id = ?", (plata_id,)).fetchone()
         cur = conn.execute("DELETE FROM plati WHERE id = ?", (plata_id,))
+        if cur.rowcount > 0 and row:
+            _audit(conn, "plata.delete", f"plata:{plata_id}",
+                   f"loc={row['cod_loc']} contract={row['contract_id'] or ''} suma={float(row['suma'] or 0):.2f} chitanta={row['chitanta_nr'] or ''}")
         return cur.rowcount > 0
     finally:
         conn.close()

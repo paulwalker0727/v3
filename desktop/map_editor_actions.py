@@ -144,6 +144,10 @@ class EditorActions:
             except Exception:
                 pass
 
+    def delete_plot_blockers(self, cod_loc: str) -> str:
+        """Motivul pentru care locul nu poate fi șters (istoric asociat); gol dacă poate."""
+        return db.delete_plot_blockers(cod_loc)
+
     def delete_plot_from_db(self, cod_loc: str) -> bool:
         ok = db.delete_plot(cod_loc)
         self._emit_update("loc", cod_loc)

@@ -15,6 +15,7 @@ Flow:
     5. Când user face logout, reîntoarce la login
 """
 import os
+import sqlite3
 import sys
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -115,7 +116,15 @@ def main() -> int:
         if not _choose_registry(app, force_selector):
             return 0
         force_selector = False
-        init_db()
+        try:
+            init_db()
+        except (sqlite3.Error, OSError) as exc:
+            logger.error("Actualizarea schemei bazei de date a eșuat: %s", exc)
+            QMessageBox.critical(None, "Cimitir — Baza de date",
+                                 "Baza de date nu a putut fi actualizată (blocată, protejată la scriere sau spațiu insuficient).\n"
+                                 "Nu s-a modificat nimic: datele au rămas așa cum erau. Închideți alte instanțe/programe care folosesc "
+                                 "baza, eliberați spațiu și porniți din nou.\n\nDetalii: " + str(exc))
+            return 1
         auth.init_auth()
         if auth.first_run_required():
             from first_run_wizard import FirstRunWizard
@@ -134,6 +143,11 @@ def main() -> int:
             user = _run_login(app)
             if not user:
                 return 0
+            try:
+                import database as _dbm
+                _dbm.set_audit_actor(user.get("username", ""))
+            except Exception:
+                pass
             if auth.password_change_required(user["id"]):
                 QMessageBox.warning(None, "Cimitir — Parolă implicită",
                                     "Contul folosește încă o parolă implicită. Schimbă parola la autentificare.")
