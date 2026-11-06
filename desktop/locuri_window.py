@@ -558,15 +558,22 @@ class LocuriWindow(QDialog):
         if not cod:
             QMessageBox.warning(self, "Selectare", "Selectează un rând mai întâi.")
             return
+        blockers = db.delete_plot_blockers(cod) if db else ""
+        if blockers:
+            QMessageBox.warning(self, "Loc cu istoric", blockers)
+            return
         reply = QMessageBox.question(
             self, "Șterge", f"Ștergi locul {cod} din baza de date?",
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
             try:
-                self.actions.delete_plot_from_db(cod)
+                deleted = self.actions.delete_plot_from_db(cod)
             except Exception as e:
                 QMessageBox.warning(self, "Eroare", f"Nu am putut șterge: {e}")
+                return
+            if not deleted:
+                QMessageBox.warning(self, "Eroare", db.last_refusal() or f"Locul {cod} nu a fost șters.")
                 return
             if self.signals:
                 try:

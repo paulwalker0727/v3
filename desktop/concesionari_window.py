@@ -610,7 +610,7 @@ class ConcesionariWindow(QDialog):
                 QMessageBox.information(self, "OK", "Șters.")
                 self.reload()
             else:
-                QMessageBox.warning(self, "Eroare", "Ștergere eșuată.")
+                QMessageBox.warning(self, "Eroare", "Ștergere eșuată. " + (db.last_refusal() if db else ""))
         except Exception as e:
             QMessageBox.warning(self, "Eroare", f"Ștergere eșuată: {e}")
 
