@@ -38,12 +38,20 @@ def run_background_backup() -> None:
                      name="cimitir-backup").start()
 
 
+def _win_quote(value) -> str:
+    """Argument Windows (CommandLineToArgvW): backslash-urile finale se dublează înainte de ghilimeaua de închidere (ex. D:\\ )."""
+    text = str(value)
+    trailing = len(text) - len(text.rstrip("\\"))
+    return '"' + text + "\\" * trailing + '"'
+
+
 def scheduler_run_command() -> str:
     """Comanda executată de activitatea programată (copie verificată, jurnalizată; nu restaurează)."""
+    data = f' --data-dir {_win_quote(cimitir_config.working_dir())}'      # activitatea nu moștenește CIMITIR_DATA_DIR: fără asta ar salva alt folder
     if getattr(sys, "frozen", False):
-        return f'"{sys.executable}" --backup-run'
+        return f'"{sys.executable}" --backup-run{data}'
     script = Path(__file__).resolve().parent.parent / "scripts" / "backup_scheduled.py"
-    return f'"{sys.executable}" "{script}"'
+    return f'"{sys.executable}" "{script}"{data}'
 
 
 def scheduler_command(at: str | None = None) -> str:
