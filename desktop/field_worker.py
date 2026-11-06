@@ -1,10 +1,11 @@
 """field_worker.py — rulează apeluri HTTP în afara thread-ului UI (QThread); erorile ajung ca text fix, fără secrete."""
 from __future__ import annotations
 
+import atexit
 import logging
 from typing import Any, Callable
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QCoreApplication, QThread, Signal
 
 import field_import
 import field_inbox_client as fic
@@ -42,8 +43,39 @@ class ApiTask(QThread):
 _ACTIVE: set = set()  # referințe la thread-urile în curs: un QThread în execuție nu trebuie distrus odată cu fereastra
 
 
+_HOOKED = False
+
+
+def wait_for_tasks(timeout_ms: int = 15000) -> bool:
+    """Așteaptă thread-urile în curs (cererile HTTP au timeout propriu). Un QThread nu are voie să fie distrus cât rulează:
+    la ieșirea procesului Qt face abort („Destroyed while thread is still running”). True dacă toate s-au încheiat."""
+    done = True
+    for task in list(_ACTIVE):
+        try:
+            if task.isRunning() and not task.wait(timeout_ms):
+                done = False
+        except RuntimeError:  # obiectul C++ nu mai există
+            continue
+    app = QCoreApplication.instance()
+    if app is not None:
+        app.processEvents()
+    return done
+
+
+def _hook_shutdown() -> None:
+    global _HOOKED
+    if _HOOKED:
+        return
+    _HOOKED = True
+    atexit.register(wait_for_tasks)
+    app = QCoreApplication.instance()
+    if app is not None:
+        app.aboutToQuit.connect(wait_for_tasks)
+
+
 def run_task(owner, fn: Callable[[], Any], on_ok: Callable[[Any], None], on_fail: Callable[[str, bool], None]) -> ApiTask:
     """Pornește `fn` într-un thread; rezultatul ajunge în UI doar dacă fereastra încă există."""
+    _hook_shutdown()
     task = ApiTask(fn)
     _ACTIVE.add(task)
 

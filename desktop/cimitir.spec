@@ -121,6 +121,8 @@ hiddenimports = [
     "field_import",
     "field_import_history",
     "field_import_history_window",
+    "entity_links",
+    "entity_links_ui",
     "field_devices_window",
     "optional_date_edit",
     "field_worker",
