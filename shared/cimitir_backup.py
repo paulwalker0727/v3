@@ -858,6 +858,11 @@ def apply_pending_restore(data_dir: Path) -> Optional[str]:
         return None
     try:
         backup_dir = Path(json.loads(marker.read_text(encoding="utf-8"))["backup"])
+        if verify(backup_dir) == [] and unsent_operations_at_risk(backup_dir, Path(data_dir)):
+            # Operațiuni create după programare: anulăm programarea (altfel s-ar aplica prin surprindere, mai târziu, după o sincronizare). Nu se modifică date.
+            marker.replace(marker.with_name(marker.name + f".anulat-{datetime.now():%Y%m%d-%H%M%S}"))
+            return ("Restaurarea programată a fost ANULATĂ: există operațiuni locale nesincronizate care ar dispărea. "
+                    "Sincronizează și rezolvă conflictele, apoi programează din nou restaurarea.")
         restore(backup_dir, Path(data_dir), force=True)
     except (Exception, SystemExit) as exc:
         return f"Restaurarea nu a putut fi aplicată ({exc}). Închide MAIN și portalul, apoi pornește din nou."
