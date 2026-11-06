@@ -422,26 +422,19 @@ class AddContractDialog(QDialog):
             QMessageBox.warning(self, "Eroare", "Modulul de adăugare concesionar nu este disponibil.")
             return
 
-        dlg = AddConcesionarDialog(self, existing=None)
+        dlg = AddConcesionarDialog(self, existing=None, actions=self.actions)
         if dlg.exec() == QDialog.Accepted:
-            data = dlg.get_data()
-            saved_id = None
-            try:
-                if self.actions and hasattr(self.actions, "save_concesionar"):
-                    saved_id = self.actions.save_concesionar(data)
-                elif DB_AVAILABLE and save_concesionar:
-                    saved_id = save_concesionar(data)
-            except Exception:
-                saved_id = None
+            # dialogul a salvat deja (o singură dată); reutilizăm ID-ul, nu recreăm persoana
+            self._refresh_and_select_concesionar(dlg.get_saved_id())
 
-            # refresh concesionar combo
-            self._setup_concesionar_combo()
-            if saved_id:
-                # selectăm noul concesionar
-                for i in range(self.cmb_concesionar.count()):
-                    if self.cmb_concesionar.itemData(i) == saved_id:
-                        self.cmb_concesionar.setCurrentIndex(i)
-                        break
+    def _refresh_and_select_concesionar(self, concesionar_id: Optional[int]):
+        self._setup_concesionar_combo()
+        if not concesionar_id:
+            return
+        for i in range(self.cmb_concesionar.count()):
+            if self.cmb_concesionar.itemData(i) == concesionar_id:
+                self.cmb_concesionar.setCurrentIndex(i)
+                break
 
 
 # ---------------------------------------------------------
