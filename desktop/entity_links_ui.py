@@ -136,9 +136,11 @@ class LinkedRecordsDialog(QDialog):
         self.btn_open = QPushButton("Deschide concesionar" if mode == "loc" else "Deschide loc")
         self.btn_contract = QPushButton("Contract nou")
         self.btn_history = QPushButton("Contracte / istoric")
+        self.btn_fisa = QPushButton("Fișa locului")
+        self.btn_fisa.setVisible(mode == "loc")
         self.btn_close = QPushButton("Închide")
         btns = QHBoxLayout()
-        for b in (self.btn_pick, self.btn_add, self.btn_open, self.btn_contract, self.btn_history):
+        for b in (self.btn_pick, self.btn_add, self.btn_open, self.btn_contract, self.btn_history, self.btn_fisa):
             btns.addWidget(b)
         btns.addStretch()
         btns.addWidget(self.btn_close)
@@ -152,6 +154,7 @@ class LinkedRecordsDialog(QDialog):
         self.btn_open.clicked.connect(self.open_selected)
         self.btn_contract.clicked.connect(self.new_contract)
         self.btn_history.clicked.connect(self.open_history)
+        self.btn_fisa.clicked.connect(self.open_fisa_loc)
         self.btn_close.clicked.connect(self.accept)
         self.reload()
 
@@ -207,6 +210,10 @@ class LinkedRecordsDialog(QDialog):
             open_contracts_window(self, self.actions, cod_loc=self.key)
         else:
             open_contracts_window(self, self.actions, concesionar_id=self.key)
+        self.reload()
+
+    def open_fisa_loc(self):
+        open_loc_window(self.parent(), self.key)
         self.reload()
 
     def open_selected(self):
