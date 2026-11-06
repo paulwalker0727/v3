@@ -68,7 +68,7 @@ Niciuna. Fără coloane/tabele noi; fără modificări în Sync v2 / Mobile v2 (
 |---|---|---|---|---|
 | `desktop/tests` (toate fișierele, câte un proces) | 670 | 0 | 13 | — |
 | `validation/final_integration` + `validation/bug_audit` | 72 | 0 | 19 | 1 xfail (BUG-09 istoric Git, documentat) |
-| `backend/tests` | vezi `RESULTS` mai jos | | | |
+| `backend/tests` (cod neatins; rulat pentru regresii) | 960 | 0 | 671 (PostgreSQL local indisponibil) | — |
 
 - Cele 28 de teste confirmate local de dvs. (backup automat 13, backup/restaurare 8, UI MAIN 1, pregătire Windows 3, integritate 3) rulează și trec și aici.
 - Skip-uri: PostgreSQL real (`SM_TEST_PG_URL`), `pyzbar`, screenshot-uri — intenționat, fără acces la Cloud.
