@@ -228,7 +228,54 @@ def unsent_operations_at_risk(backup_dir: Path, data_dir: Path) -> int:
     return sum(old.get(k) != value for k, value in current.items())
 
 
-def restore(backup_dir: Path, data_dir: Path, force: bool = False, *, allow_unsent_loss: bool = False) -> Path:
+_IMPORT_JOURNAL = "field_import_journal"
+_IMPORT_LOCAL_STATES = ("LOCAL_COMMITTED", "COMPLETE")
+IMPORT_REPORT = "field_import_restore_report.json"
+
+
+def _committed_field_imports(db_file: Path) -> Dict[str, str]:
+    """{inbox_item_uid: stare} pentru importurile din teren deja comise în SQLite (LOCAL_COMMITTED / COMPLETE).
+
+    Jurnalul și entitatea importată se scriu în ACEEAȘI tranzacție, deci o copie care conține intrarea conține și entitatea.
+    Tabel lipsă (copie anterioară funcției) = niciun import. Baza ilizibilă oprește restaurarea (nu ghicim)."""
+    if not db_file.is_file():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{db_file.as_posix()}?mode=ro", uri=True)
+        try:
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (_IMPORT_JOURNAL,)).fetchone():
+                return {}
+            marks = ",".join("?" * len(_IMPORT_LOCAL_STATES))
+            rows = conn.execute(f"SELECT inbox_item_uid, import_state FROM {_IMPORT_JOURNAL} WHERE import_state IN ({marks})", _IMPORT_LOCAL_STATES).fetchall()
+            return {str(r[0]): str(r[1]) for r in rows}
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        raise ValueError(f"Nu se poate verifica jurnalul importurilor din teren înainte de restaurare: {exc}") from exc
+
+
+def field_imports_at_risk(backup_dir: Path, data_dir: Path) -> List[str]:
+    """Importuri din teren comise local DUPĂ copie: în cloud sunt IMPORTED, dar entitatea (inhumat/lucrare/documente) există doar în baza curentă.
+    După restaurare, `import_item` ar refuza reimportul (IMPORTED_ELSEWHERE) -> pierdere silențioasă. Întoarce uid-urile elementelor la risc."""
+    current = _committed_field_imports(Path(data_dir) / _db_name(data_dir))
+    if not current:
+        return []
+    old = _committed_field_imports(Path(backup_dir) / "cimitir.db")
+    return sorted(uid for uid in current if uid not in old)
+
+
+def _write_import_report(data_dir: Path, safety: Optional[Path], lost: List[str]) -> None:
+    report = {"time": datetime.now().isoformat(timespec="seconds"), "lost_item_uids": lost,
+              "safety_folder": safety.name if safety else "",
+              "note": "Aceste elemente sunt IMPORTED în cloud, dar nu mai există în baza restaurată. Datele rămân în folderul de siguranță."}
+    try:
+        (data_dir / IMPORT_REPORT).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    log_event(data_dir, {"time": report["time"], "trigger": "restore", "result": "import-loss-accepted", "items": len(lost)})
+
+
+def restore(backup_dir: Path, data_dir: Path, force: bool = False, *, allow_unsent_loss: bool = False, allow_import_loss: bool = False) -> Path:
     """Restaurare sigură: verifică copia, păstrează starea curentă lângă folder (`.inainte-de-restaurare-*`) și, dacă restaurarea eșuează
     la jumătate, readuce starea anterioară. Nu suprascrie niciodată un folder nevid fără `force`."""
     backup_dir, data_dir = Path(backup_dir).resolve(), Path(data_dir).resolve()
@@ -241,6 +288,12 @@ def restore(backup_dir: Path, data_dir: Path, force: bool = False, *, allow_unse
             raise SystemExit(f"Restaurare blocată: există {pending} operațiuni locale nesincronizate "
                              "care nu există în copia aleasă. Sincronizează și rezolvă conflictele "
                              "înainte de restaurare; nu se modifică nimic pe disc.")
+    lost_imports = field_imports_at_risk(backup_dir, data_dir)
+    if lost_imports and not allow_import_loss:
+        raise SystemExit(f"Restaurare blocată: {len(lost_imports)} importuri din teren făcute după această copie ar dispărea din baza locală, "
+                         "deși în cloud sunt deja marcate IMPORTED (nu ar mai putea fi reimportate). Alege o copie făcută după import, "
+                         "sau restaurează într-un folder nou (pentru consultare), sau acceptă explicit pierderea (--discard-imports). "
+                         "Nu se modifică nimic pe disc.")
     safety: Optional[Path] = None
     inside: Optional[Path] = None                  # BUG-03: calea copiei față de data_dir, dacă folderul de copii e în interiorul folderului de date
     try:
@@ -272,6 +325,8 @@ def restore(backup_dir: Path, data_dir: Path, force: bool = False, *, allow_unse
         if safety is not None:
             shutil.move(str(safety), str(data_dir))      # starea anterioară revine intactă
         raise
+    if lost_imports:
+        _write_import_report(data_dir, safety, lost_imports)
     if safety is not None and inside is not None:
         _bring_back_backups(safety, data_dir, inside)
     return data_dir
@@ -845,6 +900,10 @@ def schedule_restore(backup_dir: Path, data_dir: Path) -> Path:
     if pending:
         raise SystemExit(f"Restaurare blocată: {pending} operațiuni nesincronizate ar dispărea. "
                          "Sincronizează MAIN și rezolvă conflictele înainte de restaurare.")
+    at_risk = field_imports_at_risk(backup_dir, data_dir)
+    if at_risk:
+        raise SystemExit(f"Restaurare blocată: {len(at_risk)} importuri din teren ar dispărea (în cloud sunt IMPORTED). "
+                         "Alege o copie făcută după import; nu se modifică nimic.")
     marker = pending_marker(data_dir)
     marker.write_text(json.dumps({"backup": str(Path(backup_dir).resolve()), "scheduled": datetime.now().isoformat(timespec="seconds")}),
                       encoding="utf-8")
@@ -858,6 +917,10 @@ def apply_pending_restore(data_dir: Path) -> Optional[str]:
         return None
     try:
         backup_dir = Path(json.loads(marker.read_text(encoding="utf-8"))["backup"])
+        if verify(backup_dir) == [] and field_imports_at_risk(backup_dir, Path(data_dir)):
+            marker.replace(marker.with_name(marker.name + f".anulat-{datetime.now():%Y%m%d-%H%M%S}"))
+            return ("Restaurarea programată a fost ANULATĂ: există importuri din teren făcute după copie, care ar dispărea din baza locală "
+                    "(în cloud sunt IMPORTED). Alege o copie făcută după import.")
         if verify(backup_dir) == [] and unsent_operations_at_risk(backup_dir, Path(data_dir)):
             # Operațiuni create după programare: anulăm programarea (altfel s-ar aplica prin surprindere, mai târziu, după o sincronizare). Nu se modifică date.
             marker.replace(marker.with_name(marker.name + f".anulat-{datetime.now():%Y%m%d-%H%M%S}"))
