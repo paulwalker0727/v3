@@ -384,6 +384,8 @@ class AddContractDialog(QDialog):
         }
 
     def _on_save(self):
+        if self._saved_id:      # deja salvat în această sesiune (dublu-click / apăsări repetate): nu se mai scrie nimic
+            return
         data = self._collect()
 
         if not data["numar_contract"]:
