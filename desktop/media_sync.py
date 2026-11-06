@@ -101,12 +101,13 @@ def ensure_tracking(force: bool = False) -> bool:
             db._add_column_if_missing(conn, table, "media_id TEXT")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_media ON {table}(media_id)")
             _create_triggers(conn, table)
-        # BUG-01: scoate din coada clasică orice operațiune 'upload' pentru acte de identitate
-        # care ar fi putut fi inserată de o versiune anterioară (trigger fără filtrul pe doc_type).
-        # Nu ștergem documentele locale; doar eliminăm trimiterea automată din conducta clasică.
+        # BUG-01: curăță TOATE stările din coada clasică pentru actele de identitate,
+        # inclusiv `error`/`conflict`. Rândurile vechi nu se urcă niciodată în Cloud
+        # și nu trebuie să rămână erori permanente după restaurarea unei copii vechi.
+        # Documentele locale rămân neatinse.
         if es._table_exists(conn, "cloud_sync_outbox"):
             conn.execute(
-                "DELETE FROM cloud_sync_outbox WHERE kind='media' AND action='upload' AND COALESCE(state,'pending')='pending' "
+                "DELETE FROM cloud_sync_outbox WHERE kind='media' AND action='upload' "
                 "AND entity='documents' AND entity_uid IN ("
                 "  SELECT media_id FROM documents WHERE COALESCE(doc_type,'') IN ('carte_identitate','cerere_doc')"
                 ")"
