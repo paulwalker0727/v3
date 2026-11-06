@@ -26,6 +26,7 @@ def main(argv=None) -> int:
     parser.add_argument("target", type=Path, nargs="?")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--discard-unsent", action="store_true", help="PERICULOS: permite pierderea operațiunilor offline după backup; necesită --force")
+    parser.add_argument("--discard-imports", action="store_true", help="PERICULOS: acceptă dispariția importurilor din teren făcute după backup (rămân în folderul de siguranță + raport); necesită --force")
     args = parser.parse_args(argv)
     if args.action == "backup":
         from cimitir_backup import is_unsafe_backup_destination
@@ -39,7 +40,9 @@ def main(argv=None) -> int:
     else:
         if args.discard_unsent and not args.force:
             parser.error("--discard-unsent necesită --force")
-        print(f"[restore] restaurat în: {restore(args.source, args.target, args.force, allow_unsent_loss=args.discard_unsent)}")
+        if args.discard_imports and not args.force:
+            parser.error("--discard-imports necesită --force")
+        print(f"[restore] restaurat în: {restore(args.source, args.target, args.force, allow_unsent_loss=args.discard_unsent, allow_import_loss=args.discard_imports)}")
     return 0
 
 
