@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal
+import thread_guard
 from PySide6.QtGui import QColor, QCursor, QDesktopServices, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -846,7 +847,7 @@ class AIScanareWindow(QDialog):
             return
 
         self._health_key = key
-        self._health_thread = QThread(self)
+        self._health_thread = thread_guard.track(QThread(self))
         self._health_worker = _KeyHealthWorker(key)
         self._health_worker.moveToThread(self._health_thread)
         self._health_thread.started.connect(self._health_worker.run)

@@ -5,6 +5,7 @@ import os
 from typing import Optional
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
+import thread_guard
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -170,7 +171,7 @@ class BatchScanDialog(QDialog):
         doc_type = self.cmb_type.currentData()
         self.status_lbl.setText(f"Se scanează {len(self._files)} documente cu Gemini 3 Flash…")
 
-        self._thread = QThread(self)
+        self._thread = thread_guard.track(QThread(self))
         self._worker = BatchWorker(self._files, doc_type)
         self._worker.moveToThread(self._thread)
         self._worker.file_started.connect(self._on_started)
