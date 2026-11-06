@@ -42,8 +42,7 @@ def test_cont_doar_edit_nu_poate_crea_loc_nou_prin_ruta_de_editare(web):
 def test_add_inhumat_on_missing_loc(web):
     c, _ = web.client_for("operator", ["cfg", "add"])
     r = c.post("/admin/ui/loc/LIPSA-1/inhumat", data={"nume": "X", "prenume": "Y"}, follow_redirects=False)
-    print("inhumat on missing loc status", r.status_code, "loc now:", bool(web.db.load_loc_by_cod("LIPSA-1")),
-          "inhumati X:", web.db.get_connection().execute("SELECT COUNT(*) FROM inhumati WHERE nume='X'").fetchone()[0])
+    assert r.status_code == 404 and web.db.load_loc_by_cod("LIPSA-1") is None
 
 
 # Portal: add-only account adds plata on a NON-existent loc
@@ -53,7 +52,7 @@ def test_add_plata_on_missing_loc(web):
     c2 = web.db.get_connection()
     n = c2.execute("SELECT COUNT(*) FROM plati").fetchone()[0]
     c2.close()
-    print("plata on missing loc status", r.status_code, "loc now:", bool(web.db.load_loc_by_cod("LIPSA-2")), "plati rows:", n)
+    assert r.status_code == 404 and n == 0 and web.db.load_loc_by_cod("LIPSA-2") is None
 
 
 # Portal: legacy accounts (no cfg) keep add+delete; legacy approve-only can still create contract

@@ -53,8 +53,8 @@ Bază blocată (P2, existent) · spațiu insuficient la ALTER și la copie (P2) 
 ## 5. Teste (Linux, rulare completă pe branch-ul C)
 | Suită | Rezultat |
 |---|---|
-| `desktop/tests` | **862 PASS, 15 SKIP, 0 FAIL** |
-| `backend/tests` (`-n 4`) | **999 PASS, 671 SKIP, 0 FAIL** (SKIP = teste live/PostgreSQL/Supabase fără mediu TEST, protejate de `cimitir_test_guard`) |
+| `desktop/tests` | **883 PASS, 15 SKIP, 0 FAIL** |
+| `backend/tests` (`-n 4`) | **1016 PASS, 671 SKIP, 0 FAIL** (SKIP = teste live/PostgreSQL/Supabase fără mediu TEST, protejate de `cimitir_test_guard`) |
 | Teste noi P3 | permisiuni (25, inclusiv matrice de 11 configurații de drepturi) ; înainte: permisiuni (12), istoric contracte (9), plăți–contracte (10), PDF backend (13), migrare (7 + 1 SKIP root), izolare module (1) — toate PASS; testele de PDF și izolare **pică pe codul vechi** (verificat) |
 | Windows (script + manual) | **NEEXECUTAT** (script rulat pe Linux doar ca autotest: 8 PASS, 3 MANUAL, 1 NEEXECUTAT) |
 | Cloud TEST / Mobile v2 | **NEEXECUTAT** — lipsesc acreditări/mediu TEST (vezi matricea); PROD neatins |

@@ -40,6 +40,13 @@ class PhoneUploadDialog(QDialog):
         self._start(entity_type, entity_id, issued_by)
 
     def _start(self, entity_type, entity_id, issued_by):
+        import access_session
+        user = access_session.current_user()
+        if user is not None:
+            if not access_session.require("add", self, "încărcarea unui document de pe telefon"):
+                self.info.setText("Nu ai dreptul „add” (configurat de administrator).")
+                return
+            issued_by = user.get("username") or issued_by
         try:
             tok = mobile_upload.request_token(entity_type, entity_id, issued_by)
         except cloud_sync.Rejected as exc:

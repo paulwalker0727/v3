@@ -99,6 +99,11 @@ class PlatiWindow(QDialog):
         self.btn_phone = QPushButton("📱 Continuă pe telefon")
         self.btn_phone.setToolTip("Cod QR temporar: încarci chitanța/dovada plății de pe telefon la plata selectată")
         self.btn_phone.clicked.connect(self.phone_upload)
+        try:
+            import access_session
+            access_session.gate(self.btn_phone, "add")
+        except Exception:
+            pass
         btns.addWidget(self.btn_phone)
         close = QPushButton("Închide")
         close.clicked.connect(self.accept)

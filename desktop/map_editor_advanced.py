@@ -280,7 +280,9 @@ class AdvancedEditor:
         db.update_guide(guide_id, points)
 
     def delete_guide(self, guide_id: int, item=None):
-        db.delete_guide(guide_id)
+        if not db.delete_guide(guide_id):
+            self.w.statusBar().showMessage("Ghidajul nu a fost șters: " + db.last_refusal())
+            return
         if item is not None:
             try:
                 self.scene.removeItem(item)
@@ -508,8 +510,7 @@ class AdvancedEditor:
             if len(pts) < 3:
                 continue
             area = geo.area_m2(pts, ppm) if ppm else geo.polygon_area(pts)
-            if area is not None:
-                db.save_loc_metadata(r["cod_loc"], {"suprafata": round(area, 2)})
+            if area is not None and db.save_loc_metadata(r["cod_loc"], {"suprafata": round(area, 2)}):
                 count += 1
         return count
 

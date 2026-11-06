@@ -28,6 +28,10 @@ Protejate acum în funcțiile DB: avize (`add_aviz`=add, `update_aviz`=edit, `de
 ## Lacune găsite de auditul de testare și remediate
 `reports_export.import_locuri` (INSERT/UPDATE direct, acum `add`/`edit` pe rând + buton gate-uit) · `clear_guides` (`delete`) · `update_guide` mutat în DB (`edit`) · `shift_rows_order` (`add`, nu mai renumerotează dacă inserarea e refuzată) · `save_loc_metadata` pe loc inexistent (`add`) · `save_sector_to_db` sector nou (`add`) · `set_cerere_status` (`approve`) · ruta web `loc_edit` nu mai creează locuri (404) · tokenul „continuă pe telefon” nu mai funcționează dacă autorul i-a pierdut dreptul `add`. Teste: `test_p3_bypass_regresii.py`, `test_p3_portal_bypass_regresii.py`.
 
+## A doua rundă de audit (remediat)
+„Continuă pe telefon” (MAIN) cere acum `add`, e gate-uit în ferestre/panou și trimite utilizatorul real ca emitent (`main:<utilizator>` pe server) · upload-ul cu token emis din portal e **fail-closed**: autorul trebuie să existe, să fie activ/neexpirat și să aibă `add` (cont dezactivat/șters/revocat => 403) · ghidajele șterse/mutate refuzate nu mai dispar din ecran · `recompute_all_areas` numără doar salvările reușite. Teste: `test_p3_desktop_lacune_regresii.py`, `test_p3_portal_lacune_regresii.py`.
+Lacune minore rămase, necorectate intenționat: `ai_scanare/db_scans.delete_scan` (șterge doar istoricul scanărilor AI, nu date de registru, fără gardă) · butonul „Import locuri” e gate-uit pe `add` (un cont `cfg,edit` fără `add` nu îl deschide, deși funcția verifică corect per rând) · importurile din inbox/teren scriu prin SQL direct, autorizate de UI prin `approve`.
+
 ## Sesiune deschisă
 Garda DB re-verifică drepturile la fiecare operațiune: un buton rămas activ nu poate executa o operațiune interzisă (mesaj „Drepturi insuficiente”). Butoanele gate-uite se re-sincronizează automat la ~5 s (`refresh_gates`, revocare și acordare, cont dezactivat = tot retras), fără a reactiva controale dezactivate din alte motive. Dacă garda nu poate fi instalată/verificată la autentificare, sesiunea este refuzată cu mesaj de eroare și garda rămâne „refuză tot”.
 

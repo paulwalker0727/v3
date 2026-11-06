@@ -1,4 +1,4 @@
-"""T2 (iteration_2): probe pentru lacune NOI / fluxuri legitime după garda de drepturi. SQLite sintetic în tmp_path; fără rețea."""
+"""Regresii P3 (auditul de testare):  lacune NOI / fluxuri legitime după garda de drepturi. SQLite sintetic în tmp_path; fără rețea."""
 import sys
 from pathlib import Path
 
@@ -112,6 +112,9 @@ def test_continua_pe_telefon_cere_add(env, monkeypatch):
         calls.append((entity_type, entity_id, issued_by))
         raise RuntimeError("stop-after-issue")
     monkeypatch.setattr(mobile_upload, "request_token", fake_request_token)
+    from PySide6.QtWidgets import QMessageBox
+    shown = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: shown.append(a[1]))
     env.login(["cfg"])                     # view-only
     assert not access_session.can("add")
     import mobile_upload_dialog
@@ -121,5 +124,21 @@ def test_continua_pe_telefon_cere_add(env, monkeypatch):
         mobile_upload_dialog.PhoneUploadDialog(None, "concesionar", 1, "x")
     except RuntimeError:
         pass
-    print("token requested by view-only user:", calls)
-    assert calls == [], "view-only user could request a phone-upload token (no `add` check, issued_by='main')"
+    assert calls == [] and shown == ["Drepturi insuficiente"], "cont fără `add` nu poate cere token de încărcare de pe telefon"
+
+
+def test_continua_pe_telefon_cu_add_trimite_utilizatorul_real(env, monkeypatch):
+    import mobile_upload
+    calls = []
+
+    def fake_request_token(entity_type, entity_id, issued_by="main", *a, **k):
+        calls.append(issued_by)
+        raise RuntimeError("stop-after-issue")
+    monkeypatch.setattr(mobile_upload, "request_token", fake_request_token)
+    env.login(["cfg", "add"])
+    import mobile_upload_dialog
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    with pytest.raises(RuntimeError):
+        mobile_upload_dialog.PhoneUploadDialog(None, "concesionar", 1, "x")
+    assert calls and calls[0] != "main"

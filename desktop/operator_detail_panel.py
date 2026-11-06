@@ -372,7 +372,13 @@ class OperatorDetailPanel(QWidget):
         def _open():
             from mobile_upload_dialog import open_phone_upload
             open_phone_upload(self, etype, eid, label, on_done=refresh or (lambda: self.current_cod_loc and self.show_loc(self.current_cod_loc)))
-        return self._btn("\U0001F4F1  Continuă pe telefon (încarcă document)", self._pal["accent"], _open)
+        btn = self._btn("\U0001F4F1  Continuă pe telefon (încarcă document)", self._pal["accent"], _open)
+        try:
+            import access_session
+            access_session.gate(btn, "add")
+        except Exception:
+            pass
+        return btn
 
     def _loc_photos(self, cod_loc: str) -> List[Dict]:
         docs = db.list_documents("loc", cod_loc, "poza_loc")
