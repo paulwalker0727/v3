@@ -219,27 +219,37 @@ class BackupWindow(QDialog):
             self.txt_dir.setText(chosen)
 
     def _save_settings(self):
+        chosen = self.txt_dir.text().strip()
+        if chosen and cimitir_backup.is_unsafe_backup_destination(Path(chosen)):
+            QMessageBox.warning(self, "Folder nesigur", "Folderul de copii este în proiect sau în repository-ul Git. "
+                                "Alege o destinație externă; operațiile Git pot șterge copiile.")
+            self.lbl_status.setText("Setările NU au fost salvate: folderul de backup este în repository-ul Git.")
+            return False
         db.set_setting("backup_enabled", "1" if self.chk_enabled.isChecked() else "0")
-        db.set_setting("backup_dir", self.txt_dir.text().strip())
+        db.set_setting("backup_dir", chosen)
         db.set_setting("backup_keep_days", str(self.spin_days.value()))
         db.set_setting("backup_keep_min", str(self.spin_min.value()))
         db.set_setting("backup_interval_hours", str(int(self.spin_interval.value())))
         db.set_setting("backup_time", self.time_start.time().toString("HH:mm"))
+        return True
 
     def save_settings(self):
-        self._save_settings()
+        if not self._save_settings():
+            return
         self.lbl_status.setText("Setările au fost salvate.")
         self.refresh()
 
     def refresh(self):
         folder = Path(self.txt_dir.text().strip() or backup_folder())
-        rows = cimitir_backup.list_backups(folder)
+        rows = cimitir_backup.available_backup_rows(Path(cimitir_config.working_dir()), db.get_setting)
+        self._backup_rows = rows
         self.table.setRowCount(len(rows))
         for i, r in enumerate(rows):
             protected = "da" if cimitir_backup.is_protected(Path(r["path"])) else ""
             for col, value in enumerate((r["name"], r["created"].replace("T", " "), f"{r['size'] / 1048576:.1f} MB", protected)):
                 self.table.setItem(i, col, QTableWidgetItem(value))
-        self.lbl_status.setText(f"{len(rows)} copii în {folder}")
+        legacy_count = sum(bool(r["legacy"]) for r in rows)
+        self.lbl_status.setText(f"{len(rows)} copii ({legacy_count} în locații vechi, doar citire). Folder activ: {folder}")
         self._refresh_log()
         self._refresh_warning()
 
@@ -260,10 +270,11 @@ class BackupWindow(QDialog):
 
     def _selected(self):
         rows = self.table.selectionModel().selectedRows()
-        return Path(self.txt_dir.text().strip()) / self.table.item(rows[0].row(), 0).text() if rows else None
+        return Path(self._backup_rows[rows[0].row()]["path"]) if rows else None
 
     def backup_now(self):
-        self._save_settings()
+        if not self._save_settings():
+            return
         result = cimitir_backup.run_backup_job(Path(cimitir_config.working_dir()), db.get_setting, force=True, trigger="manual")
         self.refresh()
         if result["result"] == "ok":
@@ -284,6 +295,9 @@ class BackupWindow(QDialog):
         if not chosen:
             self.lbl_status.setText("Selectează o copie.")
             return
+        if cimitir_backup.is_unsafe_backup_destination(chosen):
+            self.lbl_status.setText("Copie veche în Git: nu o modificăm. Migreaz-o într-un folder extern înainte de protejare.")
+            return
         cimitir_backup.set_protected(chosen, not cimitir_backup.is_protected(chosen))
         self.refresh()
         self.lbl_status.setText("Copie protejată de ștergere." if cimitir_backup.is_protected(chosen) else "Protecția a fost scoasă.")
@@ -301,7 +315,7 @@ class BackupWindow(QDialog):
         try:
             cimitir_backup.schedule_restore(chosen, Path(cimitir_config.working_dir()))
         except SystemExit as exc:
-            QMessageBox.critical(self, "Copie invalidă", str(exc))
+            QMessageBox.critical(self, "Restaurare blocată", str(exc))
             return
         QMessageBox.information(self, "Restaurare programată", "Închid aplicația. Pornește-o din nou pentru a aplica restaurarea.")
         QApplication.quit()

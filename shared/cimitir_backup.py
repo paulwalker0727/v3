@@ -14,6 +14,9 @@
 from __future__ import annotations
 
 import hashlib
+import sys
+import warnings
+import uuid
 import json
 import os
 import shutil
@@ -173,13 +176,71 @@ def _carry_over(safety: Path, data_dir: Path) -> None:
             shutil.copy2(src, dst)
 
 
-def restore(backup_dir: Path, data_dir: Path, force: bool = False) -> Path:
+_OPEN_OUTBOX_STATES = ("pending", "retry", "conflict", "error")
+
+
+def _open_outbox_operations(db_file: Path) -> Dict[str, str]:
+    """Amprente pentru operațiile locale care încă necesită atenție/trimitere.
+
+    Nu deschide fișierul cu create: o eroare de citire oprește restaurarea,
+    preferând o restaurare amânată unei pierderi potențiale de date.
+    """
+    if not db_file.is_file():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{db_file.as_posix()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cloud_sync_outbox'").fetchone()
+            if not exists:
+                return {}
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(cloud_sync_outbox)")}
+            if "state" not in columns:
+                # Schema veche: toate intrările existente pot fi operațiuni netrimise.
+                sql = "SELECT * FROM cloud_sync_outbox"
+            else:
+                sql = ("SELECT * FROM cloud_sync_outbox WHERE "
+                       "COALESCE(state, 'pending') IN ('pending','retry','conflict','error')")
+            results = {}
+            for row in conn.execute(sql):
+                item = dict(row)
+                ident = str(item.get("op_id") or f"legacy:{item.get('id')}")
+                # Excludem doar contoarele de încercări și mesajele informative.
+                fingerprint = {k: v for k, v in item.items() if k not in ("attempts", "last_error")}
+                results[ident] = json.dumps(fingerprint, ensure_ascii=False, sort_keys=True, default=str)
+            return results
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        raise ValueError(f"Nu se poate verifica coada locală înainte de restaurare: {exc}") from exc
+
+
+def unsent_operations_at_risk(backup_dir: Path, data_dir: Path) -> int:
+    """Număr de operații locale deschise care NU există identic în backup.
+
+    Cele deja aflate în copia restaurată rămân în copie, deci nu se pierd
+    prin restaurare. Operațiile create/modificate după backup sunt blocate.
+    """
+    current = _open_outbox_operations(Path(data_dir) / _db_name(data_dir))
+    if not current:
+        return 0
+    old = _open_outbox_operations(Path(backup_dir) / "cimitir.db")
+    return sum(old.get(k) != value for k, value in current.items())
+
+
+def restore(backup_dir: Path, data_dir: Path, force: bool = False, *, allow_unsent_loss: bool = False) -> Path:
     """Restaurare sigură: verifică copia, păstrează starea curentă lângă folder (`.inainte-de-restaurare-*`) și, dacă restaurarea eșuează
     la jumătate, readuce starea anterioară. Nu suprascrie niciodată un folder nevid fără `force`."""
     backup_dir, data_dir = Path(backup_dir).resolve(), Path(data_dir).resolve()
     problems = verify(backup_dir)
     if problems:
         raise SystemExit("Backup invalid: " + "; ".join(problems))
+    if not allow_unsent_loss:
+        pending = unsent_operations_at_risk(backup_dir, data_dir)
+        if pending:
+            raise SystemExit(f"Restaurare blocată: există {pending} operațiuni locale nesincronizate "
+                             "care nu există în copia aleasă. Sincronizează și rezolvă conflictele "
+                             "înainte de restaurare; nu se modifică nimic pe disc.")
     safety: Optional[Path] = None
     inside: Optional[Path] = None                  # BUG-03: calea copiei față de data_dir, dacă folderul de copii e în interiorul folderului de date
     try:
@@ -234,10 +295,59 @@ def pending_marker(data_dir: Path) -> Path:
     return data_dir.with_name(data_dir.name + ".restore-pending.json")
 
 
-def default_backup_dir(data_dir: Path) -> Path:
-    override = os.environ.get("CIMITIR_BACKUP_DIR", "").strip()
+def is_unsafe_backup_destination(path: Path) -> bool:
+    """Un backup în sursele aplicației sau într-un worktree Git poate fi șters de Git.
+
+    Recunoaște atât `.git` director, cât și fișierul `.git` (worktrees/submodule).
+    Verificarea include calea încă inexistentă, prin părinții ei.
+    """
+    candidate = Path(path).expanduser().resolve()
+    project = Path(__file__).resolve().parents[1]
+    if candidate == project or project in candidate.parents:
+        return True
+    return any((parent / ".git").exists() for parent in (candidate, *candidate.parents))
+
+
+def _external_backup_dir(data_dir: Path) -> Path:
+    """Destinație pentru dezvoltare/clone Git; distinctă pentru fiecare bază locală.
+
+    În instalația .exe cu date în LOCALAPPDATA păstrăm calea veche, prin
+    `default_backup_dir`, pentru a nu ascunde backupurile deja create.
+    """
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    suffix = hashlib.sha256(os.path.normcase(str(Path(data_dir).resolve())).encode("utf-8")).hexdigest()[:12]
+    result = (base / "Cimitir-backups" / suffix).resolve()
+    if is_unsafe_backup_destination(result):
+        raise ValueError("Nu există o locație externă sigură pentru backup. Alege un folder în afara depozitului Git.")
+    return result
+
+
+def _safe_backup_dir(data_dir: Path, requested: Path) -> Path:
+    requested = Path(requested).expanduser().resolve()
+    if is_unsafe_backup_destination(requested):
+        safe = _external_backup_dir(data_dir)
+        warnings.warn(f"Folderul de backup {requested} se află în codul sursă/un depozit Git. "
+                      f"Nu se va scrie acolo; folosește {safe}.", RuntimeWarning, stacklevel=3)
+        return safe
+    return requested
+
+
+def legacy_backup_dir(data_dir: Path) -> Path:
+    """Destinația implicită veche: consultată pentru COPII EXISTENTE, fără scriere."""
     data_dir = Path(data_dir).resolve()
-    return Path(override) if override else data_dir.with_name(data_dir.name + "-backups")
+    return data_dir.with_name(data_dir.name + "-backups")
+
+
+def default_backup_dir(data_dir: Path) -> Path:
+    data_dir = Path(data_dir).resolve()
+    override = os.environ.get("CIMITIR_BACKUP_DIR", "").strip()
+    requested = Path(override) if override else legacy_backup_dir(data_dir)
+    return _safe_backup_dir(data_dir, requested)
 
 
 def _stamp(path: Path) -> Optional[datetime]:
@@ -305,32 +415,78 @@ def log_path(data_dir: Path) -> Path:
     return data_dir.with_name(data_dir.name + LOG_SUFFIX)
 
 
-def log_event(data_dir: Path, entry: Dict[str, Any]) -> None:
-    """Adaugă o linie în jurnal (în afara folderului de date și a folderului de copii: rămâne chiar dacă discul de copii lipsește). Nu ridică excepții."""
+def _failure_fallback_log() -> Path:
+    """Jurnal alternativ când discul cu date este lipsă sau inaccesibil."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Logs"
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
+    return base / "Cimitir" / "backup-errors.jsonl"
+
+
+def _append_log(path: Path, event: Dict[str, Any]) -> None:
+    # Scriem doar fișiere noi sau reținem ultimele LOG_MAX_LINES în jurnalul existent.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    lines.append(json.dumps(event, ensure_ascii=False))
+    path.write_text("\n".join(lines[-LOG_MAX_LINES:]) + "\n", encoding="utf-8")
+
+
+def _windows_failure_event(entry: Dict[str, Any]) -> None:
+    """Încearcă să înregistreze un eveniment Windows; jurnalul JSONL rămâne sursa principală.
+
+    eventcreate poate cere permisiuni suplimentare; nu blocăm backupul pentru asta.
+    """
+    if sys.platform != "win32" or entry.get("result") != "failed":
+        return
     try:
-        path = log_path(data_dir)
-        lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
-        lines.append(json.dumps(entry, ensure_ascii=False))
-        path.write_text("\n".join(lines[-LOG_MAX_LINES:]) + "\n", encoding="utf-8")
+        import subprocess
+        message = ("Cimitir backup FAILED: " + str(entry.get("error") or "eroare necunoscută"))[:500]
+        subprocess.run(["eventcreate.exe", "/T", "ERROR", "/ID", "501", "/L", "APPLICATION", "/SO",
+                        "CimitirBackup", "/D", message], timeout=8, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def log_event(data_dir: Path, entry: Dict[str, Any]) -> None:
+    """Jurnal lângă data_dir; dacă unitatea lipsește, jurnal alternativ în profilul utilizatorului."""
+    entry = {**entry, "data_dir": str(Path(data_dir).resolve())}
+    if entry.get("trigger") == "windows-task":
+        _windows_failure_event(entry)
+    try:
+        _append_log(log_path(data_dir), entry)
     except OSError as exc:
-        print(f"[backup] jurnalul nu a putut fi scris: {exc}")
+        try:
+            _append_log(_failure_fallback_log(), entry)
+        except OSError as second:
+            print(f"[backup] jurnalul nu a putut fi scris: {exc}; alternativ: {second}", file=sys.stderr)
 
 
 def read_log(data_dir: Path, limit: int = 100) -> List[Dict[str, Any]]:
-    """Cele mai noi intrări primele; liniile corupte sunt ignorate."""
-    path, rows = log_path(data_dir), []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return rows
-    for line in reversed(lines):
-        try:
-            rows.append(json.loads(line))
-        except ValueError:
+    """Cele mai noi intrări primele, inclusiv eșecurile salvate în jurnalul alternativ."""
+    primary = log_path(data_dir)
+    fallback = _failure_fallback_log()
+    rows: List[Dict[str, Any]] = []
+    for path in (primary, fallback):
+        if path == primary and path == fallback:
             continue
-        if len(rows) >= limit:
-            break
-    return rows
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            try:
+                event = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(event, dict):
+                continue
+            if path == fallback and event.get("data_dir") != str(Path(data_dir).resolve()):
+                continue
+            rows.append(event)
+    return sorted(rows, key=lambda r: r.get("time", ""), reverse=True)[:limit]
 
 
 class _Lock:
@@ -370,8 +526,149 @@ def _cfg(get_setting: Callable[[str], Optional[str]], key: str) -> str:
 
 
 def backup_destination(data_dir: Path, get_setting: Callable[[str], Optional[str]]) -> Path:
+    """Setare explicită -> variabila de mediu -> implicit extern dacă Git.
+
+    O cale nesigură configurată anterior nu mai este folosită nici în modul
+    automat: relocare cu avertizare, fără a modifica setarea salvată.
+    """
     custom = _cfg(get_setting, "backup_dir")
-    return Path(custom) if custom else default_backup_dir(data_dir)
+    return _safe_backup_dir(data_dir, Path(custom)) if custom else default_backup_dir(data_dir)
+
+
+def available_backup_rows(data_dir: Path, get_setting: Callable[[str], Optional[str]]) -> List[Dict[str, Any]]:
+    """Listează copiile din destinația activă și vechiul folder, numai pentru citire.
+
+    În mod intenționat nu modifică/migrează/șterge nimic din dosarul vechi.
+    """
+    data_dir = Path(data_dir).resolve()
+    current = backup_destination(data_dir, get_setting)
+    candidates = [current, legacy_backup_dir(data_dir)]
+    configured = _cfg(get_setting, "backup_dir")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    override = os.environ.get("CIMITIR_BACKUP_DIR", "").strip()
+    if override:
+        candidates.append(Path(override).expanduser())
+    rows = []
+    visited = set()
+    for root in candidates:
+        key = str(root.resolve())
+        if key in visited:
+            continue
+        visited.add(key)
+        for row in list_backups(root):
+            rows.append({**row, "legacy": key != str(current.resolve())})
+    return sorted(rows, key=lambda r: r["created"], reverse=True)
+
+
+def adopt_backup_without_manifest(backup_dir: Path) -> Path:
+    """Adoptă EXPLICIT o copie fără manifest deja mutată în afara codului Git.
+
+    Verificarea SQLite nu poate proba autenticitatea istorică: metadatele
+    `adopted` precizează că sumele de control au fost calculate ulterior.
+    """
+    folder = Path(backup_dir).resolve()
+    if is_unsafe_backup_destination(folder):
+        raise ValueError("Recuperarea manifestului se face numai pe o copie EXTERNĂ depozitului Git.")
+    if (folder / "manifest.json").exists():
+        raise ValueError("Există deja un manifest; nu îl înlocuim.")
+    database = folder / "cimitir.db"
+    if not database.is_file() or database.is_symlink():
+        raise ValueError("Nu există o bază SQLite obișnuită în copia de recuperat.")
+    try:
+        conn = sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True)
+        try:
+            if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise ValueError("Baza SQLite nu trece integrity_check.")
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        raise ValueError(f"Baza SQLite nu poate fi verificată: {exc}") from exc
+    files = {}
+    for path in sorted(folder.rglob("*")):
+        if path.is_symlink():
+            raise ValueError(f"Legătură simbolică nesigură: {path}")
+        if path.is_file() and path.name != "manifest.json":
+            files[str(path.relative_to(folder)).replace("\\", "/")] = _sha(path)
+    manifest = {"created": datetime.now().isoformat(), "adopted": True,
+                "adoption_warning": "Manifest refăcut ulterior; integritatea istorică NU poate fi demonstrată.",
+                "files": files}
+    temp = folder / (".manifest-adoption-" + uuid.uuid4().hex)
+    try:
+        with temp.open("x", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2)
+        if (folder / "manifest.json").exists():
+            raise ValueError("Manifestul a apărut între timp; abandonăm recuperarea.")
+        temp.replace(folder / "manifest.json")
+        problems = verify(folder)
+        if problems:
+            (folder / "manifest.json").unlink(missing_ok=True)
+            raise ValueError("Copia adoptată nu este validă: " + "; ".join(problems))
+    finally:
+        temp.unlink(missing_ok=True)
+    return folder / "manifest.json"
+
+
+def migrate_legacy_backups(data_dir: Path, get_setting: Callable[[str], Optional[str]],
+                           *, adopt_missing: bool = False, source: Optional[Path] = None) -> Dict[str, Any]:
+    """Copiază și verifică backupurile vechi. Fără ștergeri/mutări la sursă.
+
+    Este o operațiune explicită, niciodată pornită automat la upgrade.
+    Copiile fără manifest sunt recuperate doar cu `adopt_missing=True`.
+    """
+    data_dir = Path(data_dir).resolve()
+    origin = Path(source).resolve() if source is not None else legacy_backup_dir(data_dir)
+    dest = backup_destination(data_dir, get_setting).resolve()
+    if is_unsafe_backup_destination(dest) or origin == dest or origin in dest.parents or dest in origin.parents:
+        raise ValueError("Destinația trebuie să fie externă și separată de sursa copiilor.")
+    result: Dict[str, Any] = {"source": str(origin), "destination": str(dest), "copied": 0,
+                              "skipped": 0, "adopted": 0, "errors": []}
+    if not origin.is_dir():
+        return result
+    dest.mkdir(parents=True, exist_ok=True)
+    for existing in sorted(origin.iterdir()):
+        if existing.is_symlink() or not existing.is_dir() or not existing.name.startswith(PREFIX) or _stamp(existing) is None:
+            continue
+        if not (existing / "cimitir.db").is_file():
+            continue
+        target = dest / existing.name
+        if target.exists():
+            if verify(target):
+                result["errors"].append(f"{existing.name}: există deja destinația, dar este deteriorată")
+            elif (existing / "manifest.json").is_file() and verify(existing):
+                result["errors"].append(f"{existing.name}: sursa este deteriorată; nu o înlocuim pe cea validă")
+            elif _sha(existing / "cimitir.db") != _sha(target / "cimitir.db"):
+                result["errors"].append(f"{existing.name}: conflict de nume cu un alt backup; nu suprascriem")
+            else:
+                result["skipped"] += 1
+            continue
+        if (existing / "manifest.json").is_file():
+            issues = verify(existing)
+            if issues:
+                result["errors"].append(f"{existing.name}: " + "; ".join(issues))
+                continue
+        elif not adopt_missing:
+            result["errors"].append(f"{existing.name}: manifest lipsă (folosește opțiunea explicită --adopt-missing)")
+            continue
+        temp = dest / (existing.name + ".copying-" + uuid.uuid4().hex)
+        try:
+            if any(p.is_symlink() for p in existing.rglob("*")):
+                raise ValueError("copia conține legături simbolice: migrarea este refuzată")
+            shutil.copytree(existing, temp, symlinks=False)
+            if not (temp / "manifest.json").is_file():
+                adopt_backup_without_manifest(temp)
+                result["adopted"] += 1
+            issues = verify(temp)
+            if issues:
+                raise ValueError("verificarea copiei a eșuat: " + "; ".join(issues))
+            temp.rename(target)
+            result["copied"] += 1
+        except (OSError, ValueError) as exc:
+            result["errors"].append(f"{existing.name}: {exc}")
+        finally:
+            if temp.exists():
+                shutil.rmtree(temp)
+    return result
 
 
 def _quarantine(target: Path) -> str:
@@ -397,7 +694,13 @@ def run_backup_job(data_dir: Path, get_setting: Callable[[str], Optional[str]], 
     data_dir = Path(data_dir)
     if _cfg(get_setting, "backup_enabled") == "0" and not force:
         return {"result": "disabled"}
-    dest = backup_destination(data_dir, get_setting)
+    try:
+        dest = backup_destination(data_dir, get_setting)
+    except (OSError, ValueError) as exc:
+        entry = {"time": datetime.now().isoformat(timespec="seconds"), "trigger": trigger,
+                 "result": "failed", "error": f"Destinație backup nesigură/inaccesibilă: {exc}"}
+        log_event(data_dir, entry)
+        return entry
     if not force and trigger == "app":
         last = read_log(data_dir, 1)
         try:
@@ -452,7 +755,7 @@ def health(data_dir: Path, get_setting: Callable[[str], Optional[str]], now: Opt
     last_ok = next((e for e in events if e.get("result") == "ok"), None)
     try:
         newest = list_backups(backup_destination(data_dir, get_setting))
-    except OSError:
+    except (OSError, ValueError):
         newest = []
     last_ok_time = datetime.fromisoformat(last_ok["time"]) if last_ok else (datetime.fromisoformat(newest[0]["created"]) if newest else None)
     if events and events[0].get("result") == "busy":
@@ -499,11 +802,21 @@ def cli(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--force", action="store_true", help="face copia chiar dacă ultima este recentă sau copia automată este dezactivată")
     parser.add_argument("--status", action="store_true", help="doar afișează starea")
     args = parser.parse_args(argv)
-    if args.data_dir:
-        os.environ["CIMITIR_DATA_DIR"] = str(Path(args.data_dir).resolve())
-    import cimitir_config
-    work = Path(cimitir_config.working_dir())
-    base = _settings_reader(work)
+    candidate = Path(args.data_dir).resolve() if args.data_dir else None
+    try:
+        if candidate is not None:
+            os.environ["CIMITIR_DATA_DIR"] = str(candidate)
+        import cimitir_config
+        work = Path(cimitir_config.working_dir())
+        base = _settings_reader(work)
+    except (OSError, RuntimeError, ValueError) as exc:
+        # Se întâmplă ÎNAINTE de run_backup_job: fără acest bloc nu există jurnal.
+        data = candidate or Path(os.environ.get("CIMITIR_DATA_DIR") or Path.cwd()).resolve()
+        event = {"time": datetime.now().isoformat(timespec="seconds"), "trigger": "windows-task",
+                 "result": "failed", "error": f"Inițializare backup eșuată: {type(exc).__name__}: {exc}"}
+        log_event(data, event)
+        print(f"[backup] EȘEC la inițializare: {exc}", file=sys.stderr)
+        return 1
     get = (lambda key: args.dest if key == "backup_dir" and args.dest else base(key))
     if args.status:
         state = health(work, get)
@@ -528,6 +841,10 @@ def schedule_restore(backup_dir: Path, data_dir: Path) -> Path:
     problems = verify(backup_dir)
     if problems:
         raise SystemExit("Copie invalidă: " + "; ".join(problems))
+    pending = unsent_operations_at_risk(backup_dir, data_dir)
+    if pending:
+        raise SystemExit(f"Restaurare blocată: {pending} operațiuni nesincronizate ar dispărea. "
+                         "Sincronizează MAIN și rezolvă conflictele înainte de restaurare.")
     marker = pending_marker(data_dir)
     marker.write_text(json.dumps({"backup": str(Path(backup_dir).resolve()), "scheduled": datetime.now().isoformat(timespec="seconds")}),
                       encoding="utf-8")

@@ -17,6 +17,7 @@ param(
     [string]$At = "02:00",
     [int]$RepeatHours = 0,
     [string]$TaskName = "Cimitir - Copie de rezerva",
+    [switch]$RunWhetherLoggedOn,
     [switch]$DryRun
 )
 $ErrorActionPreference = "Stop"
@@ -25,8 +26,22 @@ if ($At -notmatch '^([01]\d|2[0-3]):[0-5]\d$') { throw "-At trebuie să fie HH:m
 if ($RepeatHours -lt 0 -or $RepeatHours -gt 24) { throw "-RepeatHours trebuie să fie între 0 și 24." }
 if (-not $Exe -and -not $Python) { throw "Indică -Exe (Cimitir.exe instalat) sau -Python (mediul Python al depozitului)." }
 
+if ($RunWhetherLoggedOn -and -not $DataDir) {
+    throw "Pentru -RunWhetherLoggedOn trebuie specificat -DataDir explicit."
+}
+if ($DataDir) {
+    $DataDir = [System.IO.Path]::GetFullPath($DataDir)
+    $root = [System.IO.Path]::GetPathRoot($DataDir)
+    if ($DataDir.Length -gt $root.Length) { $DataDir = $DataDir.TrimEnd([char]92) }
+}
+# Windows CommandLineToArgvW: backslash-ul final înainte de ghilimele trebuie dublat.
+function Quote-WinArg([string]$v) {
+    $tail = [regex]::Match($v, '(\\+)$')
+    if ($tail.Success) { $v = $v + ('\' * $tail.Value.Length) }
+    return '"' + $v + '"'
+}
 $extra = @()
-if ($DataDir) { $extra += @("--data-dir", "`"$DataDir`"") }
+if ($DataDir) { $extra += @("--data-dir", (Quote-WinArg $DataDir)) }
 if ($Exe) {
     if (-not (Test-Path -LiteralPath $Exe)) { throw "Nu există: $Exe" }
     $program = $Exe
@@ -35,13 +50,16 @@ if ($Exe) {
     if (-not (Test-Path -LiteralPath $Python)) { throw "Nu există: $Python" }
     $script = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")).Path "backup_scheduled.py"
     $program = $Python
-    $arguments = (@("`"$script`"") + $extra) -join " "
+    $arguments = (@((Quote-WinArg $script)) + $extra) -join " "
 }
 
 Write-Host "Activitate : $TaskName"
 Write-Host "Comandă    : `"$program`" $arguments"
 Write-Host "Programare : zilnic la $At" -NoNewline
 if ($RepeatHours -gt 0) { Write-Host ", repetat la fiecare $RepeatHours ore (copia se face doar dacă ultima e mai veche decât intervalul din MAIN)" } else { Write-Host "" }
+if ($RunWhetherLoggedOn) {
+    Write-Warning "S4U rulează fără sesiune interactivă, dar poate să NU deblocheze cheile DPAPI, volumele de rețea sau fișierele EFS. Testează pe Windows înainte de PROD."
+}
 if ($DryRun) { Write-Host "[DryRun] Nu s-a creat nimic."; return }
 
 $action = New-ScheduledTaskAction -Execute $program -Argument $arguments
@@ -51,5 +69,11 @@ if ($RepeatHours -gt 0) {
 }
 # StartWhenAvailable: dacă PC-ul era oprit la ora programată, copia rulează la următoarea pornire.
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "Copie de rezervă Cimitir (verificată și jurnalizată; nu restaurează)." -Force | Out-Null
+if ($RunWhetherLoggedOn) {
+    $account = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $principal = New-ScheduledTaskPrincipal -UserId $account -LogonType S4U -RunLevel Limited
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Copie de rezervă Cimitir (verificată și jurnalizată; nu restaurează)." -Force | Out-Null
+} else {
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "Copie de rezervă Cimitir (verificată și jurnalizată; nu restaurează)." -Force | Out-Null
+}
 Write-Host "Activitatea a fost creată. Test imediat:  Start-ScheduledTask -TaskName `"$TaskName`"  apoi verifică MAIN > Copii de rezervă > Jurnal."

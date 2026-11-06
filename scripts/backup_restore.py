@@ -25,15 +25,21 @@ def main(argv=None) -> int:
     parser.add_argument("source", type=Path)
     parser.add_argument("target", type=Path, nargs="?")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--discard-unsent", action="store_true", help="PERICULOS: permite pierderea operațiunilor offline după backup; necesită --force")
     args = parser.parse_args(argv)
     if args.action == "backup":
+        from cimitir_backup import is_unsafe_backup_destination
+        if is_unsafe_backup_destination(args.target):
+            parser.error("Folder de backup nesigur: este în codul sursă/un depozit Git.")
         print(f"[backup] creat: {backup(args.source, args.target)}")
     elif args.action == "verify":
         problems = verify(args.source)
         print("[verify] OK" if not problems else "[verify] PROBLEME: " + "; ".join(problems))
         return 1 if problems else 0
     else:
-        print(f"[restore] restaurat în: {restore(args.source, args.target, args.force)}")
+        if args.discard_unsent and not args.force:
+            parser.error("--discard-unsent necesită --force")
+        print(f"[restore] restaurat în: {restore(args.source, args.target, args.force, allow_unsent_loss=args.discard_unsent)}")
     return 0
 
 
