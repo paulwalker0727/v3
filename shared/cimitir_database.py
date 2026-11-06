@@ -789,7 +789,7 @@ def delete_plot_blockers(cod_loc: str) -> str:
 
 def delete_plot(cod_loc: str) -> bool:
     """Șterge locul DOAR dacă nu are istoric (înhumați, contracte, plăți, fotografii, avize, documente)."""
-    if not _allowed("edit", "ștergerea locului"):
+    if not _allowed("delete", "ștergerea locului"):
         return False
     blockers = delete_plot_blockers(cod_loc)
     if blockers:
@@ -931,7 +931,7 @@ def get_concesionar(concesionar_id: int) -> Optional[Dict[str, Any]]:
 
 def delete_concesionar(concesionar_id: int) -> bool:
     """Refuză ștergerea unui concesionar care are contracte (altfel contractele ar rămâne fără titular)."""
-    if not _allowed("edit", "ștergerea concesionarului"):
+    if not _allowed("delete", "ștergerea concesionarului"):
         return False
     conn = get_connection()
     try:
@@ -1082,7 +1082,7 @@ def get_contract(contract_id: int) -> Optional[Dict[str, Any]]:
 
 def delete_contract(contract_id: int) -> bool:
     """Refuză ștergerea unui contract cu plăți sau înhumați asociați (istoric financiar/de evidență)."""
-    if not _allowed("edit", "ștergerea contractului"):
+    if not _allowed("delete", "ștergerea contractului"):
         return False
     conn = get_connection()
     try:
@@ -1228,7 +1228,7 @@ def get_inhumat(inhumat_id: int) -> Optional[Dict[str, Any]]:
 
 
 def delete_inhumat(inhumat_id: int) -> bool:
-    if not _allowed("edit", "ștergerea înhumatului"):
+    if not _allowed("delete", "ștergerea înhumatului"):
         return False
     conn = get_connection()
     try:
@@ -1678,7 +1678,7 @@ def list_plati(cod_loc: Optional[str] = None) -> List[Dict[str, Any]]:
 
 
 def delete_plata(plata_id: int) -> bool:
-    if not _allowed("edit", "ștergerea plății"):
+    if not _allowed("delete", "ștergerea plății"):
         return False
     conn = get_connection()
     try:
@@ -1844,7 +1844,7 @@ def _is_managed_media(path: str) -> bool:
 
 
 def delete_document(doc_id: int) -> bool:
-    if not _allowed("edit", "ștergerea documentului"):
+    if not _allowed("delete", "ștergerea documentului"):
         return False
     conn = get_connection()
     try:

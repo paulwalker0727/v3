@@ -31,6 +31,13 @@ def can(right: str) -> bool:
     return cimitir_auth.can(_user, right)
 
 
+def gate(widget, right: str) -> None:
+    """Dezactivează un control dacă utilizatorul autentificat nu are dreptul (UI). Verificarea reală rămâne în funcțiile care scriu."""
+    if _user is not None and not can(right):
+        widget.setEnabled(False)
+        widget.setToolTip(f"Nu ai dreptul „{right}” (configurat de administrator).")
+
+
 def can_edit_mode(user: Dict[str, Any]) -> bool:
     return cimitir_auth.RIGHT_EDIT in user.get("rights", [])
 

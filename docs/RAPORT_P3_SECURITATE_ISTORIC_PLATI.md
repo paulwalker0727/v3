@@ -1,5 +1,7 @@
 # CIMITIR — Raport P3: securitate, contracte istorice, plăți, stabilizare
 
+> **Versiune consolidată** (branch `feature/p3-integrare-finala`): înlocuiește integral PR #56, #57, #58. Livrarea în 3 PR-uri descrisă mai jos este istorică.
+
 Bază: `main` @ `00bb206` (Merge PR #55). Mediu: Linux, Python 3.11, SQLite, date **sintetice** în foldere temporare. Nu s-a accesat PROD, Supabase sau date reale. Nu s-a făcut merge în `main`.
 Livrare în 3 PR-uri **stivuite** (B se bazează pe A, C pe B — din cauza fișierelor comune `plati_window.py` și `shared/cimitir_database.py`): se îmbină în ordinea A → B → C.
 
@@ -10,7 +12,7 @@ Livrare în 3 PR-uri **stivuite** (B se bazează pe A, C pe B — din cauza fiș
 | C | `fix/p3-c-stabilitate-validare` | Teste instabile, siguranța migrării, script Windows, matrice Cloud TEST |
 
 ## 1. Decizii de produs primite de la proprietar
-- Rol `user` = **consultare + adăugare** (nu modifică, nu șterge). Operator = + modificare/ștergere/aprobare. Admin = tot.
+- Permisiuni: **controlate de administrator, per cont** (view/add/edit/delete/approve); rolul dă doar valorile implicite din `main` (user = view, operator = tot ce era permis). Vezi `docs/P3_PERMISIUNI_ADMIN.md`. (Versiunea inițială P3 cu „user = consultare + adăugare” fix pe rol a fost înlocuită.)
 - Plățile istorice fără `contract_id` rămân neschimbate.
 - `owner_*` rămâne instantaneu istoric; fără versionare, fără migrări, fără rescrierea contractelor vechi. Schimbarea titularului nu actualizează automat instantaneul — se semnalează.
 
@@ -19,7 +21,7 @@ Livrare în 3 PR-uri **stivuite** (B se bazează pe A, C pe B — din cauza fiș
 ### PR A
 | # | Bug confirmat | Cauză reală | Remediu |
 |---|---|---|---|
-| A1 | `UserModeWindow` (rol `user`, doar `view`) permitea adăugare/modificare/**ștergere** de plăți, contracte, înhumați, documente fără nicio verificare | `main.py` deschide `UserModeWindow` pentru conturile fără `edit`, dar nici fereastra, nici funcțiile `database` nu verificau drepturile; „doar butoane ascunse” nu exista nici măcar atât | Drept nou `add` (user: `view,add`; operator: `+add`; `edit` implică `add`). Gardă `set_access_guard` instalată la autentificare în `main.py`; verificată **în funcțiile care scriu** (`save_*`, `delete_*`, `add_plata`, `add_document`, `delete_plot`), fail-closed (eroare la verificare = refuz), re-verificată în DB la fiecare operațiune (revocarea se aplică în sesiune deschisă). Butoane dezactivate în `ContractsWindow`/`PlatiWindow` pentru utilizatori fără drept. |
+| A1 | `UserModeWindow` (cont fără `edit`) permitea adăugare/modificare/**ștergere** de plăți, contracte, înhumați, documente fără nicio verificare | `main.py` deschide `UserModeWindow` pentru conturile fără `edit`, dar nici fereastra, nici funcțiile `database` nu verificau drepturile | Drepturi individuale `add`/`edit`/`delete` (compatibile cu conturile vechi: `edit` le include fără marcajul `cfg`). Gardă `set_access_guard` instalată la autentificare, verificată **în funcțiile care scriu**, fail-closed, re-verificată în DB la fiecare operațiune. Butoane dezactivate după drepturile individuale. Panoul Admin web: bife `add/edit/delete/approve`. |
 | A2 | Editarea unui contract vechi rescria `owner_*` (nume, CNP, adresă, telefon, e-mail, BI) cu datele **curente** ale concesionarului | `_populate` apelează autofill-ul concesionarului peste câmpurile titularului, iar `_collect` le trimitea la `save_contract`, care rescria toate coloanele | `save_contract` (UPDATE) păstrează `owner_*` când cheia lipsește; dialogul de editare afișează instantaneul din contract (read-only), nu trimite `owner_*` și avertizează dacă s-a schimbat concesionarul („Titular schimbat: instantaneul NU a fost actualizat”). Contract nou: neschimbat (completează instantaneul). Document Word/PDF: deja folosesc `owner_*` din contract cu fallback pe persoană doar dacă instantaneul lipsește — acum rămân corecte după editare. Fără migrare. |
 
 ### PR B
@@ -48,16 +50,15 @@ Bază blocată (P2, existent) · spațiu insuficient la ALTER și la copie (P2) 
 ## 5. Teste (Linux, rulare completă pe branch-ul C)
 | Suită | Rezultat |
 |---|---|
-| `desktop/tests` | **828 PASS, 15 SKIP, 0 FAIL** |
+| `desktop/tests` | **841 PASS, 15 SKIP, 0 FAIL** |
 | `backend/tests` (`-n 4`) | **984 PASS, 671 SKIP, 0 FAIL** (SKIP = teste live/PostgreSQL/Supabase fără mediu TEST, protejate de `cimitir_test_guard`) |
-| Teste noi P3 | permisiuni (12), istoric contracte (9), plăți–contracte (10), PDF backend (13), migrare (7 + 1 SKIP root), izolare module (1) — toate PASS; testele de PDF și izolare **pică pe codul vechi** (verificat) |
+| Teste noi P3 | permisiuni (25, inclusiv matrice de 11 configurații de drepturi) ; înainte: permisiuni (12), istoric contracte (9), plăți–contracte (10), PDF backend (13), migrare (7 + 1 SKIP root), izolare module (1) — toate PASS; testele de PDF și izolare **pică pe codul vechi** (verificat) |
 | Windows (script + manual) | **NEEXECUTAT** (script rulat pe Linux doar ca autotest: 8 PASS, 3 MANUAL, 1 NEEXECUTAT) |
 | Cloud TEST / Mobile v2 | **NEEXECUTAT** — lipsesc acreditări/mediu TEST (vezi matricea); PROD neatins |
 Notă: la rulările pe PR A/B, `test_build_packaging` (4) și `test_startup_unification` (1) cădeau doar fiindcă `PyInstaller` nu era instalat în mediul de audit (identic pe `main`); cu PyInstaller instalat trec. Ruff raportează avertismente de stil în fișierele noi; nu blochează.
 
 ## 6. Probleme nerezolvate / decizii deschise
-1. **Serverul web/portalul nu a fost modificat**: acolo rolul `user` rămâne strict doar-citire (403 la orice scriere), deci politica „consultare + adăugare” e aplicată doar în MAIN. De decis dacă și portalul trebuie să permită adăugarea (cere schimbare în `backend/server.py`).
-2. Fără un drept `delete` separat: ștergerea cere `edit`. Ștergerea plăților rămâne permisă operatorilor (jurnalizată); stornarea ca alternativă = decizie financiară (neimplementată).
+1. **Portalul web verifică doar `edit`/`approve`**; `add`/`delete` granulare se aplică în MAIN (vezi lipsurile din `docs/P3_PERMISIUNI_ADMIN.md`). Stornarea plăților ca alternativă la ștergere = decizie financiară (neimplementată).
 3. Transfer/schimbare titular: doar avertisment; nu există flux dedicat de transfer (decizie juridică). Instantaneul rămâne cel de la emitere.
 4. Evidența documentelor generate: **doar design** (`docs/P3_DESIGN_EVIDENTA_DOCUMENTE.md`), neimplementat; numerotarea oficială nu s-a implementat.
 5. Text utilizator care e **markup reportlab valid și complet** (ex. `<para>x`) se interpretează ca formatare și nu apare literal; eliminarea completă cere escapare la sursă pe toate cele ~60 de apeluri (neschimbat).
@@ -66,8 +67,8 @@ Notă: la rulările pe PR A/B, `test_build_packaging` (4) și `test_startup_unif
 8. Căi de scriere care ocolesc funcțiile verificate (SQL direct în sincronizare/import) nu trec prin gardă — intenționat (sincronizarea servește drepturile din server), dar de reținut.
 
 ## 7. Riscuri pentru PROD
-- Utilizatorii cu rol `user` nu mai pot modifica/șterge; cei care o făceau (scurgere de drepturi) vor primi „Drepturi insuficiente”. Comunicați înainte de release.
-- Conturile cu `rights` personalizate fără `edit` pierd implicit `add` (dacă nu l-au primit explicit); pentru `rights` goale se aplică valorile implicite ale rolului.
+- Conturile fără `edit` care în `main` puteau scrie prin `UserModeWindow` (scurgere de drepturi) vor primi „Drepturi insuficiente” până când administratorul le acordă `add`. Comunicați înainte de release.
+- Conturile existente (`edit,approve`) rămân neschimbate (compatibilitate); după ce administratorul salvează formularul, bifele devin explicite (marcaj `cfg`).
 - Garda se instalează doar în `main.py` după autentificare: orice alt punct de intrare (scripturi, alte lansatoare) rulează fără gardă. Verificat: scripturile/sincronizarea nu depind de ea.
 - Sincronizarea staff cu drepturi: `add` este un drept nou — serverele vechi nu-l cunosc; testele `test_etapa2_sync` actualizate confirmă că rămâne coerent local; **neverificat cu un server Cloud real**.
 - Prima actualizare produce `pre-migrare/*.bak` (spațiu = mărimea bazei).

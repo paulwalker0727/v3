@@ -108,8 +108,8 @@ class PlatiWindow(QDialog):
         self.setLayout(layout)
         try:
             import access_session
-            if access_session.current_user() is not None and not access_session.can("edit"):
-                self.btn_del.setEnabled(False)
+            access_session.gate(self.btn_del, "delete")
+            access_session.gate(self.btn_add, "add")
         except Exception:
             pass
         self._refresh_contract_filter()

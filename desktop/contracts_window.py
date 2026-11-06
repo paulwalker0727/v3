@@ -591,11 +591,9 @@ class ContractsWindow(QDialog):
         # signals
         try:
             import access_session
-            if not access_session.can("add") and access_session.current_user() is not None:
-                self.btn_add.setEnabled(False)
-            if not access_session.can("edit") and access_session.current_user() is not None:
-                self.btn_edit.setEnabled(False)
-                self.btn_delete.setEnabled(False)
+            access_session.gate(self.btn_add, "add")
+            access_session.gate(self.btn_edit, "edit")
+            access_session.gate(self.btn_delete, "delete")
         except Exception:
             pass
         self.btn_add.clicked.connect(self.add_contract)

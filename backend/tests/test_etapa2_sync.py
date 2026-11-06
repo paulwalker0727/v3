@@ -347,7 +347,7 @@ def test_staff_sync_lease_revocation_and_reconnect(env):
 u, reason = cimitir_auth.authenticate_ex('operator1', 'parola-op-1', db.get_setting('cemetery_id'))
 out['ok'] = (reason, u['rights'], u['origin'], bool(u['lease_until']))
 """)
-    assert out["ok"][0] == "ok" and set(out["ok"][1]) == {"view", "add", "edit", "approve"} and out["ok"][2] == "synced" and out["ok"][3]
+    assert out["ok"][0] == "ok" and set(out["ok"][1]) == {"view", "add", "edit", "delete", "approve"} and out["ok"][2] == "synced" and out["ok"][3]
     _server_py(server.data_dir, "import cimitir_auth\nuid=[u for u in cimitir_auth.list_users() if u['username']=='operator1'][0]['id']\ncimitir_auth.update_user(uid, active=False)\nprint(1)")
     still = main_run(main_dir, server.url, key, "out['r'] = cimitir_auth.authenticate_ex('operator1','parola-op-1')[1]")
     assert still["r"] == "ok"
@@ -393,7 +393,7 @@ out['after_revoke'] = [access_session.can('edit'), access_session.can('view')]
 cimitir_auth.update_user(uid, active=True, rights=['edit', 'approve'])
 out['after_grant'] = access_session.can('approve')
 """)
-    assert out["rights"] == ["view", "add", "edit"] and out["can"] == [True, False, False]
+    assert out["rights"] == ["view", "add", "edit", "delete"] and out["can"] == [True, False, False]
     assert out["after_revoke"] == [False, False] and out["after_grant"] is True
 
 
@@ -428,6 +428,12 @@ def test_web_admin_rights_revocation_and_config(env):
     assert server.request("POST", "/api/public/cerere", form={"nume": "A", "prenume": "B"})[0] == 503
     assert server.get("/api/sync/staff", {"X-Sync-Key": key})["lease_hours"] == 24
     uid = int(_server_py(server.data_dir, "import cimitir_auth\nprint([u for u in cimitir_auth.list_users() if u['username']=='op3'][0]['id'])"))
+    assert admin("POST", f"/admin/ui/user/{uid}/update", {"role": "operator", "rights": "edit&rights=approve", "active": "1"}) == 303
+    stored = _server_py(server.data_dir, "import cimitir_auth\nu=[u for u in cimitir_auth.list_users() if u['username']=='op3'][0]\nprint(u['rights_csv']+'|'+','.join(u['rights']))")
+    assert stored == "cfg,edit,approve|view,edit,approve", stored
+    assert admin("POST", f"/admin/ui/user/{uid}/update", {"role": "operator", "rights": "add&rights=delete&rights=approve&rights=manage_users", "active": "1"}) == 303
+    stored = _server_py(server.data_dir, "import cimitir_auth\nu=[u for u in cimitir_auth.list_users() if u['username']=='op3'][0]\nprint(u['rights_csv']+'|'+','.join(u['rights']))")
+    assert stored == "cfg,add,delete,approve|view,add,delete,approve", stored
     assert admin("POST", f"/admin/ui/user/{uid}/update", {"role": "operator", "rights": "edit&rights=approve", "active": "1"}) == 303
     # cu dreptul `approve` decizia din web e acceptată (Etapa 12); cererea 999 nu există => 404 (nu 403)
     assert op("POST", "/admin/ui/cerere/999/status", {"status": "validat"}) == 404

@@ -15,8 +15,8 @@ Trimite `p3_windows.json` înapoi. Scriptul nu citește datele reale, nu creeaz�
 | # | Pas | Așteptat |
 |---|---|---|
 | M1 | Pornire `Cimitir.exe` / MAIN pe o **copie** a folderului de date (`CIMITIR_DATA_DIR` către copie) | Pornește; fără mesaj de migrare dacă baza e la zi |
-| M2 | Autentificare ca `user` (rol consultare) | Se deschide modul operator; „Șterge plata”, „Modifică/Șterge contract” sunt dezactivate; „Adaugă înhumat/plată/contract” funcționează |
-| M3 | Autentificare ca `operator` | Modificare/ștergere permise; tot ce ține de utilizatori/config rămâne refuzat |
+| M2 | Din panoul Admin web: cont `user` cu doar `add` bifat; autentificare în MAIN | Modul utilizator; „Adaugă…” funcționează; „Modifică/Șterge” (plată, contract, înhumat) dezactivate; la salvarea bifelor cu `delete` în plus, ștergerea devine posibilă fără repornire |
+| M3 | Cont `operator` cu bifele implicite, apoi cu `delete` debifat | Implicit: tot permis; după debifare: ștergerea refuzată; utilizatori/config rămân refuzate |
 | M4 | Hartă → click pe loc → fișă | Se deschide; fără excepții în log |
 | M5 | Contract vechi → Modifică → Salvează | Câmpurile titularului sunt read-only și arată datele de la emitere; după salvare, documentul Word are titularul original |
 | M6 | Plăți → loc cu 2 contracte | Nu se poate salva până nu alegi contractul (sau „fără contract”); tabelul arată contractul și concesionarul; filtrul „Doar plăți fără contract” arată plățile istorice neatinse |

@@ -1753,7 +1753,8 @@ async def cerere_status(request: Request, cid: int):
 
 
 def _rights_from_form(b) -> list:
-    return [r for r in (b if isinstance(b, list) else [b]) if r in ("edit", "approve")]
+    picked = [r for r in (b if isinstance(b, list) else [b]) if r in ("add", "edit", "delete", "approve")]
+    return [cim_auth.RIGHTS_CONFIGURED, *picked]
 
 
 def _would_remove_last_admin(uid: int, new_role=None, new_active=None) -> bool:

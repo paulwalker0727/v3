@@ -136,6 +136,11 @@ class _OperatorDetailPanel(QWidget):
         self.btn_contract.setObjectName("op-manage-contracts")
         self.btn_plati.setObjectName("op-payments")
 
+        try:
+            import access_session
+            access_session.gate(self.btn_inhumat, "add")
+        except Exception:
+            pass
         self.btn_inhumat.clicked.connect(lambda: window.op_add_inhumat())
         self.btn_contract.clicked.connect(lambda: window.op_manage_contracts())
         self.btn_plati.clicked.connect(lambda: window.op_payments())
@@ -768,6 +773,9 @@ class UserModeWindow(QMainWindow):
         return True
 
     def op_add_inhumat(self):
+        import access_session
+        if access_session.current_user() is not None and not access_session.require("add", self, "adăugarea înhumatului"):
+            return
         if not self._require_selection():
             return
         try:

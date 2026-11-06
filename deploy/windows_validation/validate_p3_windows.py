@@ -54,7 +54,7 @@ def main() -> int:
 
     def roles():
         auth.init_auth()
-        uid = auth.create_user("usr_w", "Parola-test-123", auth.ROLE_USER)
+        uid = auth.create_user("usr_w", "Parola-test-123", auth.ROLE_USER, rights=["cfg", "add"])   # administratorul a acordat doar „add”
         access_session.set_user(auth.get_session_user(uid))
         db.set_access_guard(access_session.can)
         db.save_plot_to_db("W-1", [(0, 0), (1, 0), (1, 1)], "#fff")
@@ -64,7 +64,7 @@ def main() -> int:
         assert db.delete_inhumat(iid) is False, "user poate șterge"
         db.set_access_guard(None)
         access_session.set_user(None)
-    check("W02", "Roluri: user = consultare + adăugare", roles)
+    check("W02", "Drepturi individuale: cont cu doar „add” adaugă, nu modifică/șterge", roles)
 
     def snapshot_contract():
         cid = db.save_concesionar({"nume": "Popescu", "prenume": "Ana", "cnp": "2000000000001"})

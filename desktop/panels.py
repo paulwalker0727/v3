@@ -950,6 +950,12 @@ class RightPanel(QWidget):
         self.btn_remove_plata = QPushButton("Șterge plată selectată")
         top.addWidget(self.btn_add_plata)
         top.addWidget(self.btn_remove_plata)
+        try:
+            import access_session
+            access_session.gate(self.btn_add_plata, "add")
+            access_session.gate(self.btn_remove_plata, "delete")
+        except Exception:
+            pass
         top.addStretch()
         self.lbl_fin_total = QLabel("Total încasat: 0.00 RON")
         self.lbl_fin_total.setStyleSheet("font-weight:600; font-size:14px; color:#4fc3f7;")

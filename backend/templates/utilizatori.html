@@ -8,7 +8,7 @@
     <button class="btn-primary" onclick="openModal('user-modal')" data-testid="add-user-btn"><i data-lucide="plus"></i> Utilizator nou</button>
   </div>
 
-  <div class="info-banner"><i data-lucide="shield-alert"></i> Roluri: <b>admin</b> (toate drepturile), <b>operator</b> (consultare + editare + aprobare, ajustabile), <b>user</b> (doar consultare). Conturile dezactivate sau revocate pierd accesul online imediat, iar în MAIN după următoarea sincronizare (sau la expirarea accesului offline).</div>
+  <div class="info-banner"><i data-lucide="shield-alert"></i> Roluri: <b>admin</b> (toate drepturile), <b>operator</b> (implicit: consultare, adăugare, modificare, ștergere, aprobare), <b>user</b> (implicit: doar consultare). Bifele <b>add / edit / delete / approve</b> sunt drepturi individuale ale contului și au prioritate față de rol (salvarea formularului le fixează explicit). Conturile dezactivate sau revocate pierd accesul online imediat, iar în MAIN după următoarea sincronizare (sau la expirarea accesului offline).</div>
 
   <div class="card table-card" data-testid="users-table">
     <div class="table-scroll">
@@ -21,7 +21,7 @@
           <td>
             <form method="post" action="/admin/ui/user/{{ r.id }}/update" class="inline-form" data-testid="update-user-{{ r.id }}">
               <select name="role" data-testid="role-user-{{ r.id }}">{% for ro in ['admin','operator','user'] %}<option value="{{ ro }}" {{ 'selected' if r.role == ro }}>{{ ro }}</option>{% endfor %}</select>
-              {% for right in ['edit','approve'] %}<label class="muted-xs"><input type="checkbox" name="rights" value="{{ right }}" {{ 'checked' if right in r.rights }} data-testid="right-{{ right }}-{{ r.id }}"/> {{ right }}</label>{% endfor %}
+              {% for right in ['add','edit','delete','approve'] %}<label class="muted-xs"><input type="checkbox" name="rights" value="{{ right }}" {{ 'checked' if right in r.rights }} data-testid="right-{{ right }}-{{ r.id }}"/> {{ right }}</label>{% endfor %}
               <label class="muted-xs"><input type="checkbox" name="active" value="1" {{ 'checked' if r.active }} data-testid="active-user-{{ r.id }}"/> activ</label>
               <button type="submit" class="btn-ghost" data-testid="save-user-{{ r.id }}">Salvează</button>
             </form>

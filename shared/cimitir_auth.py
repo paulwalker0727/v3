@@ -20,14 +20,17 @@ import cimitir_db_router as db
 
 ROLE_ADMIN, ROLE_OPERATOR, ROLE_USER = "admin", "operator", "user"
 ROLES = (ROLE_ADMIN, ROLE_OPERATOR, ROLE_USER)
-RIGHT_VIEW, RIGHT_ADD, RIGHT_EDIT, RIGHT_APPROVE = "view", "add", "edit", "approve"
+RIGHT_VIEW, RIGHT_ADD, RIGHT_EDIT, RIGHT_DELETE, RIGHT_APPROVE = "view", "add", "edit", "delete", "approve"
 RIGHT_MANAGE_USERS, RIGHT_MANAGE_CONFIG = "manage_users", "manage_config"
-RIGHTS = (RIGHT_VIEW, RIGHT_ADD, RIGHT_EDIT, RIGHT_APPROVE, RIGHT_MANAGE_USERS, RIGHT_MANAGE_CONFIG)
-# „add” = doar creare de înregistrări noi (înhumați, concesionari, contracte, plăți, documente); modificarea/ștergerea cere „edit”.
+RIGHTS = (RIGHT_VIEW, RIGHT_ADD, RIGHT_EDIT, RIGHT_DELETE, RIGHT_APPROVE, RIGHT_MANAGE_USERS, RIGHT_MANAGE_CONFIG)
+# Marcaj în `users.rights`: drepturile au fost configurate explicit de administrator (panoul Utilizatori). Fără marcaj = format vechi,
+# în care „edit” includea implicit adăugarea și ștergerea. Clienții vechi ignoră marcajul (nu e în RIGHTS).
+RIGHTS_CONFIGURED = "cfg"
+# Valorile implicite ale rolurilor = cele din main (operator putea orice operațiune de date, user doar consultare).
 ROLE_RIGHTS = {
     ROLE_ADMIN: RIGHTS,
-    ROLE_OPERATOR: (RIGHT_VIEW, RIGHT_ADD, RIGHT_EDIT, RIGHT_APPROVE),
-    ROLE_USER: (RIGHT_VIEW, RIGHT_ADD),
+    ROLE_OPERATOR: (RIGHT_VIEW, RIGHT_ADD, RIGHT_EDIT, RIGHT_DELETE, RIGHT_APPROVE),
+    ROLE_USER: (RIGHT_VIEW,),
 }
 DEFAULT_LEASE_HOURS = 72
 DEFAULT_USERS = [("admin", "admin123", ROLE_ADMIN), ("user", "user123", ROLE_USER)]
@@ -151,8 +154,9 @@ def effective_rights(role: str, rights_csv: Optional[str] = None) -> Tuple[str, 
         chosen = {r.strip() for r in rights_csv.split(",")} & set(RIGHTS)
         chosen.discard(RIGHT_MANAGE_USERS)
         chosen.discard(RIGHT_MANAGE_CONFIG)
-        if RIGHT_EDIT in chosen:
-            chosen.add(RIGHT_ADD)
+        tokens = {r.strip() for r in rights_csv.split(",")}
+        if RIGHTS_CONFIGURED not in tokens and RIGHT_EDIT in chosen:
+            chosen.update((RIGHT_ADD, RIGHT_DELETE))     # format vechi: compatibilitate cu conturile existente
         return tuple(r for r in RIGHTS if r in chosen | {RIGHT_VIEW})
     return ROLE_RIGHTS.get(role, (RIGHT_VIEW,))
 
@@ -378,7 +382,7 @@ def update_user(user_id: int, role: Optional[str] = None, rights: Optional[List[
         if role in ROLES:
             ok = _bump(conn, user_id, "role=?", (role,)) or ok
         if rights is not None:
-            ok = _bump(conn, user_id, "rights=?", (",".join(r for r in rights if r in RIGHTS),)) or ok
+            ok = _bump(conn, user_id, "rights=?", (",".join(r for r in rights if r in RIGHTS or r == RIGHTS_CONFIGURED),)) or ok
         if active is not None:
             ok = _bump(conn, user_id, "active=?", (1 if active else 0,)) or ok
         return ok

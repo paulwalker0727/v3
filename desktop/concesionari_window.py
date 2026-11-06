@@ -363,6 +363,13 @@ class ConcesionariWindow(QDialog):
         self.btn_edit.clicked.connect(self.edit_dialog)
         self.btn_phone.clicked.connect(self.phone_upload)
         self.btn_delete.clicked.connect(self.delete_record)
+        try:
+            import access_session
+            access_session.gate(self.btn_add, "add")
+            access_session.gate(self.btn_edit, "edit")
+            access_session.gate(self.btn_delete, "delete")
+        except Exception:
+            pass
         self.btn_reload.clicked.connect(self.reload)
         self.btn_evid.clicked.connect(self.highlight_on_map)
         self.btn_rapoarte.clicked.connect(self.open_reports)
