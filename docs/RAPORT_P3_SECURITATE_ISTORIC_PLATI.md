@@ -11,6 +11,9 @@ Livrare în 3 PR-uri **stivuite** (B se bazează pe A, C pe B — din cauza fiș
 | B | `fix/p3-b-plati-pdf` | Plăți ↔ contracte, PDF backend, design evidență documente |
 | C | `fix/p3-c-stabilitate-validare` | Teste instabile, siguranța migrării, script Windows, matrice Cloud TEST |
 
+## 0. Audit final al permisiunilor (actualizare PR #59)
+Gardă main.py fără eșec silențios (`install_access_guard`: refuză sesiunea + mesaj, garda rămâne „refuză tot”); rutele de scriere din portalul web mapate individual pe add/edit/delete; avize, fotografii, hartă, sectoare, ghidaje, rânduri protejate în funcțiile DB; refresh automat al butoanelor și refuz chiar dacă un buton a rămas activ; compatibilitate conturi existente/sincronizare verificată. Detalii: `docs/P3_PERMISIUNI_ADMIN.md`. Teste noi: `backend/tests/test_p3_portal_drepturi.py`, `desktop/tests/test_p3_audit_final_drepturi.py`.
+
 ## 1. Decizii de produs primite de la proprietar
 - Permisiuni: **controlate de administrator, per cont** (view/add/edit/delete/approve); rolul dă doar valorile implicite din `main` (user = view, operator = tot ce era permis). Vezi `docs/P3_PERMISIUNI_ADMIN.md`. (Versiunea inițială P3 cu „user = consultare + adăugare” fix pe rol a fost înlocuită.)
 - Plățile istorice fără `contract_id` rămân neschimbate.
@@ -50,8 +53,8 @@ Bază blocată (P2, existent) · spațiu insuficient la ALTER și la copie (P2) 
 ## 5. Teste (Linux, rulare completă pe branch-ul C)
 | Suită | Rezultat |
 |---|---|
-| `desktop/tests` | **841 PASS, 15 SKIP, 0 FAIL** |
-| `backend/tests` (`-n 4`) | **984 PASS, 671 SKIP, 0 FAIL** (SKIP = teste live/PostgreSQL/Supabase fără mediu TEST, protejate de `cimitir_test_guard`) |
+| `desktop/tests` | **862 PASS, 15 SKIP, 0 FAIL** |
+| `backend/tests` (`-n 4`) | **999 PASS, 671 SKIP, 0 FAIL** (SKIP = teste live/PostgreSQL/Supabase fără mediu TEST, protejate de `cimitir_test_guard`) |
 | Teste noi P3 | permisiuni (25, inclusiv matrice de 11 configurații de drepturi) ; înainte: permisiuni (12), istoric contracte (9), plăți–contracte (10), PDF backend (13), migrare (7 + 1 SKIP root), izolare module (1) — toate PASS; testele de PDF și izolare **pică pe codul vechi** (verificat) |
 | Windows (script + manual) | **NEEXECUTAT** (script rulat pe Linux doar ca autotest: 8 PASS, 3 MANUAL, 1 NEEXECUTAT) |
 | Cloud TEST / Mobile v2 | **NEEXECUTAT** — lipsesc acreditări/mediu TEST (vezi matricea); PROD neatins |

@@ -19,9 +19,19 @@ Garda (`set_access_guard`) se instalează la autentificarea în MAIN și re-veri
 ## Panoul Admin (web, Utilizatori)
 Acum are bife individuale `add / edit / delete / approve` pe cont; salvarea scrie `cfg,<bife>`. Bifele afișează drepturile **efective** ale contului. `manage_users`/`manage_config` nu se pot acorda din panou.
 
-## Lipsuri rămase (documentate, neschimbate implicit)
-1. Portalul web verifică doar `edit` (`can_write`) și `approve`; `add`/`delete` granulare sunt aplicate în MAIN. Pentru granularitate și pe web, rutele de scriere din `backend/server.py` trebuie mapate pe `add`/`edit`/`delete` (modificare separată, de aprobat).
-2. Nu există panou de utilizatori în aplicația desktop; configurarea se face din panoul web Admin.
-3. Operațiuni neacoperite de gardă (nu au fost cerute în P3): avize, fotografii, metadate de loc/geometrie hartă, sectoare. Hărțile sunt protejate de modul de afișare (read-only pentru cine nu are `edit`).
-4. Drepturile telefoanelor (Mobile v2, perechi) sunt un sistem separat și nu s-au modificat.
-5. Implicitul rolului `user` poate deveni „consultare + adăugare” printr-o singură modificare în `ROLE_RIGHTS` (decizie de politică, nu s-a schimbat).
+## Portalul web (rute de scriere, `backend/server.py`)
+Fiecare rută cere exact dreptul ei (înainte: toate cereau `edit`): adăugare (înhumat, plată, aviz, document/atașament, concesionar nou, token „continuă pe telefon”, scanare) = `add`; modificare (loc, înhumat, aviz, aplicare scanare, concesionar existent) = `edit`; ștergere (înhumat, contract, plată, aviz, document, atașament, concesionar) = `delete`. Crearea de contract rămâne pe `approve` (flux existent) și, la conturile configurate explicit (`cfg`), cere și `add`; conturile în format vechi rămân neschimbate. Decizia cererilor (`approve`), utilizatori/setări/backup/purge (`manage_*`) neschimbate. Nicio rută nu primește acces mai larg decât înainte pentru conturile existente.
+
+## Avize, fotografii, hartă (MAIN)
+Protejate acum în funcțiile DB: avize (`add_aviz`=add, `update_aviz`=edit, `delete_aviz`=delete), fotografii (`save_photo`=add, `set_cover_photo`=edit, `delete_photo`=delete), geometrie loc (`save_plot_to_db`: loc nou=add, existent=edit), metadate/extra loc, sectoare, ghidaje, rânduri (add/edit/delete). Fluxurile derivate rămân funcționale prin `granted(...)`: metadatele unui loc **nou creat** (dialog atribuire cod, generare locuri), suprafața calculată din geometria salvată, arhivarea documentelor la aprobarea unei cereri (`approve`). Sincronizarea inițiată de sistem (documente de cerere din Cloud) folosește `system_operation()`.
+
+## Sesiune deschisă
+Garda DB re-verifică drepturile la fiecare operațiune: un buton rămas activ nu poate executa o operațiune interzisă (mesaj „Drepturi insuficiente”). Butoanele gate-uite se re-sincronizează automat la ~5 s (`refresh_gates`, revocare și acordare, cont dezactivat = tot retras), fără a reactiva controale dezactivate din alte motive. Dacă garda nu poate fi instalată/verificată la autentificare, sesiunea este refuzată cu mesaj de eroare și garda rămâne „refuză tot”.
+
+## Lipsuri / riscuri rămase (documentate, neschimbate implicit)
+1. Nu există panou de utilizatori în aplicația desktop; configurarea se face din panoul web Admin.
+2. Operațiuni care scriu direct în SQL (importuri, sincronizare entități, aprobare cereri în `cimitir_requests`) nu trec prin gardă — intenționat; sunt autorizate de dreptul `approve` sau de sistem.
+3. Hărțile: interacțiunile de desenare din UI se bazează pe modul de afișare (`edit`) și, în plus, pe garda DB la salvare.
+4. Drepturile telefoanelor (Mobile v2, perechi) sunt un sistem separat și nu s-au modificat (netestat cu telefon real).
+5. Un MAIN/serverul mai vechi ignoră `cfg/add/delete`: vede cel mult mai puține drepturi. Serverul nou + MAIN vechi cu cont `cfg,add` = fără scriere în MAIN vechi până la actualizare.
+6. Implicitul rolului `user` poate deveni „consultare + adăugare” printr-o modificare în `ROLE_RIGHTS` (decizie de politică, nu s-a schimbat).

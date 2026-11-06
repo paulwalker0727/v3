@@ -374,21 +374,29 @@ class AssignPlotCodeWindow(QDialog):
         # -----------------------------------------------------------------
         try:
             if actions:
+                import database as _db
+                was_new = not _db._plot_exists(cod)
                 # 1. geometria
-                actions.save_plot_to_db(cod, self.points, "#0078FF")
-                # 2. metadata
-                actions.save_loc_metadata(cod, metadata)
-                # 3. observații în extra_data
-                if obs:
-                    extra = actions.load_extra_data(cod) or {}
-                    extra["observatii"] = obs
-                    actions.save_extra_data(cod, extra)
+                saved_plot = actions.save_plot_to_db(cod, self.points, "#0078FF")
+                # 2. metadata (loc nou creat = drept `add`; loc existent = drept `edit`)
+                import contextlib
+                ctx = _db.granted("edit") if (was_new and saved_plot) else contextlib.nullcontext()
+                with ctx:
+                    actions.save_loc_metadata(cod, metadata)
+                    # 3. observații în extra_data
+                    if obs:
+                        extra = actions.load_extra_data(cod) or {}
+                        extra["observatii"] = obs
+                        actions.save_extra_data(cod, extra)
             else:
                 import database as _db
-                _db.save_plot_to_db(cod, self.points, "#0078FF")
-                _db.save_loc_metadata(cod, metadata)
-                if obs:
-                    _db.save_extra_data(cod, {"observatii": obs})
+                import contextlib
+                was_new = not _db._plot_exists(cod)
+                saved_plot = _db.save_plot_to_db(cod, self.points, "#0078FF")
+                with (_db.granted("edit") if (was_new and saved_plot) else contextlib.nullcontext()):
+                    _db.save_loc_metadata(cod, metadata)
+                    if obs:
+                        _db.save_extra_data(cod, {"observatii": obs})
 
             if signals and hasattr(signals, "data_changed"):
                 signals.data_changed.emit("loc", cod)

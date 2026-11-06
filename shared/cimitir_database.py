@@ -14,6 +14,8 @@ Principii:
 
 import sqlite3
 import os
+import contextlib
+import threading
 import json
 import shutil
 from typing import Optional, List, Dict, Any
@@ -158,8 +160,30 @@ def set_access_guard(fn) -> None:
     _access_guard = fn
 
 
+_grants = threading.local()
+
+
+@contextlib.contextmanager
+def granted(*rights: str):
+    """Acordă temporar (în firul curent) drepturile derivate dintr-o acțiune deja autorizată (ex. metadatele unui loc nou creat,
+    documentele unei cereri aprobate). `granted("*")` / `system_operation()` = operațiuni inițiate de sistem (sincronizare)."""
+    prev = getattr(_grants, "set", frozenset())
+    _grants.set = prev | frozenset(rights)
+    try:
+        yield
+    finally:
+        _grants.set = prev
+
+
+def system_operation():
+    return granted("*")
+
+
 def _allowed(right: str, what: str) -> bool:
     if _access_guard is None:
+        return True
+    g = getattr(_grants, "set", frozenset())
+    if right in g or "*" in g:
         return True
     try:
         ok = bool(_access_guard(right))
@@ -695,7 +719,19 @@ def get_loc_id_by_cod(cod_loc: str) -> Optional[int]:
         conn.close()
 
 
+def _plot_exists(cod_loc: str) -> bool:
+    conn = get_connection()
+    try:
+        return conn.execute("SELECT 1 FROM locuri_de_veci WHERE cod_loc = ?", (cod_loc,)).fetchone() is not None
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
 def save_plot_to_db(cod_loc: str, points: List[tuple], color: str) -> Optional[int]:
+    if not _allowed("edit" if _plot_exists(cod_loc) else "add", "salvarea locului"):
+        return None
     conn = get_connection()
     try:
         pts = json.dumps(points)
@@ -717,6 +753,8 @@ def save_plot_to_db(cod_loc: str, points: List[tuple], color: str) -> Optional[i
 
 def save_loc_metadata(cod_loc: str, metadata: Dict[str, Any]) -> bool:
     """Actualizează metadatele unui loc (creează rândul dacă lipsește)."""
+    if not _allowed("edit", "modificarea metadatelor locului"):
+        return False
     conn = get_connection()
     try:
         row = conn.execute("SELECT id FROM locuri_de_veci WHERE cod_loc = ?", (cod_loc,)).fetchone()
@@ -1247,6 +1285,8 @@ def delete_inhumat(inhumat_id: int) -> bool:
 # SECTOARE
 # =============================================================================
 def save_sector_to_db(sector_id: str, points: List[tuple], color: str) -> bool:
+    if not _allowed("edit", "salvarea sectorului"):
+        return False
     conn = get_connection()
     try:
         conn.execute("INSERT OR REPLACE INTO sectoare (id, points, color) VALUES (?, ?, ?)",
@@ -1260,6 +1300,8 @@ def save_sector_to_db(sector_id: str, points: List[tuple], color: str) -> bool:
 
 
 def delete_sector_from_db(sector_id: str) -> bool:
+    if not _allowed("delete", "ștergerea sectorului"):
+        return False
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM sectoare WHERE id = ?", (sector_id,))
@@ -1310,6 +1352,8 @@ def list_photos_for_loc(cod_loc: str) -> List[Dict[str, Any]]:
 
 def save_photo(cod_loc: str, file_path: str,
                metadata: Optional[Dict[str, Any]] = None) -> Optional[int]:
+    if not _allowed("add", "adăugarea fotografiei"):
+        return None
     metadata = metadata or {}
     conn = get_connection()
     try:
@@ -1330,6 +1374,8 @@ def save_photo(cod_loc: str, file_path: str,
 
 
 def delete_photo(photo_id: int) -> bool:
+    if not _allowed("delete", "ștergerea fotografiei"):
+        return False
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
@@ -1342,6 +1388,8 @@ def delete_photo(photo_id: int) -> bool:
 
 
 def set_cover_photo(cod_loc: str, photo_id: int) -> bool:
+    if not _allowed("edit", "schimbarea fotografiei de copertă"):
+        return False
     conn = get_connection()
     try:
         conn.execute("UPDATE photos SET is_cover = 0 WHERE cod_loc = ?", (cod_loc,))
@@ -1394,6 +1442,8 @@ _AVIZ_COLS = {"nr": "nr_aviz", "data": "data_aviz", "lucrare": "lucrare", "stare
 
 def update_aviz(aviz_id: int, fields: Dict[str, Any]) -> bool:
     """Actualizează doar câmpurile primite (nr, data, lucrare, stare, observatii, data_finalizare, executant, data_inceput)."""
+    if not _allowed("edit", "modificarea avizului"):
+        return False
     sets = [(_AVIZ_COLS[k], v if v is not None else "") for k, v in fields.items() if k in _AVIZ_COLS]
     if not sets:
         return False
@@ -1411,6 +1461,8 @@ def update_aviz(aviz_id: int, fields: Dict[str, Any]) -> bool:
 
 def add_aviz(cod_loc: str, nr: str, data_aviz: Optional[str], lucrare: str = "",
              executant: Optional[str] = None, data_inceput: Optional[str] = None) -> Optional[int]:
+    if not _allowed("add", "adăugarea avizului"):
+        return None
     conn = get_connection()
     try:
         cur = conn.execute(
@@ -1426,6 +1478,8 @@ def add_aviz(cod_loc: str, nr: str, data_aviz: Optional[str], lucrare: str = "",
 
 
 def delete_aviz(aviz_id: int) -> bool:
+    if not _allowed("delete", "ștergerea avizului"):
+        return False
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM amenajari_avize WHERE id = ?", (aviz_id,))
@@ -1455,6 +1509,8 @@ def load_extra_data(cod_loc: str) -> Dict[str, Any]:
 
 
 def save_extra_data(cod_loc: str, extra: Dict[str, Any]) -> bool:
+    if not _allowed("edit", "modificarea datelor suplimentare ale locului"):
+        return False
     conn = get_connection()
     try:
         conn.execute(
@@ -1473,6 +1529,8 @@ def save_extra_data(cod_loc: str, extra: Dict[str, Any]) -> bool:
 # GUIDES (linii de ghidare)
 # =============================================================================
 def add_guide(kind: str, points: List[tuple], color: str = "#00AAFF") -> Optional[int]:
+    if not _allowed("add", "adăugarea ghidajului"):
+        return None
     conn = get_connection()
     try:
         cur = conn.execute(
@@ -1504,6 +1562,8 @@ def list_guides() -> List[Dict[str, Any]]:
 
 
 def delete_guide(guide_id: int) -> bool:
+    if not _allowed("delete", "ștergerea ghidajului"):
+        return False
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM guides WHERE id = ?", (guide_id,))
@@ -1525,6 +1585,8 @@ def clear_guides() -> None:
 # =============================================================================
 def add_row(sector_label: str, name: str, order_index: int,
             baseline: List[tuple], width: float, depth: float) -> Optional[int]:
+    if not _allowed("add", "adăugarea rândului"):
+        return None
     conn = get_connection()
     try:
         cur = conn.execute(
@@ -1567,6 +1629,8 @@ def list_rows(sector_label: Optional[str] = None) -> List[Dict[str, Any]]:
 
 
 def update_row(row_id: int, **fields) -> bool:
+    if not _allowed("edit", "modificarea rândului"):
+        return False
     if not fields:
         return False
     allowed = ("sector_label", "name", "order_index", "baseline", "width", "depth")
@@ -1590,6 +1654,8 @@ def update_row(row_id: int, **fields) -> bool:
 
 
 def delete_row(row_id: int) -> bool:
+    if not _allowed("delete", "ștergerea rândului"):
+        return False
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM rows_ghid WHERE id = ?", (row_id,))

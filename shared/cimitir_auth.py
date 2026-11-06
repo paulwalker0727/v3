@@ -182,7 +182,8 @@ def lease_expired(lease_until: Optional[str], now: Optional[datetime] = None) ->
 
 def _public(row: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": row["id"], "uid": row.get("uid") or "", "username": row["username"], "role": row["role"],
-            "rights": list(effective_rights(row["role"], row.get("rights"))), "origin": row.get("origin") or "local",
+            "rights": list(effective_rights(row["role"], row.get("rights"))),
+            "rights_configured": RIGHTS_CONFIGURED in {t.strip() for t in (row.get("rights") or "").split(",")}, "origin": row.get("origin") or "local",
             "lease_until": row.get("lease_until") or "", "cemetery_id": row.get("cemetery_id") or ""}
 
 

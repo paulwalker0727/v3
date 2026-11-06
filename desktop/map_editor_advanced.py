@@ -458,10 +458,12 @@ class AdvancedEditor:
             existing = db.load_loc_by_cod(cod)
             if existing:
                 continue
-            self.w.actions.save_plot_to_db(cod, poly, "#0078FF80")
-            db.save_loc_metadata(cod, {
-                "sector": row["sector_label"], "rand": str(rand_no), "numar": str(loc_no),
-            })
+            if not self.w.actions.save_plot_to_db(cod, poly, "#0078FF80"):
+                continue
+            with db.granted("edit"):           # metadatele locului nou creat
+                db.save_loc_metadata(cod, {
+                    "sector": row["sector_label"], "rand": str(rand_no), "numar": str(loc_no),
+                })
             qpoly = QPolygonF([QPointF(x, y) for x, y in poly])
             data = {"type": "loc_de_veci", "cod_loc": cod, "points": poly,
                     "plot_color": QColor(0, 120, 255, 128)}

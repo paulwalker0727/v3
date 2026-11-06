@@ -63,6 +63,25 @@ def _run_license_gate(app: QApplication):
     return info
 
 
+def install_access_guard(user) -> None:
+    """Instalează și verifică garda de drepturi pentru sesiune. La orice eșec: garda rămâne „refuză tot” și se ridică excepția
+    (sesiunea trebuie refuzată de apelant) — nu poate eșua silențios."""
+    import database as _dbm
+    import access_session as _acc
+    try:
+        _dbm.set_audit_actor(user.get("username", ""))
+        _dbm.set_access_guard(_acc.can)
+        if _acc.current_user() is None or not _acc.can("view"):
+            raise RuntimeError("sesiunea de acces nu poate fi verificată")
+        try:
+            _acc.start_auto_refresh()
+        except Exception as exc:     # reîmprospătarea butoanelor e un confort; protecția reală rămâne în funcții
+            logger.warning("Reîmprospătarea automată a drepturilor în UI nu a pornit: %s", exc)
+    except Exception:
+        _dbm.set_access_guard(lambda _right: False)
+        raise
+
+
 def _run_login(app):
     """Deschide fereastra de login. Returnează user dict sau None."""
     from login_window import LoginWindow
@@ -144,12 +163,14 @@ def main() -> int:
             if not user:
                 return 0
             try:
-                import database as _dbm
-                _dbm.set_audit_actor(user.get("username", ""))
-                import access_session as _acc
-                _dbm.set_access_guard(_acc.can)
-            except Exception:
-                pass
+                install_access_guard(user)
+            except Exception as exc:
+                logger.error("Garda de drepturi nu a putut fi instalată/verificată: %s", exc)
+                QMessageBox.critical(None, "Cimitir — Eroare de securitate",
+                                     "Nu s-a putut instala sau verifica protecția drepturilor de acces.\n"
+                                     "Sesiunea a fost refuzată pentru siguranța datelor.\n\n"
+                                     f"Detalii: {exc}")
+                continue
             if auth.password_change_required(user["id"]):
                 QMessageBox.warning(None, "Cimitir — Parolă implicită",
                                     "Contul folosește încă o parolă implicită. Schimbă parola la autentificare.")

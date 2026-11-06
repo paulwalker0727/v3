@@ -31,11 +31,54 @@ def can(right: str) -> bool:
     return cimitir_auth.can(_user, right)
 
 
+_gated: list = []          # [weakref(widget), right, dezactivat_de_gate]
+
+
 def gate(widget, right: str) -> None:
-    """Dezactivează un control dacă utilizatorul autentificat nu are dreptul (UI). Verificarea reală rămâne în funcțiile care scriu."""
-    if _user is not None and not can(right):
-        widget.setEnabled(False)
-        widget.setToolTip(f"Nu ai dreptul „{right}” (configurat de administrator).")
+    """Dezactivează un control dacă utilizatorul autentificat nu are dreptul (UI) și îl ține sincronizat la acordări/revocări.
+    Verificarea reală rămâne în funcțiile care scriu: un buton rămas activ nu poate executa o operațiune interzisă."""
+    import weakref
+    _gated.append([weakref.ref(widget), right, False])
+    _apply_gate(_gated[-1], _user is None or can(right))
+
+
+def _apply_gate(entry, allowed: bool) -> None:
+    w = entry[0]()
+    if w is None:
+        return
+    try:
+        if not allowed and w.isEnabled():
+            w.setEnabled(False)
+            w.setToolTip(f"Nu ai dreptul „{entry[1]}” (configurat de administrator).")
+            entry[2] = True
+        elif allowed and entry[2]:
+            w.setEnabled(True)
+            w.setToolTip("")
+            entry[2] = False
+    except RuntimeError:       # widget C++ distrus
+        entry[0] = lambda: None
+
+
+def refresh_gates() -> None:
+    """Re-evaluează toate controalele gate-uite (drepturi acordate/retrase în sesiune deschisă)."""
+    global _gated
+    _gated = [e for e in _gated if e[0]() is not None]
+    if _user is None or not _gated:
+        return
+    fresh = cimitir_auth.get_session_user(_user["id"], _user.get("cemetery_id") or None)
+    rights = set(fresh["rights"]) if fresh else set()
+    for e in _gated:
+        _apply_gate(e, e[1] in rights)
+
+
+def start_auto_refresh(interval_ms: int = 5000):
+    from PySide6.QtCore import QTimer
+    t = QTimer()
+    t.setInterval(interval_ms)
+    t.timeout.connect(refresh_gates)
+    t.start()
+    globals()["_timer"] = t
+    return t
 
 
 def can_edit_mode(user: Dict[str, Any]) -> bool:

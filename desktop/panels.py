@@ -831,6 +831,13 @@ class RightPanel(QWidget):
         self.btn_delete_photo = QPushButton("Șterge fotografie")
         top.addWidget(self.btn_upload)
         top.addWidget(self.btn_set_cover)
+        try:
+            import access_session
+            access_session.gate(self.btn_upload, "add")
+            access_session.gate(self.btn_set_cover, "edit")
+            access_session.gate(self.btn_delete_photo, "delete")
+        except Exception:
+            pass
         top.addWidget(self.btn_delete_photo)
         top.addStretch()
         v.addLayout(top)
@@ -1102,6 +1109,13 @@ class RightPanel(QWidget):
         self.btn_remove_aviz = QPushButton("Șterge aviz selectat")
         top.addWidget(self.btn_add_aviz)
         top.addWidget(self.btn_edit_aviz)
+        try:
+            import access_session
+            access_session.gate(self.btn_add_aviz, "add")
+            access_session.gate(self.btn_edit_aviz, "edit")
+            access_session.gate(self.btn_remove_aviz, "delete")
+        except Exception:
+            pass
         top.addWidget(self.btn_remove_aviz)
         top.addStretch()
         v.addLayout(top)

@@ -84,8 +84,9 @@ class EditorActions:
             if v:
                 ppm = float(v)
             area = geo.area_m2(points, ppm) if ppm else geo.polygon_area(points)
-            if area is not None:
-                db.save_loc_metadata(cod_loc, {"suprafata": round(area, 2)})
+            if area is not None and result:
+                with db.granted("edit"):       # suprafața derivă din geometria tocmai salvată (autorizată de save_plot_to_db)
+                    db.save_loc_metadata(cod_loc, {"suprafata": round(area, 2)})
         except Exception:
             pass
         self._emit_update("loc", cod_loc)
