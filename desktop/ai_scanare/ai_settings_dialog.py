@@ -13,6 +13,7 @@ Funcții:
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+import thread_guard
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -288,7 +289,7 @@ class AISettingsDialog(QDialog):
         self.test_result.setText("⏳ Testez cheia la Gemini…")
         self.test_result.setStyleSheet("color:#94a3b8;")
 
-        self._thread = QThread(self)
+        self._thread = thread_guard.track(QThread(self))
         self._worker = _GeminiWorker(key)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)

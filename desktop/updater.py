@@ -20,6 +20,7 @@ from typing import Optional
 
 import requests
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
+import thread_guard
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QToolBar, QWidget
 
@@ -115,7 +116,7 @@ class UpdateChecker(QObject):
             self.current = parse_semver(version or current_version())
         except ValueError:
             self.current = (0, 0, 0, 1, "")
-        self._thread = QThread(self)
+        self._thread = thread_guard.track(QThread(self))
         self._worker = _UpdateWorker()
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)

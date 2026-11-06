@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
+import thread_guard
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -739,7 +740,7 @@ class ScanDialog(QDialog):
         self.engine_badge.hide()
 
         # thread worker
-        self._worker_thread = QThread(self)
+        self._worker_thread = thread_guard.track(QThread(self))
         self._worker = ExtractWorker(self._source_file, self.document_type, prefer_offline=self._prefer_offline)
         self._worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self._worker.run)

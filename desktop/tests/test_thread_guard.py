@@ -50,3 +50,16 @@ def test_all_worker_start_sites_are_tracked():
     for name in ("cloud_sync_auto", "cloud_sync_window", "cloud_profiles_dialog", "duplicate_people_window", "integrity_window"):
         src = (DESKTOP / f"{name}.py").read_text(encoding="utf-8")
         assert "thread_guard.track(" in src, name
+
+
+def test_every_qthread_creation_in_application_code_is_tracked():
+    """Orice `QThread(` din codul aplicației (în afara testelor și a thread_guard) trebuie învelit în thread_guard.track(...)."""
+    offenders = []
+    for path in DESKTOP.rglob("*.py"):
+        rel = path.relative_to(DESKTOP).as_posix()
+        if rel.startswith("tests/") or rel == "thread_guard.py":
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "= QThread(" in line and "thread_guard.track(" not in line:
+                offenders.append(f"{rel}:{n}")
+    assert offenders == [], offenders
