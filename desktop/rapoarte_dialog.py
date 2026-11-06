@@ -95,6 +95,9 @@ class QrSettingsDialog(QDialog):
         )
 
     def _save(self):
+        import access_session
+        if access_session.current_user() is not None and not access_session.require("edit", self, "modificarea URL-ului QR"):
+            return
         url = (self.txt_url.text() or "").strip().rstrip("/")
         if url and not (url.startswith("http://") or url.startswith("https://")):
             QMessageBox.warning(self, "URL invalid",

@@ -1,4 +1,4 @@
-"""T3 (iteration_3): probe pentru lacune NOI in tokenul mobil (date sintetice, folder temporar)."""
+"""Regresii P3 (auditul de testare, runda 3):  lacune NOI in tokenul mobil (date sintetice, folder temporar)."""
 import pytest
 
 from test_etapa1_audit import _load_server  # noqa: F401
@@ -97,21 +97,15 @@ def test_issue_for_main_prefix(web, monkeypatch, sent, stored):
     assert _up(web, "/api/m/" + r.json()["url"].split("/api/m/")[1]).status_code == 200
 
 
-# NEW GAP probe: a WEB account literally named 'main' is treated as a MAIN token -> revocation bypass
-def test_cont_web_numit_main_dezactivat(web):
-    c, uid = web.login("main", "operator", ["cfg", "add"])
-    path = _issue(c)
-    web.auth.update_user(uid, active=False)
-    up = _up(web, path)
-    print("web account 'main' deactivated -> upload:", up.status_code, up.text[:120])
-    assert up.status_code == 403, "web account named 'main' bypasses _require_issuer_still_allowed"
-
-
-# Can the portal admin create such a username at all? (no username validation in create_user / POST /admin/ui/user)
-@pytest.mark.parametrize("name", ["main", "main:x", "a b<script>"])
+# un cont web nu poate lua numele rezervat „main” (spațiul MAIN din tokenurile mobile) și nici caractere ciudate
+@pytest.mark.parametrize("name", ["main", "MAIN", "Main", "main:x", "a b", "x<script>"])
 def test_portal_creare_utilizator_nume_rezervat(web, name):
-    adm, _ = web.client_for("admin", [])
-    adm.post("/admin/ui/user", data={"username": name, "password": PW, "role": "operator"}, follow_redirects=False)
-    created = any(u["username"] == name for u in web.auth.list_users())
-    print(f"portal created username {name!r}:", created)
-    assert not created, f"portal allowed reserved/invalid username {name!r}"
+    assert web.auth.create_user(name, PW, "operator", rights=["cfg", "add"]) is None
+
+
+def test_tokenul_portalului_nu_poate_fi_confundat_cu_unul_MAIN(web):
+    c, uid = web.login("mainx", "operator", ["cfg", "add"])
+    first, second = _issue(c), _issue(c)
+    assert _up(web, first).status_code == 200
+    web.auth.update_user(uid, active=False)
+    assert _up(web, second).status_code == 403

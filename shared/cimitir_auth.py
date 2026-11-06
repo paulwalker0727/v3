@@ -227,6 +227,8 @@ ENV_ALLOW_DEFAULT = "CIMITIR_ALLOW_DEFAULT_USERS"
 ENV_BOOT_USER, ENV_BOOT_PASSWORD = "CIMITIR_BOOTSTRAP_ADMIN_USER", "CIMITIR_BOOTSTRAP_ADMIN_PASSWORD"
 MIN_ADMIN_PASSWORD_LEN = 12
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,40}$")
+_CREATE_USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,40}$")     # fără „:”, spații sau marcaje; compatibil cu nume scurte existente
+RESERVED_USERNAMES = frozenset({"main"})     # „main” desemnează emitentul MAIN în tokenurile de încărcare de pe telefon
 
 
 def default_users_allowed() -> bool:
@@ -351,6 +353,9 @@ def list_users() -> List[Dict[str, Any]]:
 def create_user(username: str, password: str, role: str = ROLE_USER, rights: Optional[List[str]] = None,
                 cemetery_id: str = "") -> Optional[int]:
     if not username or not password:
+        return None
+    username = username.strip()
+    if not _CREATE_USERNAME_RE.match(username) or username.lower() in RESERVED_USERNAMES:
         return None
     role = role if role in ROLES else ROLE_USER
     now = datetime.now().isoformat(timespec="seconds")

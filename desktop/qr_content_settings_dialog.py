@@ -256,6 +256,9 @@ class QrContentSettingsDialog(QDialog):
         return "".join(parts)
 
     def _save(self):
+        import access_session
+        if access_session.current_user() is not None and not access_session.require("edit", self, "modificarea datelor publice din QR"):
+            return
         keys = self._current_keys()
         try:
             qpd.set_public_fields(keys)

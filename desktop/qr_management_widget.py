@@ -97,11 +97,14 @@ class QrManagementWidget(QWidget):
         btn_url.setToolTip("Configurează URL-ul portalului public al cimitirului")
         btn_url.clicked.connect(self._open_url_settings)
         header.addWidget(btn_url)
+        import access_session
+        access_session.gate(btn_url, "edit")
 
         btn_content = QPushButton("🎯  Setări conținut...")
         btn_content.setToolTip("Alege exact ce date se afișează pe pagina publică QR")
         btn_content.clicked.connect(self._open_content_settings)
         header.addWidget(btn_content)
+        access_session.gate(btn_content, "edit")
 
         root.addLayout(header)
 

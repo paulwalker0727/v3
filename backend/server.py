@@ -1407,7 +1407,7 @@ def mobile_token(request: Request, etype: str = Form(...), eid: str = Form(...))
     source_id = (cim.current_source() or {}).get("id")
     if not source_id:
         raise HTTPException(status_code=409, detail="Baza de date activă nu este selectată")
-    return JSONResponse(mobile_upload.issue(request, source_id, etype, eid, user["username"]), headers={"Cache-Control": "no-store"})
+    return JSONResponse(mobile_upload.issue(request, source_id, etype, eid, f"web:{user['username']}"), headers={"Cache-Control": "no-store"})
 
 
 def safe_name_for_msg(name: Optional[str]) -> str:

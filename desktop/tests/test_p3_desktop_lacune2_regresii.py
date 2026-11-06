@@ -1,4 +1,4 @@
-"""T3 (iteration_3): probe pentru lacune NOI de drepturi in MAIN (SQLite sintetic in tmp_path; fara retea)."""
+"""Regresii P3 (auditul de testare, runda 3):  lacune NOI de drepturi in MAIN (SQLite sintetic in tmp_path; fara retea)."""
 import sys
 from pathlib import Path
 
@@ -72,7 +72,7 @@ def test_phone_legacy_edit_real_user(env, monkeypatch):
     assert calls == [access_session.current_user()["username"]]
 
 
-# NEW GAP probe: view-only account changes QR base URL (target of all printed QR codes) from the QR page in UserModeWindow
+# view-only account changes QR base URL (target of all printed QR codes) from the QR page in UserModeWindow
 def test_qr_base_url_view_only(env):
     db.set_setting("qr_base_url", "https://cimitir.example.ro")
     env.login(["cfg"])
@@ -85,7 +85,7 @@ def test_qr_base_url_view_only(env):
     assert db.get_setting("qr_base_url") == "https://cimitir.example.ro", "view-only user changed qr_base_url"
 
 
-# NEW GAP probe: view-only account changes public QR fields
+# view-only account changes public QR fields
 def test_qr_public_fields_view_only(env):
     import qr_public_data as qpd
     db.set_setting("qr_public_fields", "cod_loc")

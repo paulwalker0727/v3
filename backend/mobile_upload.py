@@ -220,7 +220,7 @@ def issue_for_main(request: Request, payload: Dict[str, Any] = Body(...)):
     else:
         raise HTTPException(status_code=422, detail="entity_uid lipsește")
     issuer = str(payload.get("issued_by") or "main")
-    return JSONResponse(issue(request, source_id, etype, eid, issuer if issuer == "main" else f"main:{issuer}",
+    return JSONResponse(issue(request, source_id, etype, eid, issuer if (issuer == "main" or issuer.startswith("main:")) else f"main:{issuer}",
                               payload.get("ttl_minutes"), payload.get("max_uses")), headers=_NOSTORE)
 
 
@@ -339,7 +339,7 @@ def _require_issuer_still_allowed(created_by: str) -> None:
     Tokenurile emise din MAIN (`main` / `main:<utilizator>`) au fost autorizate de MAIN (dreptul `add`) la emitere."""
     if created_by == "main" or created_by.startswith("main:"):
         return
-    creator = cimitir_auth._row("username=?", created_by)
+    creator = cimitir_auth._row("username=?", created_by[4:] if created_by.startswith("web:") else created_by)
     if cimitir_auth.access_state(creator) != "ok" or "add" not in cimitir_auth.effective_rights(creator["role"], creator.get("rights")):
         raise HTTPException(status_code=403, detail={"error": "rights_revoked", "message": "Autorul linkului nu mai are dreptul de adăugare."})
 
