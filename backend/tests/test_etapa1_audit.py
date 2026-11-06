@@ -44,6 +44,8 @@ def _clear_modules():
                  "cimitir_config", "cimitir_database", "cimitir_auth", "cimitir_public", "sync_api",
                  "cimitir_notify", "cimitir_requests", "citizen_api", *COLLIDING_MODULES]:
         sys.modules.pop(name, None)
+    from module_isolation import purge_backend_modules   # și modulele care țin referințe la `store` vechi (ex. portal_ratelimit)
+    purge_backend_modules()
     for p in (str(BACKEND_DIR / "cimitir"), str(BACKEND_DIR)):      # modulele backend au prioritate față de homonimele din desktop/ (mobile_upload, database …)
         if p in sys.path:
             sys.path.remove(p)

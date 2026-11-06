@@ -302,17 +302,27 @@ def _snapshot_before_migration(conn: sqlite3.Connection) -> None:
     while os.path.exists(target):
         n += 1
         target = os.path.join(folder, f"{os.path.basename(db_file)}.{stamp}-{n}.bak")
-    dst = sqlite3.connect(target)
+    for name in os.listdir(folder):      # resturi de la o copie întreruptă (proces oprit în mijloc): niciodată nu poartă extensia .bak
+        if name.endswith(".bak.tmp"):
+            try:
+                os.remove(os.path.join(folder, name))
+            except OSError:
+                pass
+    tmp_target = target + ".tmp"
+    dst = sqlite3.connect(tmp_target)
     try:
         conn.backup(dst)
+        if dst.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+            raise sqlite3.DatabaseError("copia de siguranță dinaintea migrării nu a trecut verificarea de integritate")
     except BaseException:
         dst.close()
         try:
-            os.remove(target)
+            os.remove(tmp_target)
         except OSError:
             pass
         raise
     dst.close()
+    os.replace(tmp_target, target)       # doar o copie completă și verificată primește numele .bak
     old = sorted(f for f in os.listdir(folder) if f.endswith(".bak"))
     for name in old[:-PRE_MIGRATION_KEEP]:
         try:
