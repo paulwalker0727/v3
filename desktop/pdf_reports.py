@@ -223,7 +223,7 @@ def _kv_table(pairs: List[Tuple[str, Any]], ss, col_widths=None) -> Table:
             Paragraph(f"<font color='#667085'>{label}</font>", ss["Cell"]),
             Paragraph(str(value if value not in (None, "") else "—"), ss["CellB"]),
         ])
-    t = Table(data, colWidths=col_widths or [50 * mm, 120 * mm])
+    t = Table(data, colWidths=col_widths or [50 * mm, 120 * mm], splitInRow=1)
     t.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
@@ -237,7 +237,7 @@ def _grid_table(header: List[str], rows: List[List[Any]], ss,
     data = [[Paragraph(f"<b>{h}</b>", ss["Cell"]) for h in header]]
     for r in rows:
         data.append([Paragraph(str(c if c not in (None, "") else "—"), ss["Cell"]) for c in r])
-    t = Table(data, colWidths=col_widths, repeatRows=1)
+    t = Table(data, colWidths=col_widths, repeatRows=1, splitInRow=1)
     style = [
         ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
         ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
@@ -431,7 +431,7 @@ def render_contract_pdf(contract_id: int, include_qr: bool = False) -> bytes:
          Paragraph("_____________________", ss["Center"])],
         [Paragraph(concedent or "", ss["Small"]),
          Paragraph(titular, ss["Small"])],
-    ], colWidths=[85 * mm, 85 * mm])
+    ], colWidths=[85 * mm, 85 * mm], splitInRow=1)
     sig.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 1), (-1, 1), 20),
@@ -515,7 +515,7 @@ def render_receipt_pdf(plata_id: int, include_qr: bool = False) -> bytes:
          Paragraph("<b>Plătitor</b>", ss["Center"])],
         [Paragraph("_____________________", ss["Center"]),
          Paragraph("_____________________", ss["Center"])],
-    ], colWidths=[85 * mm, 85 * mm])
+    ], colWidths=[85 * mm, 85 * mm], splitInRow=1)
     sig.setStyle(TableStyle([("TOPPADDING", (0, 1), (-1, 1), 20)]))
     elems.append(sig)
 
@@ -596,7 +596,7 @@ def render_burial_certificate_pdf(inhumat_id: int, include_qr: bool = False) -> 
          Paragraph("<b>Ștampilă</b>", ss["Center"])],
         [Paragraph("_____________________", ss["Center"]),
          Paragraph("L.S.", ss["Center"])],
-    ], colWidths=[85 * mm, 85 * mm])
+    ], colWidths=[85 * mm, 85 * mm], splitInRow=1)
     sig.setStyle(TableStyle([("TOPPADDING", (0, 1), (-1, 1), 25)]))
     elems.append(sig)
 
