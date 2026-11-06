@@ -277,12 +277,7 @@ class AdvancedEditor:
             self._create_guide_item({"id": gid, "kind": kind, "points": points, "color": GUIDE_COLOR})
 
     def update_guide(self, guide_id: int, points):
-        conn = db.get_connection()
-        try:
-            conn.execute("UPDATE guides SET points = ? WHERE id = ?",
-                         (json.dumps(points), guide_id))
-        finally:
-            conn.close()
+        db.update_guide(guide_id, points)
 
     def delete_guide(self, guide_id: int, item=None):
         db.delete_guide(guide_id)

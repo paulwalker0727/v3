@@ -179,6 +179,11 @@ def system_operation():
     return granted("*")
 
 
+def require_right(right: str, what: str) -> bool:
+    """Verificare publică de drept pentru module care scriu direct în SQL (import locuri etc.)."""
+    return _allowed(right, what)
+
+
 def _allowed(right: str, what: str) -> bool:
     if _access_guard is None:
         return True
@@ -719,6 +724,16 @@ def get_loc_id_by_cod(cod_loc: str) -> Optional[int]:
         conn.close()
 
 
+def _sector_exists(sector_id: str) -> bool:
+    conn = get_connection()
+    try:
+        return conn.execute("SELECT 1 FROM sectoare WHERE id = ?", (sector_id,)).fetchone() is not None
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
 def _plot_exists(cod_loc: str) -> bool:
     conn = get_connection()
     try:
@@ -753,7 +768,7 @@ def save_plot_to_db(cod_loc: str, points: List[tuple], color: str) -> Optional[i
 
 def save_loc_metadata(cod_loc: str, metadata: Dict[str, Any]) -> bool:
     """Actualizează metadatele unui loc (creează rândul dacă lipsește)."""
-    if not _allowed("edit", "modificarea metadatelor locului"):
+    if not _allowed("edit" if _plot_exists(cod_loc) else "add", "modificarea metadatelor locului"):
         return False
     conn = get_connection()
     try:
@@ -1285,7 +1300,7 @@ def delete_inhumat(inhumat_id: int) -> bool:
 # SECTOARE
 # =============================================================================
 def save_sector_to_db(sector_id: str, points: List[tuple], color: str) -> bool:
-    if not _allowed("edit", "salvarea sectorului"):
+    if not _allowed("edit" if _sector_exists(sector_id) else "add", "salvarea sectorului"):
         return False
     conn = get_connection()
     try:
@@ -1573,6 +1588,8 @@ def delete_guide(guide_id: int) -> bool:
 
 
 def clear_guides() -> None:
+    if not _allowed("delete", "ștergerea ghidajelor"):
+        return
     conn = get_connection()
     try:
         conn.execute("DELETE FROM guides")
@@ -1664,8 +1681,21 @@ def delete_row(row_id: int) -> bool:
         conn.close()
 
 
+def update_guide(guide_id: int, points: List[tuple]) -> bool:
+    if not _allowed("edit", "modificarea ghidajului"):
+        return False
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE guides SET points = ? WHERE id = ?", (json.dumps(points), guide_id))
+        return True
+    finally:
+        conn.close()
+
+
 def shift_rows_order(sector_label: str, from_index: int, delta: int = 1) -> None:
     """Împinge order_index cu `delta` pentru rândurile >= from_index (insert între rânduri)."""
+    if not _allowed("add", "inserarea unui rând între rânduri"):
+        return
     conn = get_connection()
     try:
         conn.execute(
@@ -2027,6 +2057,8 @@ def get_cerere_concesionare(cerere_id: int) -> Optional[Dict[str, Any]]:
 def set_cerere_status(cerere_id: int, status: str, review_note: str = "",
                       concesionar_id: Optional[int] = None) -> bool:
     """Actualizează statusul unei cereri ('validat' / 'respins') + notă + legătură concesionar."""
+    if not _allowed("approve", "schimbarea statusului cererii"):
+        return False
     conn = get_connection()
     try:
         cur = conn.execute(

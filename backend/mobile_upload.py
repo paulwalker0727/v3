@@ -345,6 +345,9 @@ def upload(request: Request, token: str, file: UploadFile = File(...), doc_type:
         cimitir_requests.audit("mobile", f"mobile:{row['created_by']}", "mobile.reject", f"{etype}:{eid}",
                                json.dumps({"tid": row["tid"], "reason": "entity_mismatch", "asked": f"{entity_type}:{entity_id}"[:60]}))
         raise HTTPException(status_code=403, detail={"error": "entity_mismatch", "message": "Acest link este valabil doar pentru entitatea pentru care a fost generat."})
+    creator = cimitir_auth._row("username=?", str(row.get("created_by") or ""))
+    if creator and "add" not in cimitir_auth.effective_rights(creator["role"], creator.get("rights")):
+        raise HTTPException(status_code=403, detail={"error": "rights_revoked", "message": "Autorul linkului nu mai are dreptul de adăugare."})
     data = file.file.read(attachments.MAX_BYTES + 1)
     try:
         name, _mime = attachments.validate_file(file.filename or "", data)

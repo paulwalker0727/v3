@@ -162,6 +162,9 @@ def import_locuri(path: str) -> Tuple[int, int, List[str]]:
                 errors.append(f"Linia {i}: lipsește cod_loc")
                 continue
             exists = conn.execute("SELECT 1 FROM locuri_de_veci WHERE cod_loc = ?", (cod,)).fetchone()
+            if not db.require_right("edit" if exists else "add", f"importul locului {cod}"):
+                errors.append(f"Linia {i}: drepturi insuficiente pentru {cod} ({db.last_refusal()})")
+                continue
             if not exists:
                 conn.execute("INSERT INTO locuri_de_veci (cod_loc, points) VALUES (?, '[]')", (cod,))
                 created += 1

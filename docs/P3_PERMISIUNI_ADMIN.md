@@ -25,6 +25,9 @@ Fiecare rută cere exact dreptul ei (înainte: toate cereau `edit`): adăugare (
 ## Avize, fotografii, hartă (MAIN)
 Protejate acum în funcțiile DB: avize (`add_aviz`=add, `update_aviz`=edit, `delete_aviz`=delete), fotografii (`save_photo`=add, `set_cover_photo`=edit, `delete_photo`=delete), geometrie loc (`save_plot_to_db`: loc nou=add, existent=edit), metadate/extra loc, sectoare, ghidaje, rânduri (add/edit/delete). Fluxurile derivate rămân funcționale prin `granted(...)`: metadatele unui loc **nou creat** (dialog atribuire cod, generare locuri), suprafața calculată din geometria salvată, arhivarea documentelor la aprobarea unei cereri (`approve`). Sincronizarea inițiată de sistem (documente de cerere din Cloud) folosește `system_operation()`.
 
+## Lacune găsite de auditul de testare și remediate
+`reports_export.import_locuri` (INSERT/UPDATE direct, acum `add`/`edit` pe rând + buton gate-uit) · `clear_guides` (`delete`) · `update_guide` mutat în DB (`edit`) · `shift_rows_order` (`add`, nu mai renumerotează dacă inserarea e refuzată) · `save_loc_metadata` pe loc inexistent (`add`) · `save_sector_to_db` sector nou (`add`) · `set_cerere_status` (`approve`) · ruta web `loc_edit` nu mai creează locuri (404) · tokenul „continuă pe telefon” nu mai funcționează dacă autorul i-a pierdut dreptul `add`. Teste: `test_p3_bypass_regresii.py`, `test_p3_portal_bypass_regresii.py`.
+
 ## Sesiune deschisă
 Garda DB re-verifică drepturile la fiecare operațiune: un buton rămas activ nu poate executa o operațiune interzisă (mesaj „Drepturi insuficiente”). Butoanele gate-uite se re-sincronizează automat la ~5 s (`refresh_gates`, revocare și acordare, cont dezactivat = tot retras), fără a reactiva controale dezactivate din alte motive. Dacă garda nu poate fi instalată/verificată la autentificare, sesiunea este refuzată cu mesaj de eroare și garda rămâne „refuză tot”.
 

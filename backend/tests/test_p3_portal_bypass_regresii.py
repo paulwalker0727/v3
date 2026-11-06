@@ -1,5 +1,4 @@
-"""T1 probe (testing agent): attempts to bypass add/edit/delete rights on the web portal. Synthetic data in tmp folder.
-Tests named *_gap document a REAL gap: they PASS when the gap is present (assert current behaviour) -> reported to main agent."""
+"""Regresii P3 (găsite de auditul de testare): încercări de ocolire a drepturilor add/edit/delete în portalul web. Date sintetice în folder temporar."""
 import pytest
 
 from test_etapa1_audit import _load_server  # noqa: F401
@@ -30,14 +29,13 @@ def web(tmp_path):
 
 
 # Portal: edit-only account creates a NEW plot via /ui/loc/{new}/edit (save_loc_metadata INSERTs a missing loc)
-def test_edit_only_account_can_create_new_loc_via_edit_route_gap(web):
+def test_cont_doar_edit_nu_poate_crea_loc_nou_prin_ruta_de_editare(web):
     c, _ = web.client_for("operator", ["cfg", "edit"])
     assert web.db.load_loc_by_cod("NOU-99") is None
     r = c.post("/admin/ui/loc/NOU-99/edit", data={"sector": "Z"}, follow_redirects=False)
     print("status", r.status_code)
     created = web.db.load_loc_by_cod("NOU-99")
-    print("loc created by edit-only user:", bool(created))
-    assert created is not None  # GAP: creating a loc should require `add`
+    assert r.status_code == 404 and created is None
 
 
 # Portal: add-only account adds inhumat on a NON-existent loc
@@ -82,7 +80,7 @@ def test_revocation_applies_on_next_request(web):
 
 
 # Mobile upload token issued under `add` remains usable after the issuer's `add` right is revoked
-def test_mobile_token_survives_revocation_gap(web):
+def test_tokenul_mobil_nu_supravietuieste_revocarii_dreptului_add(web):
     c, uid = web.client_for("operator", ["cfg", "add"])
     r = c.post("/admin/mobile/token", data={"etype": "inhumat", "eid": "1"}, follow_redirects=False)
     print("token issue status", r.status_code, r.text[:200])
@@ -94,4 +92,4 @@ def test_mobile_token_survives_revocation_gap(web):
     png = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f"
            b"\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82")
     up = TestClient(c.app).post(path + "/upload", files={"file": ("a.png", png, "image/png")})
-    print("upload after revoke:", up.status_code, up.text[:200])
+    assert up.status_code == 403, up.text[:200]

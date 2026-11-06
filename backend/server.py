@@ -1058,6 +1058,8 @@ async def loc_edit(request: Request, cod_loc: str):
     _require_right(request, "edit")
     form = dict(await request.form())
     form.pop("extra_data", None)
+    if not cim.load_loc_by_cod(cod_loc):
+        raise HTTPException(status_code=404, detail="Locul nu există (crearea de locuri cere dreptul add și se face în MAIN)")
     current = cim.load_loc_by_cod(cod_loc) or {}
     bad = [f for f in LOC_SELECT_FIELDS if f in form and not is_allowed_value(f, form[f], current.get(f))]
     if bad:

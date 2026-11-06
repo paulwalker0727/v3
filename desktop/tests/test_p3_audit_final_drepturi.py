@@ -103,7 +103,7 @@ OPS = {
     "row_delete": lambda e: db.delete_row(999),
     "delete_plot": lambda e: db.delete_plot("A-1"),
 }
-NEEDS = {k: "add" if k in ("add_aviz", "save_photo", "new_plot", "guide_add", "row_add") else
+NEEDS = {k: "add" if k in ("add_aviz", "save_photo", "new_plot", "guide_add", "row_add", "sector_save") else
          "delete" if "delete" in k else "edit" for k in OPS}
 
 
