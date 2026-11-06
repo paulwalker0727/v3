@@ -396,6 +396,8 @@ class ScanDialog(QDialog):
             "QPushButton:hover { background:#0284c7; }"
         )
         self.btn_ai_settings.clicked.connect(self._open_ai_settings)
+        import access_session
+        access_session.gate(self.btn_ai_settings, "edit")
         header.addWidget(self.btn_ai_settings)
         root.addLayout(header)
         self._refresh_ai_badge()

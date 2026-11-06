@@ -1775,6 +1775,9 @@ def _would_remove_last_admin(uid: int, new_role=None, new_active=None) -> bool:
 async def user_create(request: Request):
     _require_right(request, "manage_users")
     form = await request.form()
+    uname = str(form.get("username", "")).strip()
+    if uname and (not cim_auth._CREATE_USERNAME_RE.match(uname) or uname.lower() in cim_auth.RESERVED_USERNAMES):
+        raise HTTPException(status_code=400, detail="Nume de utilizator invalid sau rezervat (permis: litere, cifre, . _ - ; „main” este rezervat).")
     cim_auth.create_user(form.get("username", ""), form.get("password", ""), form.get("role", "operator"),
                          cemetery_id=cim.get_setting("cemetery_id") or "")
     return _back("/utilizatori")

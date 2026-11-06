@@ -693,6 +693,8 @@ class AIScanareWindow(QDialog):
             "QPushButton:hover { background:#0284c7; }"
         )
         self.btn_ai_settings.clicked.connect(self._open_ai_settings)
+        import access_session
+        access_session.gate(self.btn_ai_settings, "edit")
 
         self.btn_stats = QPushButton("📊  Statistici")
         self.btn_stats.setObjectName("btn-scan-stats")

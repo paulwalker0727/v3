@@ -1,4 +1,4 @@
-"""T4 (iteration_4): probes for remaining rights gaps in MAIN (synthetic SQLite in tmp_path; no network)."""
+"""Regresii P3 (auditul de testare, runda 4): lacune de drepturi în MAIN (SQLite sintetic în tmp_path; fără rețea)."""
 import json
 
 import pytest
@@ -45,21 +45,30 @@ def test_rapoarte_btn_qr_settings_gated(env):
     print("btn_qr_settings enabled for view-only:", d.btn_qr_settings.isEnabled())
 
 
-# NEW GAP probe: operator without manage_config (edit/add) changes global AI settings (Gemini key) via toolbar / ScanDialog
-def test_ai_settings_view_only(env, tmp_path, monkeypatch):
+# Setările AI (cheia Gemini) cer dreptul `edit` (operatorii existenți își păstrează accesul; conturile doar-view/doar-add nu mai pot schimba cheia).
+# Mutarea pe `manage_config` este o decizie de politică (documentată în docs/P3_PERMISIUNI_ADMIN.md).
+def _try_save_ai(env, tmp_path, monkeypatch, rights):
     from ai_scanare import config as ai_config
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)
     monkeypatch.setattr(ai_config, "CONFIG_FILE", tmp_path / "ai_config.json")
     ai_config.save_config({"api_key": "ORIG-KEY", "mode": ai_config.MODE_AI, "model": "m1", "provider": "google"})
-    env.login(["cfg", "add", "edit"])
-    assert not access_session.can("manage_config")
+    env.login(rights)
     from ai_scanare.ai_settings_dialog import AISettingsDialog
     d = AISettingsDialog(None)
-    d.key_edit.setText("ATTACKER-KEY")
+    d.key_edit.setText("NEW-KEY")
     d.mode_combo.setCurrentIndex(d.mode_combo.findData(ai_config.MODE_AI))
-    d.model_combo.setCurrentIndex(max(0, d.model_combo.findData("m1")))
-    if d.model_combo.currentData() == ai_config.MODEL_AUTO:
+    if d.model_combo.findData("m1") < 0:
         d.model_combo.addItem("m1", "m1")
-        d.model_combo.setCurrentIndex(d.model_combo.findData("m1"))
+    d.model_combo.setCurrentIndex(d.model_combo.findData("m1"))
     d._save()
-    print("effective AI key after save:", ai_config.get_api_key())
-    assert ai_config.get_api_key() == "ORIG-KEY", "operator without manage_config changed the Gemini API key"
+    return ai_config.get_api_key()
+
+
+@pytest.mark.parametrize("rights", [["cfg"], ["cfg", "add"], ["cfg", "delete"]])
+def test_setari_ai_refuzate_fara_edit(env, tmp_path, monkeypatch, rights):
+    assert _try_save_ai(env, tmp_path, monkeypatch, rights) == "ORIG-KEY"
+
+
+def test_setari_ai_permise_cu_edit(env, tmp_path, monkeypatch):
+    assert _try_save_ai(env, tmp_path, monkeypatch, ["cfg", "edit"]) == "NEW-KEY"
