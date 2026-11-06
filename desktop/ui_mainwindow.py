@@ -327,6 +327,11 @@ class CemeteryUI(QMainWindow):
         act_contracte.triggered.connect(self.open_contracte_window)
         toolbar.addAction(act_contracte)
 
+        self.act_loc_links = QAction("Legături loc", self)
+        self.act_loc_links.setToolTip("Loc selectat pe hartă: concesionari asociați, contracte și istoric, fișa locului (după ID-ul real al locului)")
+        self.act_loc_links.triggered.connect(self.open_selected_loc_links)
+        toolbar.addAction(self.act_loc_links)
+
         act_plati = QAction(QIcon("icons/plati.png"), "Plăți", self)
         act_plati.triggered.connect(self.open_plati_window)
         toolbar.addAction(act_plati)
@@ -948,6 +953,22 @@ class CemeteryUI(QMainWindow):
                     self.signals.data_changed.disconnect(dlg.on_data_changed)
             except Exception:
                 pass
+
+    def open_selected_loc_links(self):
+        cod = self.selected_cod_loc
+        if not cod:
+            show_message(self, "Selectare", "Selectează mai întâi un loc de veci pe hartă.", level="warning")
+            return
+        loc = None
+        try:
+            loc = self.actions.load_loc_by_cod(cod)
+        except Exception:
+            loc = None
+        if not loc:
+            show_message(self, "Loc negăsit", f"Locul „{cod}” nu există în registrul curent (poligon fără loc salvat?).", level="warning")
+            return
+        from entity_links_ui import LinkedRecordsDialog
+        LinkedRecordsDialog(self, self.actions, "loc", cod, cod).exec()
 
     def open_contracte_window(self):
         try:
