@@ -1236,6 +1236,11 @@ class CemeteryUI(QMainWindow):
         if not cod_loc:
             return
 
+        blockers = self.actions.delete_plot_blockers(cod_loc)
+        if blockers:
+            QMessageBox.warning(self, "Loc cu istoric", blockers)
+            return
+
         reply = QMessageBox.question(
             self, "Confirmare ștergere",
             f"Ești sigur că vrei să ștergi locul <b>{cod_loc}</b>?",

@@ -143,6 +143,11 @@ def main() -> int:
             user = _run_login(app)
             if not user:
                 return 0
+            try:
+                import database as _dbm
+                _dbm.set_audit_actor(user.get("username", ""))
+            except Exception:
+                pass
             if auth.password_change_required(user["id"]):
                 QMessageBox.warning(None, "Cimitir — Parolă implicită",
                                     "Contul folosește încă o parolă implicită. Schimbă parola la autentificare.")

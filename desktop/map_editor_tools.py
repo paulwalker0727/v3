@@ -331,6 +331,11 @@ class EditorTools:
         if not target_cod:
             return False
 
+        blockers = self.w.actions.delete_plot_blockers(target_cod)
+        if blockers:
+            QMessageBox.warning(self.w, "Loc cu istoric", blockers)
+            return True
+
         msg = QMessageBox(self.w)
         msg.setWindowTitle("Confirmare ștergere loc")
         msg.setText(f"Ești sigur că vrei să ștergi locul <b>{target_cod}</b>?")
@@ -389,6 +394,10 @@ class EditorTools:
     # ȘTERGERE DIRECTĂ DUPĂ COD (folosită de EditorEvents)
     # ------------------------------------------------------------------
     def delete_plot_by_cod(self, cod_loc):
+        blockers = self.w.actions.delete_plot_blockers(cod_loc)
+        if blockers:
+            QMessageBox.warning(self.w, "Loc cu istoric", blockers)
+            return
         scene = self.w.map_view._scene
         for item in scene.items():
             data = item.data(0)

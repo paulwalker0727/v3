@@ -676,7 +676,8 @@ class ContractsWindow(QDialog):
             if ok:
                 QMessageBox.information(self, "OK", "Contract șters.")
             else:
-                QMessageBox.warning(self, "Eroare", "Ștergere eșuată.")
+                import database as _db
+                QMessageBox.warning(self, "Eroare", "Ștergere eșuată. " + _db.last_refusal())
         except Exception as e:
             QMessageBox.critical(self, "Eroare", f"Eroare la ștergere: {e}")
         self.reload()

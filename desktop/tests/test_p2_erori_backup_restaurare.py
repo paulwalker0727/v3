@@ -143,3 +143,11 @@ def test_backup_vechi_cu_schema_veche_se_restaureaza_apoi_se_migreaza_fara_pierd
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     conn.close()
 
+
+def test_dupa_restaurare_plata_retrimisa_nu_se_dubleaza(world):
+    target = bk.backup(world["data"], world["tmp"] / "backups")
+    restored = world["tmp"] / "restaurat"
+    bk.restore(target, restored)
+    db.set_active_db_path(str(restored / "cimitir.db"))
+    pid = db.add_plata("A-1", 10, "2026-01-02", chitanta_nr="R-1")
+    assert [p["id"] for p in db.list_plati("A-1")] == [pid] and db.total_plati("A-1") == pytest.approx(10)
