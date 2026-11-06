@@ -26,7 +26,8 @@ except Exception:
 
 
 class AddContractDialog(QDialog):
-    def __init__(self, parent: QWidget, actions=None, existing: Optional[Dict] = None, selected_cod_loc: Optional[str] = None):
+    def __init__(self, parent: QWidget, actions=None, existing: Optional[Dict] = None, selected_cod_loc: Optional[str] = None,
+                 selected_concesionar_id: Optional[int] = None):
         super().__init__(parent)
         self.setWindowTitle("Contract de concesiune")
         self.setMinimumSize(640, 560)
@@ -50,6 +51,10 @@ class AddContractDialog(QDialog):
         if selected_cod_loc:
             self.cmb_cod_loc.setCurrentText(selected_cod_loc)
         self.cmb_cod_loc.currentTextChanged.connect(self._on_cod_loc_changed)
+        self.btn_open_loc = QPushButton("Date loc")
+        loc_layout = QHBoxLayout()
+        loc_layout.addWidget(self.cmb_cod_loc)
+        loc_layout.addWidget(self.btn_open_loc)
 
         # concesionar
         self.cmb_concesionar = QComboBox()
@@ -63,6 +68,8 @@ class AddContractDialog(QDialog):
         conces_layout = QHBoxLayout()
         conces_layout.addWidget(self.cmb_concesionar)
         conces_layout.addWidget(self.btn_add_concesionar)
+        self.btn_open_concesionar = QPushButton("Date concesionar")
+        conces_layout.addWidget(self.btn_open_concesionar)
 
         # date concesionar (auto-fill)
         self.txt_nume = QLineEdit()
@@ -88,7 +95,7 @@ class AddContractDialog(QDialog):
         form.addRow("Data contract:", self.date_contract)
         form.addRow("Data început:", self.date_inceput)
         form.addRow("Data sfârșit:", self.date_sfarsit)
-        form.addRow("Cod loc:", self.cmb_cod_loc)
+        form.addRow("Cod loc:", loc_layout)
         form.addRow("Concesionar:", conces_layout)
 
         form.addRow("Nume:", self.txt_nume)
@@ -124,10 +131,16 @@ class AddContractDialog(QDialog):
         self.btn_save.clicked.connect(self._on_save)
         self.btn_cancel.clicked.connect(self.reject)
         self.btn_add_concesionar.clicked.connect(self._open_add_concesionar)
+        self.btn_open_concesionar.clicked.connect(self._open_concesionar_data)
+        self.btn_open_loc.clicked.connect(self._open_loc_data)
 
         if self._existing:
             self._populate(self._existing)
         else:
+            if selected_cod_loc:
+                self._on_cod_loc_changed(selected_cod_loc)
+            if selected_concesionar_id:
+                self._refresh_and_select_concesionar(selected_concesionar_id)
             today = QDate.currentDate()
             self.date_contract.setDate(today)
             self.date_inceput.setDate(today)
@@ -381,6 +394,16 @@ class AddContractDialog(QDialog):
             QMessageBox.warning(self, "Eroare", "Selectați un concesionar.")
             return
 
+        cod = data.get("cod_loc")
+        if cod and not self._loc_exists(cod):
+            reply = QMessageBox.question(
+                self, "Loc inexistent",
+                f"Codul „{cod}” nu există în Locuri de veci (nu se creează locuri noi din contract).\n"
+                "Salvezi contractul fără legătură cu un loc existent?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+
         try:
             if self._contract_id:
                 if self.actions and hasattr(self.actions, "save_contract"):
@@ -409,6 +432,37 @@ class AddContractDialog(QDialog):
     def get_saved_id(self) -> Optional[int]:
         return self._saved_id
 
+    def _loc_exists(self, cod: str) -> bool:
+        try:
+            fn = getattr(self.actions, "load_loc_by_cod", None) if self.actions else None
+            fn = fn or (load_loc_by_cod if DB_AVAILABLE else None)
+            return bool(fn(cod)) if callable(fn) else True
+        except Exception:
+            return True
+
+    def _open_concesionar_data(self):
+        cid = self.cmb_concesionar.currentData() or self._conces_map.get(self.cmb_concesionar.currentText())
+        if not cid:
+            QMessageBox.information(self, "Info", "Selectați mai întâi un concesionar.")
+            return
+        from concesionari_window import AddConcesionarDialog
+        data = self._conces_data.get(cid)
+        if data is None:
+            return
+        dlg = AddConcesionarDialog(self, existing=data, actions=self.actions)
+        if dlg.exec() == QDialog.Accepted:
+            self._refresh_and_select_concesionar(cid)
+            self._on_concesionar_changed(self.cmb_concesionar.currentText())
+
+    def _open_loc_data(self):
+        cod = self.cmb_cod_loc.currentText().strip()
+        if not cod:
+            QMessageBox.information(self, "Info", "Selectați mai întâi un loc de veci.")
+            return
+        from locuri_window import EditLocDialog
+        if EditLocDialog(self, cod).exec() == QDialog.Accepted:
+            self._on_cod_loc_changed(cod)
+
     # ---------------------------------------------------------
     # helper: open add concesionar dialog (lazy import)
     # ---------------------------------------------------------
@@ -422,35 +476,32 @@ class AddContractDialog(QDialog):
             QMessageBox.warning(self, "Eroare", "Modulul de adăugare concesionar nu este disponibil.")
             return
 
-        dlg = AddConcesionarDialog(self, existing=None)
+        dlg = AddConcesionarDialog(self, existing=None, actions=self.actions)
         if dlg.exec() == QDialog.Accepted:
-            data = dlg.get_data()
-            saved_id = None
-            try:
-                if self.actions and hasattr(self.actions, "save_concesionar"):
-                    saved_id = self.actions.save_concesionar(data)
-                elif DB_AVAILABLE and save_concesionar:
-                    saved_id = save_concesionar(data)
-            except Exception:
-                saved_id = None
+            # dialogul a salvat deja (o singură dată); reutilizăm ID-ul, nu recreăm persoana
+            self._refresh_and_select_concesionar(dlg.get_saved_id())
 
-            # refresh concesionar combo
-            self._setup_concesionar_combo()
-            if saved_id:
-                # selectăm noul concesionar
-                for i in range(self.cmb_concesionar.count()):
-                    if self.cmb_concesionar.itemData(i) == saved_id:
-                        self.cmb_concesionar.setCurrentIndex(i)
-                        break
+    def _refresh_and_select_concesionar(self, concesionar_id: Optional[int]):
+        self._setup_concesionar_combo()
+        if not concesionar_id:
+            return
+        for i in range(self.cmb_concesionar.count()):
+            if self.cmb_concesionar.itemData(i) == concesionar_id:
+                self.cmb_concesionar.setCurrentIndex(i)
+                break
 
 
 # ---------------------------------------------------------
 # CONTRACTS WINDOW
 # ---------------------------------------------------------
 class ContractsWindow(QDialog):
-    def __init__(self, parent: QWidget = None, actions=None, selected_cod_loc: Optional[str] = None):
+    def __init__(self, parent: QWidget = None, actions=None, selected_cod_loc: Optional[str] = None,
+                 selected_concesionar_id: Optional[int] = None, filter_cod_loc: Optional[str] = None,
+                 filter_concesionar_id: Optional[int] = None):
         super().__init__(parent)
         self.setWindowTitle("Contracte de concesiune")
+        self.selected_concesionar_id = selected_concesionar_id
+        self._only_concesionar_id = filter_concesionar_id
         self.setMinimumSize(980, 560)
         self.actions = actions
         self.selected_cod_loc = selected_cod_loc
@@ -507,6 +558,12 @@ class ContractsWindow(QDialog):
         self.btn_generate.clicked.connect(self.generate_contract)
         self.btn_refresh.clicked.connect(self.reload)
 
+        if filter_cod_loc:
+            self.filter_cod_loc.setText(filter_cod_loc)
+            self.setWindowTitle(f"Contracte de concesiune — istoric loc {filter_cod_loc}")
+        if filter_concesionar_id:
+            self.setWindowTitle(f"Contracte de concesiune — istoric concesionar #{filter_concesionar_id}")
+
         self.filter_numar.textChanged.connect(self.reload)
         self.filter_cod_loc.textChanged.connect(self.reload)
 
@@ -536,6 +593,8 @@ class ContractsWindow(QDialog):
                 continue
             if cod_filter and cod_filter not in cod_loc.lower():
                 continue
+            if self._only_concesionar_id and r.get("concesionar_id") != self._only_concesionar_id:
+                continue
 
             row_idx = self.table.rowCount()
             self.table.insertRow(row_idx)
@@ -547,6 +606,10 @@ class ContractsWindow(QDialog):
             self.table.setItem(row_idx, 5, QTableWidgetItem(cod_loc))
 
         self.table.resizeColumnsToContents()
+
+    def on_data_changed(self, entity: str, key: str):
+        if entity in ("contract", "concesionar", "loc"):
+            self.reload()
 
     # ---------------------------------------------------------
     def _selected_id(self) -> Optional[int]:
@@ -579,7 +642,8 @@ class ContractsWindow(QDialog):
 
     # ---------------------------------------------------------
     def add_contract(self):
-        dlg = AddContractDialog(self, self.actions, existing=None, selected_cod_loc=self.selected_cod_loc)
+        dlg = AddContractDialog(self, self.actions, existing=None, selected_cod_loc=self.selected_cod_loc,
+                                selected_concesionar_id=self.selected_concesionar_id)
         if dlg.exec() == QDialog.Accepted:
             self.reload()
 

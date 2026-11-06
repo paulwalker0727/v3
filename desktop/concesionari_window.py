@@ -4,7 +4,7 @@ from typing import Optional, Dict, List, Any
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton,
     QLineEdit, QTableWidget, QTableWidgetItem, QMessageBox, QGroupBox,
-    QLabel, QWidget, QSizePolicy, QHeaderView
+    QLabel, QWidget, QSizePolicy, QHeaderView, QInputDialog
 )
 from PySide6.QtCore import Qt
 
@@ -78,6 +78,7 @@ class AddConcesionarDialog(QDialog):
             self.populate(self._existing)
 
         self._saved_id: Optional[int] = None
+        self._saving = False
         self._ai_scan_source: Optional[str] = None
         self._ai_scan_action: str = "attach"
 
@@ -169,14 +170,57 @@ class AddConcesionarDialog(QDialog):
             data["id"] = self._id
         return data
 
+    def _all_rows(self) -> List[Dict[str, Any]]:
+        try:
+            if self.actions and hasattr(self.actions, "load_concesionari"):
+                return self.actions.load_concesionari() or []
+            if db and hasattr(db, "load_concesionari"):
+                return db.load_concesionari() or []
+        except Exception:
+            pass
+        return []
+
+    def _choose_existing(self, candidates: List[Dict[str, Any]]):
+        """Întreabă utilizatorul: id existent (int), "new" (persoană nouă) sau None (renunță)."""
+        new_label = "Persoană nouă (altă persoană, creează înregistrare)"
+        labels = [
+            f"Folosește existent: {c.get('nume') or ''} {c.get('prenume') or ''} "
+            f"(CNP {c.get('cnp') or '-'}, ID {c.get('id')})".replace("  ", " ")
+            for c in candidates
+        ]
+        choice, ok = QInputDialog.getItem(
+            self, "Persoană posibil existentă",
+            "Există deja persoane asemănătoare. Alege una existentă sau creează una nouă:",
+            labels + [new_label], 0, False)
+        if not ok:
+            return None
+        if choice == new_label:
+            return "new"
+        return candidates[labels.index(choice)].get("id")
+
     def _save(self):
+        if self._saving:
+            return
         if not (self.txt_nume.text().strip() or self.txt_prenume.text().strip()):
             QMessageBox.warning(self, "Eroare", "Nume sau Prenume obligatoriu.")
             return
 
         data = self._gather()
 
-        # Prefer actions.save_concesionar if available
+        # Persoană nouă: propunem înregistrări existente (CNP identic / același nume), fără unificare automată.
+        if not self._id:
+            from entity_links import find_concesionar_candidates
+            candidates = find_concesionar_candidates(data, self._all_rows())
+            if candidates:
+                choice = self._choose_existing(candidates)
+                if choice is None:
+                    return
+                if choice != "new":
+                    self._saved_id = int(choice)
+                    self.accept()
+                    return
+
+        self._saving = True
         try:
             if self.actions and hasattr(self.actions, "save_concesionar"):
                 saved_id = self.actions.save_concesionar(data, concesionar_id=data.get("id"))
@@ -185,24 +229,30 @@ class AddConcesionarDialog(QDialog):
             else:
                 saved_id = None
         except Exception as e:
+            self._saving = False
             QMessageBox.warning(self, "Eroare", f"Nu am putut salva concesionarul: {e}")
             return
 
-        if saved_id:
-            self._saved_id = saved_id
-            self._attach_ai_file_if_any(saved_id)
-            QMessageBox.information(self, "OK", "Concesionar salvat.")
-            self.accept()
-        else:
-            self._saved_id = data.get("id")
-            self._attach_ai_file_if_any(self._saved_id)
-            self.accept()
+        if not saved_id:
+            self._saving = False
+            QMessageBox.warning(self, "Eroare", "Concesionarul nu a putut fi salvat.")
+            return
+
+        self._id = saved_id
+        self._saved_id = saved_id
+        self._attach_ai_file_if_any(saved_id)
+        QMessageBox.information(self, "OK", "Concesionar salvat.")
+        self.accept()
+        self._saving = False
 
     def get_saved_id(self) -> Optional[int]:
         return self._saved_id
 
     def get_data(self) -> Dict[str, Any]:
         return self._gather()
+
+    def was_existing_reused(self) -> bool:
+        return bool(self._saved_id) and not self._id
 
 
 class ConcesionariWindow(QDialog):
@@ -211,7 +261,7 @@ class ConcesionariWindow(QDialog):
     Uses `actions` (preferred) or `database` fallback to load/save/delete concesionari.
     """
 
-    def __init__(self, parent=None, actions: Optional[Any] = None):
+    def __init__(self, parent=None, actions: Optional[Any] = None, initial_id: Optional[int] = None):
         super().__init__(parent)
         self.setWindowTitle("Concesionari")
         self.setMinimumSize(1100, 700)
@@ -269,9 +319,16 @@ class ConcesionariWindow(QDialog):
         self.btn_phone.setToolTip("Generează un cod QR temporar: încarci un document/fotografie de pe telefon la concesionarul selectat")
         self.btn_delete = QPushButton("Șterge")
         self.btn_reload = QPushButton("Reîncarcă")
+        self.btn_locuri = QPushButton("Locuri de veci")
+        self.btn_locuri.setToolTip("Locurile asociate concesionarului selectat (prin contracte)")
+        self.btn_contract_nou = QPushButton("Contract nou")
+        self.btn_contracte = QPushButton("Contracte / istoric")
         btn_row.addWidget(self.btn_evid)
         btn_row.addWidget(self.btn_rapoarte)
         btn_row.addStretch()
+        btn_row.addWidget(self.btn_locuri)
+        btn_row.addWidget(self.btn_contract_nou)
+        btn_row.addWidget(self.btn_contracte)
         btn_row.addWidget(self.btn_add)
         btn_row.addWidget(self.btn_edit)
         btn_row.addWidget(self.btn_phone)
@@ -309,6 +366,9 @@ class ConcesionariWindow(QDialog):
         self.btn_reload.clicked.connect(self.reload)
         self.btn_evid.clicked.connect(self.highlight_on_map)
         self.btn_rapoarte.clicked.connect(self.open_reports)
+        self.btn_locuri.clicked.connect(self.open_locuri)
+        self.btn_contract_nou.clicked.connect(self.new_contract)
+        self.btn_contracte.clicked.connect(self.open_contracte)
 
         # Filters
         self.filter_nume.textChanged.connect(self.reload)
@@ -327,6 +387,8 @@ class ConcesionariWindow(QDialog):
 
         # initial load
         self.reload()
+        if initial_id:
+            self.select_concesionar(initial_id)
 
     # -------------------------
     # Data loading / rendering
@@ -345,10 +407,66 @@ class ConcesionariWindow(QDialog):
             pass
         return []
 
+    def _with_loc_info(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Completează cod_loc/sector/parcela/rand din contracte (id real) ca să funcționeze coloana și filtrele topologice."""
+        try:
+            import entity_links as links
+            by_id = links.loc_info_by_concesionar()
+        except Exception:
+            return rows
+        out = []
+        for r in rows:
+            info = by_id.get(r.get("id"))
+            if info:
+                r = {**r, **{k: v for k, v in info.items() if not r.get(k)}}
+            out.append(r)
+        return out
+
+    def select_concesionar(self, concesionar_id: int):
+        for i in range(self.table.rowCount()):
+            it = self.table.item(i, 0)
+            if it and it.text() == str(concesionar_id):
+                self.table.selectRow(i)
+                return True
+        return False
+
+    def on_data_changed(self, entity: str, key: str):
+        if entity in ("concesionar", "contract"):
+            self.reload()
+
+    def _selected_or_warn(self) -> Optional[Dict[str, Any]]:
+        row = self._selected_row_data()
+        if not row or not row.get("id"):
+            QMessageBox.information(self, "Info", "Selectați un concesionar.")
+            return None
+        return row
+
+    def open_locuri(self):
+        row = self._selected_or_warn()
+        if row:
+            from entity_links_ui import LinkedRecordsDialog
+            nume = f"{row.get('nume') or ''} {row.get('prenume') or ''}".strip()
+            LinkedRecordsDialog(self, self.actions, "concesionar", row["id"], nume).exec()
+            self.reload()
+
+    def new_contract(self):
+        row = self._selected_or_warn()
+        if row:
+            from entity_links_ui import open_contract_dialog
+            open_contract_dialog(self, self.actions, concesionar_id=row["id"])
+            self.reload()
+
+    def open_contracte(self):
+        row = self._selected_or_warn()
+        if row:
+            from entity_links_ui import open_contracts_window
+            open_contracts_window(self, self.actions, concesionar_id=row["id"])
+            self.reload()
+
     def reload(self):
         self.table.setRowCount(0)
         rows = self._load_all()
-        self._rows = rows or []
+        self._rows = self._with_loc_info(rows or [])
 
         # apply filters in Python for simplicity
         def match(r: Dict[str, Any]) -> bool:
@@ -448,21 +566,7 @@ class ConcesionariWindow(QDialog):
     def add_dialog(self):
         dlg = AddConcesionarDialog(self, existing=None, actions=self.actions)
         if dlg.exec() == QDialog.Accepted:
-            saved_id = dlg.get_saved_id()
-            # If actions handled saving, reload; otherwise try fallback insert via actions/db
-            if saved_id:
-                self.reload()
-                return
-            # fallback: try to save via actions or db if AddConcesionarDialog didn't call actions
-            data = dlg.get_data()
-            try:
-                if self.actions and hasattr(self.actions, "save_concesionar"):
-                    self.actions.save_concesionar(data)
-                elif db and hasattr(db, "save_concesionar"):
-                    db.save_concesionar(data)
-                self.reload()
-            except Exception as e:
-                QMessageBox.warning(self, "Eroare", f"Nu am putut salva concesionarul: {e}")
+            self.reload()
 
     def edit_dialog(self):
         row = self._selected_row_data()
@@ -471,15 +575,7 @@ class ConcesionariWindow(QDialog):
             return
         dlg = AddConcesionarDialog(self, existing=row, actions=self.actions)
         if dlg.exec() == QDialog.Accepted:
-            data = dlg.get_data()
-            try:
-                if self.actions and hasattr(self.actions, "save_concesionar"):
-                    self.actions.save_concesionar(data, concesionar_id=data.get("id"))
-                elif db and hasattr(db, "save_concesionar"):
-                    db.save_concesionar(data, concesionar_id=data.get("id"))
-                self.reload()
-            except Exception as e:
-                QMessageBox.warning(self, "Eroare", f"Nu am putut salva modificările: {e}")
+            self.reload()
 
     def phone_upload(self):
         """Pasul 6: QR/token temporar pentru concesionarul selectat; documentul de pe telefon ajunge prin FastAPI în Storage."""

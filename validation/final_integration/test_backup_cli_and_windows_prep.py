@@ -118,7 +118,6 @@ def test_backup_runs_while_main_holds_the_database_open_and_writes(tmp_path):
     assert all(cb.verify(Path(r["path"])) == [] for r in cb.list_backups(cb.default_backup_dir(data)))
 
 
-@pytest.mark.xfail(strict=True, reason="NOU: dacă folderul de date din `--data-dir` nu poate fi creat/deschis (ex. disc D: lipsă), cli() ridică excepție ÎNAINTE de run_backup_job: cod 1 în Task Scheduler, dar NICIUN rând în jurnal și nicio avertizare în MAIN (exe cu console=False nu arată traceback-ul).")
 def test_target_failure_before_the_job_still_leaves_a_log_entry(tmp_path):
     notdir = tmp_path / "fisier.txt"
     notdir.write_text("x")
@@ -138,9 +137,15 @@ def test_ps1_task_execution_time_limit_matches_stale_lock_window():
     assert "-StartWhenAvailable" in src and "-MultipleInstances IgnoreNew" in src
 
 
-def test_characterize_ps1_registers_without_principal_so_it_runs_only_when_user_is_logged_on():
+def test_ps1_default_registration_has_no_principal_and_s4u_is_opt_in_with_explicit_datadir():
+    """Implicit: fără Principal (rulează doar cu utilizatorul conectat). S4U (fără sesiune interactivă) doar cu -RunWhetherLoggedOn, cu -DataDir explicit și avertisment."""
     src = PS1.read_text(encoding="utf-8-sig")
-    assert not re.search(r"-Principal|-LogonType|-RunLevel|-User\b", src), "scriptul a primit un Principal (S-8 remediat?)"
+    default_branch = src.split("} else {")[-1]
+    assert "-Principal" not in default_branch and "Register-ScheduledTask" in default_branch
+    s4u_branch = src.split("if ($RunWhetherLoggedOn) {")[-1].split("} else {")[0]
+    assert "-LogonType S4U" in s4u_branch and "-RunLevel Limited" in s4u_branch
+    assert "Pentru -RunWhetherLoggedOn trebuie specificat -DataDir explicit" in src
+    assert "DPAPI" in src, "avertismentul S4U/DPAPI lipsește"
 
 
 def test_characterize_ps1_has_no_failure_notification_channel():
@@ -148,9 +153,9 @@ def test_characterize_ps1_has_no_failure_notification_channel():
     assert not re.search(r"BurntToast|msg\.exe|Send-MailMessage|New-EventLog|Write-EventLog|eventcreate|wevtutil|ToastNotification", src, re.I), "există un canal de notificare"
 
 
-def test_characterize_ps1_does_not_normalize_trailing_backslash_in_datadir():
+def test_ps1_normalizes_trailing_backslash_in_datadir_and_quotes_arguments_for_windows():
     src = PS1.read_text(encoding="utf-8-sig")
-    assert "TrimEnd" not in src
+    assert "TrimEnd([char]92)" in src and "function Quote-WinArg" in src and "GetFullPath" in src
 
 
 def test_launcher_handles_backup_run_before_any_qt_or_gui_import():

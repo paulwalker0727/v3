@@ -226,7 +226,7 @@ class LocuriWindow(QDialog):
     Fereastra principală pentru administrarea locurilor de veci.
     Folosește EditorActions.search_locuri + load_loc_by_cod.
     """
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, initial_cod_loc: Optional[str] = None):
         super().__init__(parent)
         self.setWindowTitle("Locuri de veci")
         self.setMinimumSize(1200, 700)
@@ -313,6 +313,13 @@ class LocuriWindow(QDialog):
         self.btn_delete = QPushButton("Șterge")
         self.btn_dosare = QPushButton("Dosare")
         self.btn_reload = QPushButton("Reîncarcă locuri")
+        self.btn_concesionari = QPushButton("Concesionari")
+        self.btn_concesionari.setToolTip("Concesionarii asociați locului selectat (prin contracte)")
+        self.btn_contract_nou = QPushButton("Contract nou")
+        self.btn_contracte = QPushButton("Contracte / istoric")
+        self.btn_concesionari.clicked.connect(self.open_concesionari)
+        self.btn_contract_nou.clicked.connect(self.new_contract)
+        self.btn_contracte.clicked.connect(self.open_contracte)
 
         self.btn_add.clicked.connect(self.add_record)
         self.btn_edit.clicked.connect(self.edit_record)
@@ -337,6 +344,9 @@ class LocuriWindow(QDialog):
         btns.addWidget(self.btn_edit)
         btns.addWidget(self.btn_delete)
         btns.addWidget(self.btn_dosare)
+        btns.addWidget(self.btn_concesionari)
+        btns.addWidget(self.btn_contract_nou)
+        btns.addWidget(self.btn_contracte)
         btns.addStretch()
         btns.addWidget(self.btn_reload)
         right_layout.addLayout(btns)
@@ -355,6 +365,41 @@ class LocuriWindow(QDialog):
                 pass
 
         self.load_data()
+        if initial_cod_loc:
+            self.select_cod_loc(initial_cod_loc)
+
+    def select_cod_loc(self, cod_loc: str) -> bool:
+        for i in range(self.table.rowCount()):
+            it = self.table.item(i, 1)
+            if it and it.text() == cod_loc:
+                self.table.selectRow(i)
+                self.table.scrollToItem(it)
+                return True
+        return False
+
+    def _cod_or_warn(self) -> Optional[str]:
+        cod = self.selected_cod_loc()
+        if not cod:
+            QMessageBox.warning(self, "Selectare", "Selectează un rând mai întâi.")
+        return cod
+
+    def open_concesionari(self):
+        cod = self._cod_or_warn()
+        if cod:
+            from entity_links_ui import LinkedRecordsDialog
+            LinkedRecordsDialog(self, self.actions, "loc", cod, cod).exec()
+
+    def new_contract(self):
+        cod = self._cod_or_warn()
+        if cod:
+            from entity_links_ui import open_contract_dialog
+            open_contract_dialog(self, self.actions, cod_loc=cod)
+
+    def open_contracte(self):
+        cod = self._cod_or_warn()
+        if cod:
+            from entity_links_ui import open_contracts_window
+            open_contracts_window(self, self.actions, cod_loc=cod)
 
     # FILTRE
     def build_filters(self) -> Dict[str, Any]:

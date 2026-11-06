@@ -38,6 +38,25 @@ _NOT_APPLYING = es._NOT_APPLYING
 _OUTBOX = es._OUTBOX_COLS
 _NOW = es._NOW
 _SHA = re.compile(r"^[0-9a-f]{64}$")
+IDENTITY_DOC_TYPES = ("carte_identitate", "cerere_doc")
+
+
+def _blocked_for_classic_upload(row) -> bool:
+    """Actele de identitate și documentele de tip 'cerere' nu se urcă niciodată prin conducta clasică (decizie la momentul trimiterii,
+    chiar dacă tipul s-a schimbat după punerea în coadă)."""
+    if "doc_type" not in row.keys():
+        return False
+    return str(row["doc_type"] or "").strip().lower() in IDENTITY_DOC_TYPES or str(row["entity_type"] or "").strip().lower() == "cerere"
+
+
+def _audit_outbox_purge(conn, rows, reason: str) -> None:
+    """Urmă de audit pentru operațiunile scoase din coadă (fără date personale: doar op_id/stare/încercări/eroare); nu șterge nimic."""
+    if not rows or not es._table_exists(conn, "audit_log"):
+        return
+    detail = json.dumps([{"op_id": r["op_id"], "state": r["state"], "attempts": r["attempts"], "last_error": r["last_error"],
+                          "media_id": r["entity_uid"]} for r in rows], ensure_ascii=False)
+    conn.execute("INSERT INTO audit_log (ts, actor_type, actor, action, target, detail) VALUES (?,?,?,?,?,?)",
+                 (datetime.now().isoformat(timespec="seconds"), "system", "media_sync", "media_outbox_purge", reason, detail[:4000]))
 
 
 # ------------------------------------------------------------------ capabilități
@@ -106,12 +125,11 @@ def ensure_tracking(force: bool = False) -> bool:
         # și nu trebuie să rămână erori permanente după restaurarea unei copii vechi.
         # Documentele locale rămân neatinse.
         if es._table_exists(conn, "cloud_sync_outbox"):
-            conn.execute(
-                "DELETE FROM cloud_sync_outbox WHERE kind='media' AND action='upload' "
-                "AND entity='documents' AND entity_uid IN ("
-                "  SELECT media_id FROM documents WHERE COALESCE(doc_type,'') IN ('carte_identitate','cerere_doc')"
-                ")"
-            )
+            purge_where = ("kind='media' AND action='upload' AND entity='documents' AND entity_uid IN ("
+                           "  SELECT media_id FROM documents WHERE COALESCE(doc_type,'') IN ('carte_identitate','cerere_doc'))")
+            doomed = conn.execute(f"SELECT op_id, state, attempts, last_error, entity_uid FROM cloud_sync_outbox WHERE {purge_where}").fetchall()
+            _audit_outbox_purge(conn, doomed, "identity_docs_never_uploaded")
+            conn.execute(f"DELETE FROM cloud_sync_outbox WHERE {purge_where}")
     finally:
         conn.close()
     db.set_media_resolver(ensure_local)
@@ -222,6 +240,11 @@ def _upload(op: Dict[str, Any]) -> str:
     try:
         row = conn.execute(f"SELECT * FROM {table} WHERE media_id=?", (media_id,)).fetchone()
         if row is None:
+            cs._delete_op(op["id"])
+            return "dropped"
+        if table == "documents" and _blocked_for_classic_upload(row):
+            _audit_outbox_purge(conn, [{"op_id": op.get("op_id"), "state": op.get("state"), "attempts": op.get("attempts"),
+                                        "last_error": op.get("last_error"), "entity_uid": media_id}], "blocked_doc_type_at_send")
             cs._delete_op(op["id"])
             return "dropped"
         path = row["file_path"]
