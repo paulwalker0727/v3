@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 import cloud_profiles as cp
+import thread_guard
 
 SECRET_LABELS = {"db_password": "parola bazei de date", "supabase_secret_key": "Supabase Secret Key", "sync_key": "cheia de sincronizare"}
 
@@ -249,7 +250,7 @@ class CloudProfilesDialog(QDialog):
         mode = "advanced" if self.chk_adv.isChecked() and p.advanced else "api"
         self.log.appendPlainText(f"Testez ({mode}) …")
         self.btn_test.setEnabled(False)
-        self._thread = _TestThread(p, mode, self)
+        self._thread = thread_guard.track(_TestThread(p, mode, self))
         self._thread.done.connect(self._on_test)
         self._thread.start()
 
