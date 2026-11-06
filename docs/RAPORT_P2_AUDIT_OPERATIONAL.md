@@ -3,13 +3,8 @@
 Bază: `main` @ `d2e4db4` (PR #42–#54 verificate: toate îmbinate în `main`).
 Mediu: Linux, Python 3.11, SQLite. Doar baze **sintetice** (tmp). Nu s-au accesat date reale, PROD, Supabase sau backupuri reale. Nu s-a făcut merge.
 
-## Pull Requesturi propuse (branch-uri împinse, PR-urile se deschid manual, în această ordine)
-1. `fix/p2-migrare-sigura` — migrare tranzacțională, copie pre-migrare, teste scheme istorice sintetice și backup/restaurare la erori (față de `main`).
-2. `fix/p2-integritate-istoric-date` — protecții de integritate, update parțial, scanare AI, jurnal MAIN. **Stivuit peste #1** (deschideți-l după ce #1 e îmbinat sau cu baza #1).
-3. `fix/p2-sync-raspuns-incomplet` — independent (față de `main`).
-4. `fix/p2-pdf-markup-ostil` — independent (față de `main`).
-5. `docs/p2-raport-audit` — acest raport + `scripts/p2_benchmark.py` (stivuit peste #2).
-Branch-ul `audit/p2-integritate-operationala` conține aceleași modificări într-un singur commit (variantă „totul odată”); folosiți fie acela, fie cele 5 branch-uri, nu ambele.
+## Livrare
+Un singur branch cu tot: `audit/p2-final-complet` (bază `main` @ `d2e4db4`). Conține, în ordine: migrare sigură, integritate date, sincronizare, PDF și acest raport. Se deschide un singur PR spre `main`; nu s-a făcut merge.
 
 **Verdict READY TO MERGE: NU (încă).** Motive: (1) diff-ul PR #1 pe `shared/cimitir_database.py` include reindentarea `init_db` (se citește cu `git diff -w`); (2) cele 5 teste backend care pică în rularea paralelă sunt preexistente pe `main`, dar rămân de investigat (vezi §8); (3) trei decizii de produs deschise (§Ambiguități); (4) nimic nu a fost validat pe Windows.
 
