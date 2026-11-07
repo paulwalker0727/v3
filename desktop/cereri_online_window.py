@@ -419,9 +419,10 @@ class CereriOnlineWindow(QDialog):
             if not p or not os.path.exists(p):
                 continue
             try:
-                db.add_document("concesionar", cid, "buletin", p, caption=d.get("caption") or "", copy=True)
-                if contract_id:
-                    db.add_document("contract", contract_id, "contract_scan", p, caption=d.get("caption") or "", copy=True)
+                with db.granted("add"):        # aprobarea cererii (dreptul `approve`) include arhivarea documentelor ei
+                    db.add_document("concesionar", cid, "buletin", p, caption=d.get("caption") or "", copy=True)
+                    if contract_id:
+                        db.add_document("contract", contract_id, "contract_scan", p, caption=d.get("caption") or "", copy=True)
                 copied += 1
             except Exception:
                 pass

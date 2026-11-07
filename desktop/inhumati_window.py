@@ -105,6 +105,13 @@ class InhumatiWindow(QDialog):
         self.btn_add.clicked.connect(self.add_record_dialog)
         self.btn_edit.clicked.connect(self.edit_record_dialog)
         self.btn_delete.clicked.connect(self.delete_record)
+        try:
+            import access_session
+            access_session.gate(self.btn_add, "add")
+            access_session.gate(self.btn_edit, "edit")
+            access_session.gate(self.btn_delete, "delete")
+        except Exception:
+            pass
         self.btn_refresh.clicked.connect(self.reload_data)
 
         btns = QHBoxLayout()

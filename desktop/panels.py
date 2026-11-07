@@ -359,10 +359,12 @@ class AddAvizDialog(QDialog):
 
 class AddPlataDialog(QDialog):
     """Dialog pentru adăugarea unei plăți (chitanță)."""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, cod_loc: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Adaugă plată")
-        self.setMinimumSize(420, 220)
+        self.setMinimumSize(420, 260)
+        from plata_contracts import ContractPicker
+        self.picker = ContractPicker(cod_loc)
         layout = QVBoxLayout()
         form = QFormLayout()
 
@@ -391,6 +393,7 @@ class AddPlataDialog(QDialog):
         chit_row.addWidget(self.lbl_chit_file, 1)
         chit_row.addWidget(self.btn_chit_file)
 
+        form.addRow("Contract:", self.picker)
         form.addRow("Sumă (RON):", self.txt_suma)
         form.addRow("Data plății:", self.date_plata)
         form.addRow("Tip plată:", self.cmb_tip)
@@ -423,6 +426,10 @@ class AddPlataDialog(QDialog):
         self.lbl_chit_file.setStyleSheet("color:#22c55e; font-size:11px;")
 
     def _on_ok(self):
+        valid_contract, contract_id = self.picker.contract_id()
+        if not valid_contract:
+            show_message(self, "Eroare", "Locul are contracte: alegeți contractul sau „Plată fără contract”.", level="warning")
+            return
         raw = self.txt_suma.text().strip().replace(",", ".")
         try:
             suma = float(raw)
@@ -439,6 +446,7 @@ class AddPlataDialog(QDialog):
             "chitanta_nr": self.txt_chitanta.text().strip(),
             "observatii": self.txt_obs.text().strip(),
             "chitanta_file": self._chitanta_path,
+            "contract_id": contract_id,
         }
         self.accept()
 
@@ -823,6 +831,13 @@ class RightPanel(QWidget):
         self.btn_delete_photo = QPushButton("Șterge fotografie")
         top.addWidget(self.btn_upload)
         top.addWidget(self.btn_set_cover)
+        try:
+            import access_session
+            access_session.gate(self.btn_upload, "add")
+            access_session.gate(self.btn_set_cover, "edit")
+            access_session.gate(self.btn_delete_photo, "delete")
+        except Exception:
+            pass
         top.addWidget(self.btn_delete_photo)
         top.addStretch()
         v.addLayout(top)
@@ -942,6 +957,12 @@ class RightPanel(QWidget):
         self.btn_remove_plata = QPushButton("Șterge plată selectată")
         top.addWidget(self.btn_add_plata)
         top.addWidget(self.btn_remove_plata)
+        try:
+            import access_session
+            access_session.gate(self.btn_add_plata, "add")
+            access_session.gate(self.btn_remove_plata, "delete")
+        except Exception:
+            pass
         top.addStretch()
         self.lbl_fin_total = QLabel("Total încasat: 0.00 RON")
         self.lbl_fin_total.setStyleSheet("font-weight:600; font-size:14px; color:#4fc3f7;")
@@ -949,15 +970,16 @@ class RightPanel(QWidget):
         v.addLayout(top)
 
         # tabel plăți: Data | Sumă | Tip | Chitanță | Observații
-        self.tbl_plati = QTableWidget(0, 5)
+        self.tbl_plati = QTableWidget(0, 6)
         self.tbl_plati.setHorizontalHeaderLabels(
-            ["Data", "Sumă (RON)", "Tip", "Nr. chitanță", "Observații"])
+            ["Data", "Sumă (RON)", "Tip", "Nr. chitanță", "Observații", "Contract"])
         header = self.tbl_plati.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         self.tbl_plati.setSelectionBehavior(QTableWidget.SelectRows)
         self.tbl_plati.setSelectionMode(QTableWidget.SingleSelection)
         self.tbl_plati.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -1002,6 +1024,8 @@ class RightPanel(QWidget):
             plati = db.list_plati(self.current_cod_loc) or []
         except Exception:
             plati = []
+        from plata_contracts import contract_columns
+        _contract_cache = {}
         for p in plati:
             r = self.tbl_plati.rowCount()
             self.tbl_plati.insertRow(r)
@@ -1012,6 +1036,7 @@ class RightPanel(QWidget):
             self.tbl_plati.setItem(r, 2, QTableWidgetItem(str(p.get("tip", "") or "")))
             self.tbl_plati.setItem(r, 3, QTableWidgetItem(str(p.get("chitanta_nr", "") or "")))
             self.tbl_plati.setItem(r, 4, QTableWidgetItem(str(p.get("observatii", "") or "")))
+            self.tbl_plati.setItem(r, 5, QTableWidgetItem(contract_columns(p, _contract_cache)[0]))
         try:
             total = db.total_plati(self.current_cod_loc)
         except Exception:
@@ -1022,7 +1047,7 @@ class RightPanel(QWidget):
         if not self.current_cod_loc:
             show_message(self, "Eroare", "Selectați un loc înainte de a adăuga o plată.", level="warning")
             return
-        dlg = AddPlataDialog(self)
+        dlg = AddPlataDialog(self, self.current_cod_loc)
         if dlg.exec() != QDialog.Accepted:
             return
         res = dlg.get_result()
@@ -1031,7 +1056,8 @@ class RightPanel(QWidget):
         try:
             new_id = db.add_plata(
                 self.current_cod_loc, res["suma"], res["data_plata"],
-                tip=res["tip"], chitanta_nr=res["chitanta_nr"], observatii=res["observatii"])
+                tip=res["tip"], chitanta_nr=res["chitanta_nr"], observatii=res["observatii"],
+                contract_id=res.get("contract_id"))
             if new_id:
                 # dacă utilizatorul a atașat o chitanță (foto/PDF), o salvăm
                 chit_path = res.get("chitanta_file")
@@ -1083,6 +1109,13 @@ class RightPanel(QWidget):
         self.btn_remove_aviz = QPushButton("Șterge aviz selectat")
         top.addWidget(self.btn_add_aviz)
         top.addWidget(self.btn_edit_aviz)
+        try:
+            import access_session
+            access_session.gate(self.btn_add_aviz, "add")
+            access_session.gate(self.btn_edit_aviz, "edit")
+            access_session.gate(self.btn_remove_aviz, "delete")
+        except Exception:
+            pass
         top.addWidget(self.btn_remove_aviz)
         top.addStretch()
         v.addLayout(top)

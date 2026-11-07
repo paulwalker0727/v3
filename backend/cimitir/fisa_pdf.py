@@ -15,8 +15,9 @@ from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable,
+    SimpleDocTemplate, Spacer, Table, TableStyle, Image, HRFlowable,
 )
+from cimitir_pdf_safe import Paragraph  # shared/: text cu markup invalid nu mai oprește documentul
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase.pdfmetrics import registerFontFamily

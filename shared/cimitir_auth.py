@@ -20,12 +20,16 @@ import cimitir_db_router as db
 
 ROLE_ADMIN, ROLE_OPERATOR, ROLE_USER = "admin", "operator", "user"
 ROLES = (ROLE_ADMIN, ROLE_OPERATOR, ROLE_USER)
-RIGHT_VIEW, RIGHT_EDIT, RIGHT_APPROVE = "view", "edit", "approve"
+RIGHT_VIEW, RIGHT_ADD, RIGHT_EDIT, RIGHT_DELETE, RIGHT_APPROVE = "view", "add", "edit", "delete", "approve"
 RIGHT_MANAGE_USERS, RIGHT_MANAGE_CONFIG = "manage_users", "manage_config"
-RIGHTS = (RIGHT_VIEW, RIGHT_EDIT, RIGHT_APPROVE, RIGHT_MANAGE_USERS, RIGHT_MANAGE_CONFIG)
+RIGHTS = (RIGHT_VIEW, RIGHT_ADD, RIGHT_EDIT, RIGHT_DELETE, RIGHT_APPROVE, RIGHT_MANAGE_USERS, RIGHT_MANAGE_CONFIG)
+# Marcaj în `users.rights`: drepturile au fost configurate explicit de administrator (panoul Utilizatori). Fără marcaj = format vechi,
+# în care „edit” includea implicit adăugarea și ștergerea. Clienții vechi ignoră marcajul (nu e în RIGHTS).
+RIGHTS_CONFIGURED = "cfg"
+# Valorile implicite ale rolurilor = cele din main (operator putea orice operațiune de date, user doar consultare).
 ROLE_RIGHTS = {
     ROLE_ADMIN: RIGHTS,
-    ROLE_OPERATOR: (RIGHT_VIEW, RIGHT_EDIT, RIGHT_APPROVE),
+    ROLE_OPERATOR: (RIGHT_VIEW, RIGHT_ADD, RIGHT_EDIT, RIGHT_DELETE, RIGHT_APPROVE),
     ROLE_USER: (RIGHT_VIEW,),
 }
 DEFAULT_LEASE_HOURS = 72
@@ -150,6 +154,9 @@ def effective_rights(role: str, rights_csv: Optional[str] = None) -> Tuple[str, 
         chosen = {r.strip() for r in rights_csv.split(",")} & set(RIGHTS)
         chosen.discard(RIGHT_MANAGE_USERS)
         chosen.discard(RIGHT_MANAGE_CONFIG)
+        tokens = {r.strip() for r in rights_csv.split(",")}
+        if RIGHTS_CONFIGURED not in tokens and RIGHT_EDIT in chosen:
+            chosen.update((RIGHT_ADD, RIGHT_DELETE))     # format vechi: compatibilitate cu conturile existente
         return tuple(r for r in RIGHTS if r in chosen | {RIGHT_VIEW})
     return ROLE_RIGHTS.get(role, (RIGHT_VIEW,))
 
@@ -175,7 +182,8 @@ def lease_expired(lease_until: Optional[str], now: Optional[datetime] = None) ->
 
 def _public(row: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": row["id"], "uid": row.get("uid") or "", "username": row["username"], "role": row["role"],
-            "rights": list(effective_rights(row["role"], row.get("rights"))), "origin": row.get("origin") or "local",
+            "rights": list(effective_rights(row["role"], row.get("rights"))),
+            "rights_configured": RIGHTS_CONFIGURED in {t.strip() for t in (row.get("rights") or "").split(",")}, "origin": row.get("origin") or "local",
             "lease_until": row.get("lease_until") or "", "cemetery_id": row.get("cemetery_id") or ""}
 
 
@@ -219,6 +227,8 @@ ENV_ALLOW_DEFAULT = "CIMITIR_ALLOW_DEFAULT_USERS"
 ENV_BOOT_USER, ENV_BOOT_PASSWORD = "CIMITIR_BOOTSTRAP_ADMIN_USER", "CIMITIR_BOOTSTRAP_ADMIN_PASSWORD"
 MIN_ADMIN_PASSWORD_LEN = 12
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,40}$")
+_CREATE_USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,40}$")     # fără „:”, spații sau marcaje; compatibil cu nume scurte existente
+RESERVED_USERNAMES = frozenset({"main"})     # „main” desemnează emitentul MAIN în tokenurile de încărcare de pe telefon
 
 
 def default_users_allowed() -> bool:
@@ -344,6 +354,9 @@ def create_user(username: str, password: str, role: str = ROLE_USER, rights: Opt
                 cemetery_id: str = "") -> Optional[int]:
     if not username or not password:
         return None
+    username = username.strip()
+    if not _CREATE_USERNAME_RE.match(username) or username.lower() in RESERVED_USERNAMES:
+        return None
     role = role if role in ROLES else ROLE_USER
     now = datetime.now().isoformat(timespec="seconds")
     conn = db.get_connection()
@@ -375,7 +388,7 @@ def update_user(user_id: int, role: Optional[str] = None, rights: Optional[List[
         if role in ROLES:
             ok = _bump(conn, user_id, "role=?", (role,)) or ok
         if rights is not None:
-            ok = _bump(conn, user_id, "rights=?", (",".join(r for r in rights if r in RIGHTS),)) or ok
+            ok = _bump(conn, user_id, "rights=?", (",".join(r for r in rights if r in RIGHTS or r == RIGHTS_CONFIGURED),)) or ok
         if active is not None:
             ok = _bump(conn, user_id, "active=?", (1 if active else 0,)) or ok
         return ok

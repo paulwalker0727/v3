@@ -219,6 +219,8 @@ class AddContractDialog(QDialog):
     # AUTO-FILL
     # ---------------------------------------------------------
     def _on_concesionar_changed(self, text: str):
+        if getattr(self, "_snapshot_locked", False):
+            return
         if not text:
             for w in (self.txt_nume, self.txt_prenume, self.txt_adresa,
                       self.txt_bi_ci, self.txt_cnp, self.txt_telefon, self.txt_email):
@@ -260,6 +262,26 @@ class AddContractDialog(QDialog):
         self.txt_cnp.setText(str(data.get("cnp", "") or ""))
         self.txt_telefon.setText(str(data.get("telefon", "") or ""))
         self.txt_email.setText(str(data.get("email", "") or ""))
+
+    _OWNER_KEYS = ("owner_fullname", "owner_address", "owner_id_card_serie_number", "owner_cnp", "owner_phone", "owner_email")
+
+    def _show_owner_snapshot(self, data: Dict):
+        """Contract existent: afișează datele titularului de la emitere (read-only); ele NU se rescriu la salvare."""
+        self._edit_concesionar_id = data.get("concesionar_id") or None
+        if not any(data.get(k) for k in self._OWNER_KEYS):
+            return
+        self.txt_nume.setText(str(data.get("owner_fullname", "") or ""))
+        self.txt_prenume.clear()
+        self.txt_adresa.setText(str(data.get("owner_address", "") or ""))
+        self.txt_bi_ci.setText(str(data.get("owner_id_card_serie_number", "") or ""))
+        self.txt_cnp.setText(str(data.get("owner_cnp", "") or ""))
+        self.txt_telefon.setText(str(data.get("owner_phone", "") or ""))
+        self.txt_email.setText(str(data.get("owner_email", "") or ""))
+        self._snapshot_locked = True
+        for w in (self.txt_nume, self.txt_prenume, self.txt_adresa, self.txt_bi_ci,
+                  self.txt_cnp, self.txt_telefon, self.txt_email):
+            w.setReadOnly(True)
+            w.setToolTip("Date istorice ale titularului din contract (nu se modifică la editare).")
 
     def _on_cod_loc_changed(self, text: str):
         # completează automat sector, parcela, rând, loc și suprafață după cod_loc
@@ -312,8 +334,9 @@ class AddContractDialog(QDialog):
                     self.cmb_concesionar.setCurrentIndex(i)
                     break
 
-        # auto-fill concesionar
+        # auto-fill concesionar, apoi instantaneul istoric al titularului din contract are prioritate
         self._on_concesionar_changed(self.cmb_concesionar.currentText())
+        self._show_owner_snapshot(data)
 
         # auto-fill loc (preferăm valorile din contract)
         if data.get("cemetery_parcel") or data.get("cemetery_row") or data.get("cemetery_tomb") or data.get("tomb_surface_m2"):
@@ -360,7 +383,7 @@ class AddContractDialog(QDialog):
         tomb_surface = self.txt_suprafata.text().strip() or None
         sector_val = self.txt_sector.text().strip() or None
 
-        return {
+        payload = {
             "numar_contract": self.txt_numar.text().strip(),
             "data_contract": self.date_contract.value_str(),
             "data_inceput": self.date_inceput.value_str(),
@@ -382,6 +405,10 @@ class AddContractDialog(QDialog):
             "owner_fullname_2": f"{self.txt_nume.text().strip()} {self.txt_prenume.text().strip()}".strip(),
             "sector": sector_val
         }
+        if self._contract_id:
+            for k in (*self._OWNER_KEYS, "owner_fullname_2"):
+                payload.pop(k, None)
+        return payload
 
     def _on_save(self):
         if self._saved_id:      # deja salvat în această sesiune (dublu-click / apăsări repetate): nu se mai scrie nimic
@@ -424,10 +451,18 @@ class AddContractDialog(QDialog):
 
             self._saved_id = saved
             if saved:
-                QMessageBox.information(self, "OK", "Contract salvat.")
+                if self._contract_id and getattr(self, "_edit_concesionar_id", None) != data.get("concesionar_id"):
+                    QMessageBox.warning(
+                        self, "Titular schimbat",
+                        "Concesionarul contractului a fost schimbat, dar datele titularului din contract (instantaneul "
+                        "de la emitere) NU au fost actualizate. Schimbarea titularului necesită o decizie separată "
+                        "(transfer/contract nou); verificați documentul înainte de a-l genera.")
+                else:
+                    QMessageBox.information(self, "OK", "Contract salvat.")
                 self.accept()
             else:
-                QMessageBox.warning(self, "Eroare", "Nu am putut salva contractul.")
+                import database as _db
+                QMessageBox.warning(self, "Eroare", "Nu am putut salva contractul. " + _db.last_refusal())
         except Exception as e:
             QMessageBox.critical(self, "Eroare", f"Eroare la salvare: {e}")
 
@@ -554,6 +589,13 @@ class ContractsWindow(QDialog):
         self.setLayout(main)
 
         # signals
+        try:
+            import access_session
+            access_session.gate(self.btn_add, "add")
+            access_session.gate(self.btn_edit, "edit")
+            access_session.gate(self.btn_delete, "delete")
+        except Exception:
+            pass
         self.btn_add.clicked.connect(self.add_contract)
         self.btn_edit.clicked.connect(self.edit_contract)
         self.btn_delete.clicked.connect(self.delete_contract)

@@ -371,6 +371,8 @@ class CemeteryUI(QMainWindow):
 
         act_import = QAction("📥 Import locuri", self)
         act_import.triggered.connect(self.import_locuri_dialog)
+        import access_session
+        access_session.gate(act_import, "add")
         toolbar.addAction(act_import)
 
         act_map_export = QAction("🗺 Export hartă", self)
@@ -581,6 +583,8 @@ class CemeteryUI(QMainWindow):
 
         act_gclear = QAction("🗑 Șterge ghidaje", self)
         act_gclear.triggered.connect(lambda: self.adv.clear_all_guides())
+        import access_session as _acc_g
+        _acc_g.gate(act_gclear, "delete")
         toolbar.addAction(act_gclear)
 
         toolbar.addSeparator()

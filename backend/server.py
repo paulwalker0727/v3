@@ -379,7 +379,7 @@ def current_user(request: Request) -> Optional[dict]:
         return None
     audit_entities.ACTOR.set(("staff", fresh["username"]))
     return {"id": fresh["id"], "username": fresh["username"], "role": fresh["role"], "rights": fresh["rights"],
-            "source_id": p.get("source_id"),
+            "rights_configured": fresh.get("rights_configured", False), "source_id": p.get("source_id"),
             "source": {"id": src["id"], "engine": src["engine"],
                        "name": _registry_label() or cim.get_setting("cimitir_nume") or src.get("name")}}
 
@@ -803,7 +803,7 @@ def search_page(request: Request, q: str = ""):
         res["contracte"] = [r for r in cim.load_contracte() if hit(r.get("numar_contract"), r.get("cod_loc"), r.get("owner_fullname"))][:25]
         res["plati"] = [r for r in cim.list_plati() if hit(r.get("chitanta_nr"), r.get("cod_loc"))][:25]
     total = sum(len(v) for v in res.values())
-    ctx = _ctx(request, user, q=q, res=res, total=total, short=bool(q.strip()) and len(needle) < 2, can_write="edit" in user["rights"])
+    ctx = _ctx(request, user, q=q, res=res, total=total, short=bool(q.strip()) and len(needle) < 2, can_write=any(r in user["rights"] for r in ("add", "edit", "delete")))
     tpl = "partials/search_results.html" if request.headers.get("hx-request") else "cauta.html"
     return templates.TemplateResponse(request, tpl, ctx, headers={"Cache-Control": "no-store"})
 
@@ -1055,9 +1055,11 @@ def loc_drawer(request: Request, cod_loc: str):
 # ---- mutations loc-scoped (return refreshed drawer) -------------------------
 @admin.post("/ui/loc/{cod_loc}/edit", response_class=HTMLResponse)
 async def loc_edit(request: Request, cod_loc: str):
-    _require_writer(request)
+    _require_right(request, "edit")
     form = dict(await request.form())
     form.pop("extra_data", None)
+    if not cim.load_loc_by_cod(cod_loc):
+        raise HTTPException(status_code=404, detail="Locul nu există (crearea de locuri cere dreptul add și se face în MAIN)")
     current = cim.load_loc_by_cod(cod_loc) or {}
     bad = [f for f in LOC_SELECT_FIELDS if f in form and not is_allowed_value(f, form[f], current.get(f))]
     if bad:
@@ -1073,14 +1075,14 @@ async def loc_edit(request: Request, cod_loc: str):
 
 @admin.post("/ui/loc/{cod_loc}/inhumat", response_class=HTMLResponse)
 async def loc_inhumat(request: Request, cod_loc: str):
-    _require_writer(request)
+    _require_right(request, "add")
     cim.save_inhumat(cod_loc, dict(await request.form()))
     return _drawer(request, cod_loc, open_tab="t-inhumati")
 
 
 @admin.post("/ui/inhumat/{iid}/delete", response_class=HTMLResponse)
 async def inhumat_delete(request: Request, iid: int, cod_loc: str = Form(...)):
-    _require_writer(request)
+    _require_right(request, "delete")
     cim.delete_inhumat(iid)
     return _drawer(request, cod_loc, open_tab="t-inhumati")
 
@@ -1099,6 +1101,8 @@ async def loc_contract(request: Request, cod_loc: str):
     """Creare contract de concesiune din web/telefon — numai cu dreptul `approve`; un singur contract activ pe loc,
     număr unic; datele titularului se copiază din concesionar (ca în MAIN)."""
     user = _require_right(request, "approve")
+    if user.get("rights_configured") and "add" not in user["rights"]:
+        raise HTTPException(status_code=403, detail="Drept lipsă: add")
     if not cim.load_loc_by_cod(cod_loc):
         raise HTTPException(status_code=404, detail="Locul nu există")
     f = await request.form()
@@ -1153,14 +1157,14 @@ async def loc_contract(request: Request, cod_loc: str):
 
 @admin.post("/ui/contract/{cid}/delete", response_class=HTMLResponse)
 async def contract_delete(request: Request, cid: int, cod_loc: str = Form(...)):
-    _require_writer(request)
+    _require_right(request, "delete")
     cim.delete_contract(cid)
     return _drawer(request, cod_loc, open_tab="t-contracte")
 
 
 @admin.post("/ui/loc/{cod_loc}/plata", response_class=HTMLResponse)
 async def loc_plata(request: Request, cod_loc: str):
-    _require_writer(request)
+    _require_right(request, "add")
     b = dict(await request.form())
     try:
         suma = float(b.get("suma") or 0)
@@ -1172,14 +1176,14 @@ async def loc_plata(request: Request, cod_loc: str):
 
 @admin.post("/ui/plata/{pid}/delete", response_class=HTMLResponse)
 async def plata_delete(request: Request, pid: int, cod_loc: str = Form(...)):
-    _require_writer(request)
+    _require_right(request, "delete")
     cim.delete_plata(pid)
     return _drawer(request, cod_loc, open_tab="t-plati")
 
 
 @admin.post("/ui/loc/{cod_loc}/aviz", response_class=HTMLResponse)
 async def loc_aviz(request: Request, cod_loc: str):
-    _require_writer(request)
+    _require_right(request, "add")
     b = dict(await request.form())
     aid = cim.add_aviz(cod_loc, b.get("nr", ""), b.get("data", ""), b.get("lucrare", ""))
     if aid and _avize_extended():
@@ -1209,7 +1213,7 @@ def _lucrare_fields(b: dict, current: dict) -> dict:
 
 @admin.post("/ui/aviz/{aid}/edit", response_class=HTMLResponse)
 async def aviz_edit(request: Request, aid: int):
-    _require_writer(request)
+    _require_right(request, "edit")
     cur = cim.get_aviz(aid)
     if not cur:
         raise HTTPException(status_code=404, detail="Lucrarea nu există")
@@ -1228,7 +1232,7 @@ _INHUMAT_EDIT = ("nume", "prenume", "cnp", "data_nasterii", "data_deces", "data_
 
 @admin.post("/ui/inhumat/{iid}/edit", response_class=HTMLResponse)
 async def inhumat_edit(request: Request, iid: int):
-    _require_writer(request)
+    _require_right(request, "edit")
     cur = cim.get_inhumat(iid)
     if not cur or not cur.get("cod_loc"):
         raise HTTPException(status_code=404, detail="Înhumatul nu există")
@@ -1241,7 +1245,7 @@ async def inhumat_edit(request: Request, iid: int):
 
 @admin.post("/ui/aviz/{aid}/delete", response_class=HTMLResponse)
 async def aviz_delete(request: Request, aid: int, cod_loc: str = Form(...)):
-    _require_writer(request)
+    _require_right(request, "delete")
     cim.delete_aviz(aid)
     return _drawer(request, cod_loc, open_tab="t-avize")
 
@@ -1251,7 +1255,7 @@ _IMG_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
 
 @admin.post("/ui/loc/{cod_loc}/document", response_class=HTMLResponse)
 async def loc_document(request: Request, cod_loc: str, file: UploadFile = File(...)):
-    _require_writer(request)
+    _require_right(request, "add")
     suffix = os.path.splitext(file.filename or "upload.png")[1] or ".png"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
@@ -1284,7 +1288,7 @@ async def loc_document(request: Request, cod_loc: str, file: UploadFile = File(.
 
 @admin.post("/ui/document/{doc_id}/delete", response_class=HTMLResponse)
 async def document_delete(request: Request, doc_id: int, cod_loc: str = Form(...)):
-    _require_writer(request)
+    _require_right(request, "delete")
     cim.delete_document(doc_id)
     return _drawer(request, cod_loc)
 
@@ -1356,7 +1360,7 @@ def _att_panel(request: Request, etype: str, eid: str, user: dict, error: str = 
     return templates.TemplateResponse(request, "partials/attachments.html", {
         "request": request, "ent": ent, "items": items, "groups": groups, "error": error, "notice": notice,
         "scan_kinds": scanning.kinds_for(etype), "ai_ready": _ai_ready(),
-        "can_write": "edit" in user["rights"], "can_history": "approve" in user["rights"], "doc_types": attachments.DOC_TYPES,
+        "can_write": any(r in user["rights"] for r in ("add", "edit", "delete")), "can_history": "approve" in user["rights"], "doc_types": attachments.DOC_TYPES,
         "suggested": attachments.SUGGESTED.get(etype, ["alt_document"]),
         "selected": selected if selected in attachments.DOC_TYPES else "", "lucrare_foto": attachments.LUCRARE_FOTO},
         status_code=status_code, headers={"Cache-Control": "no-store"})
@@ -1373,7 +1377,7 @@ def att_panel(request: Request, etype: str, eid: str, doc_type: str = ""):
 @admin.post("/att/{etype}/{eid}", response_class=HTMLResponse)
 async def att_upload(request: Request, etype: str, eid: str, files: list[UploadFile] = File(...),
                      doc_type: str = Form("alt_document"), title: str = Form(""), description: str = Form("")):
-    user = _require_writer(request)
+    user = _require_right(request, "add")
     if not attachments.resolve_entity(cim, etype, eid):
         raise HTTPException(status_code=404, detail="Înregistrarea nu există")
     errors, saved = [], []
@@ -1396,14 +1400,14 @@ async def att_upload(request: Request, etype: str, eid: str, files: list[UploadF
 
 @admin.post("/mobile/token")
 def mobile_token(request: Request, etype: str = Form(...), eid: str = Form(...)):
-    """„Continuă pe telefon” din panoul web: token temporar (QR) legat de O singură entitate. Drept: edit."""
-    user = _require_writer(request)
+    """„Continuă pe telefon” din panoul web: token temporar (QR) legat de O singură entitate. Drept: add."""
+    user = _require_right(request, "add")
     if etype not in attachments.ENTITIES or etype == "cerere":
         raise HTTPException(status_code=422, detail="Tip de entitate neacceptat")
     source_id = (cim.current_source() or {}).get("id")
     if not source_id:
         raise HTTPException(status_code=409, detail="Baza de date activă nu este selectată")
-    return JSONResponse(mobile_upload.issue(request, source_id, etype, eid, user["username"]), headers={"Cache-Control": "no-store"})
+    return JSONResponse(mobile_upload.issue(request, source_id, etype, eid, f"web:{user['username']}"), headers={"Cache-Control": "no-store"})
 
 
 def safe_name_for_msg(name: Optional[str]) -> str:
@@ -1426,7 +1430,7 @@ def _scan_review(request: Request, ent: dict, kind: str, att_id: int, rows: list
 @admin.post("/att/{etype}/{eid}/scan", response_class=HTMLResponse)
 async def att_scan(request: Request, etype: str, eid: str):
     """Fotografie document -> (1) originalul se arhivează, (2) AI propune datele, (3) utilizatorul le confirmă separat."""
-    user = _require_writer(request)
+    user = _require_right(request, "add")
     ent = attachments.resolve_entity(cim, etype, eid)
     if not ent:
         raise HTTPException(status_code=404, detail="Înregistrarea nu există")
@@ -1479,7 +1483,7 @@ async def att_scan(request: Request, etype: str, eid: str):
 @admin.post("/att/{etype}/{eid}/scan/apply", response_class=HTMLResponse)
 async def att_scan_apply(request: Request, etype: str, eid: str):
     """Aplică numai câmpurile bifate și editate/confirmate de utilizator. Originalul rămâne în arhivă indiferent de rezultat."""
-    user = _require_writer(request)
+    user = _require_right(request, "edit")
     ent = attachments.resolve_entity(cim, etype, eid)
     if not ent:
         raise HTTPException(status_code=404, detail="Înregistrarea nu există")
@@ -1539,7 +1543,7 @@ def att_file(request: Request, doc_id: int, download: int = 0):
 
 @admin.post("/attdel/{doc_id}", response_class=HTMLResponse)
 def att_delete(request: Request, doc_id: int):
-    user = _require_writer(request)
+    user = _require_right(request, "delete")
     row = attachments.get_attachment(cim, doc_id)
     if not row:
         raise HTTPException(status_code=404)
@@ -1694,9 +1698,10 @@ def _back(url="/"):
 
 @admin.post("/ui/concesionar")
 async def concesionar_save(request: Request):
-    _require_writer(request)
+    user = _require_right(request, "view")
     b = dict(await request.form())
     cid = b.pop("id", "")
+    _require_right(request, "edit" if cid else "add")
     data = {k: b.get(k, "") for k in ("nume", "prenume", "cnp", "bi_ci", "adresa", "telefon", "email", "observatii")}
     cim.save_concesionar(data, concesionar_id=int(cid) if cid else None)
     return _back("/concesionari")
@@ -1704,7 +1709,7 @@ async def concesionar_save(request: Request):
 
 @admin.post("/ui/concesionar/{cid}/delete")
 def concesionar_delete(request: Request, cid: int):
-    _require_writer(request)
+    _require_right(request, "delete")
     cim.delete_concesionar(cid)
     return _back("/concesionari")
 
@@ -1753,7 +1758,8 @@ async def cerere_status(request: Request, cid: int):
 
 
 def _rights_from_form(b) -> list:
-    return [r for r in (b if isinstance(b, list) else [b]) if r in ("edit", "approve")]
+    picked = [r for r in (b if isinstance(b, list) else [b]) if r in ("add", "edit", "delete", "approve")]
+    return [cim_auth.RIGHTS_CONFIGURED, *picked]
 
 
 def _would_remove_last_admin(uid: int, new_role=None, new_active=None) -> bool:
@@ -1769,6 +1775,9 @@ def _would_remove_last_admin(uid: int, new_role=None, new_active=None) -> bool:
 async def user_create(request: Request):
     _require_right(request, "manage_users")
     form = await request.form()
+    uname = str(form.get("username", "")).strip()
+    if uname and (not cim_auth._CREATE_USERNAME_RE.match(uname) or uname.lower() in cim_auth.RESERVED_USERNAMES):
+        raise HTTPException(status_code=400, detail="Nume de utilizator invalid sau rezervat (permis: litere, cifre, . _ - ; „main” este rezervat).")
     cim_auth.create_user(form.get("username", ""), form.get("password", ""), form.get("role", "operator"),
                          cemetery_id=cim.get_setting("cemetery_id") or "")
     return _back("/utilizatori")

@@ -277,15 +277,12 @@ class AdvancedEditor:
             self._create_guide_item({"id": gid, "kind": kind, "points": points, "color": GUIDE_COLOR})
 
     def update_guide(self, guide_id: int, points):
-        conn = db.get_connection()
-        try:
-            conn.execute("UPDATE guides SET points = ? WHERE id = ?",
-                         (json.dumps(points), guide_id))
-        finally:
-            conn.close()
+        db.update_guide(guide_id, points)
 
     def delete_guide(self, guide_id: int, item=None):
-        db.delete_guide(guide_id)
+        if not db.delete_guide(guide_id):
+            self.w.statusBar().showMessage("Ghidajul nu a fost șters: " + db.last_refusal())
+            return
         if item is not None:
             try:
                 self.scene.removeItem(item)
@@ -458,10 +455,12 @@ class AdvancedEditor:
             existing = db.load_loc_by_cod(cod)
             if existing:
                 continue
-            self.w.actions.save_plot_to_db(cod, poly, "#0078FF80")
-            db.save_loc_metadata(cod, {
-                "sector": row["sector_label"], "rand": str(rand_no), "numar": str(loc_no),
-            })
+            if not self.w.actions.save_plot_to_db(cod, poly, "#0078FF80"):
+                continue
+            with db.granted("edit"):           # metadatele locului nou creat
+                db.save_loc_metadata(cod, {
+                    "sector": row["sector_label"], "rand": str(rand_no), "numar": str(loc_no),
+                })
             qpoly = QPolygonF([QPointF(x, y) for x, y in poly])
             data = {"type": "loc_de_veci", "cod_loc": cod, "points": poly,
                     "plot_color": QColor(0, 120, 255, 128)}
@@ -511,8 +510,7 @@ class AdvancedEditor:
             if len(pts) < 3:
                 continue
             area = geo.area_m2(pts, ppm) if ppm else geo.polygon_area(pts)
-            if area is not None:
-                db.save_loc_metadata(r["cod_loc"], {"suprafata": round(area, 2)})
+            if area is not None and db.save_loc_metadata(r["cod_loc"], {"suprafata": round(area, 2)}):
                 count += 1
         return count
 

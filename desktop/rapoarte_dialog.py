@@ -95,6 +95,9 @@ class QrSettingsDialog(QDialog):
         )
 
     def _save(self):
+        import access_session
+        if access_session.current_user() is not None and not access_session.require("edit", self, "modificarea URL-ului QR"):
+            return
         url = (self.txt_url.text() or "").strip().rstrip("/")
         if url and not (url.startswith("http://") or url.startswith("https://")):
             QMessageBox.warning(self, "URL invalid",
@@ -183,6 +186,8 @@ class RapoarteDialog(QDialog):
         self.btn_qr_settings = QPushButton("⚙  Setări URL...")
         self.btn_qr_settings.setToolTip("Configurează URL-ul public al portalului cimitirului")
         self.btn_qr_settings.setCursor(Qt.PointingHandCursor)
+        import access_session
+        access_session.gate(self.btn_qr_settings, "edit")
         self.btn_qr_settings.clicked.connect(self._open_qr_settings)
         qr_lay.addWidget(self.chk_qr, 1)
         qr_lay.addWidget(self.btn_qr_settings)

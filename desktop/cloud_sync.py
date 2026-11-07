@@ -555,8 +555,9 @@ def _download_document(code: str, cerere_id: int, doc: Dict[str, Any]) -> bool:
         handle.write(content)
         handle.flush()
         os.fsync(handle.fileno())
-    doc_id = db.add_document("cerere", cerere_id, doc.get("doc_type") or "document", tmp_path,
-                             caption=doc.get("caption") or name, copy=True)
+    with db.system_operation():       # sincronizare inițiată de sistem, nu o acțiune a operatorului
+        doc_id = db.add_document("cerere", cerere_id, doc.get("doc_type") or "document", tmp_path,
+                                 caption=doc.get("caption") or name, copy=True)
     os.remove(tmp_path)
     stored = db.get_document_path(doc_id) if doc_id else None
     if not stored or not os.path.exists(stored):

@@ -219,7 +219,8 @@ def issue_for_main(request: Request, payload: Dict[str, Any] = Body(...)):
         eid = str(payload["entity_id"])
     else:
         raise HTTPException(status_code=422, detail="entity_uid lipsește")
-    return JSONResponse(issue(request, source_id, etype, eid, str(payload.get("issued_by") or "main"),
+    issuer = str(payload.get("issued_by") or "main")
+    return JSONResponse(issue(request, source_id, etype, eid, issuer if (issuer == "main" or issuer.startswith("main:")) else f"main:{issuer}",
                               payload.get("ttl_minutes"), payload.get("max_uses")), headers=_NOSTORE)
 
 
@@ -333,6 +334,16 @@ def page(request: Request, token: str):
                                        "script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'"})
 
 
+def _require_issuer_still_allowed(created_by: str) -> None:
+    """Tokenul emis din portal (created_by = cont web) cere ca autorul să fie încă activ și să aibă `add`; fail-closed.
+    Tokenurile emise din MAIN (`main` / `main:<utilizator>`) au fost autorizate de MAIN (dreptul `add`) la emitere."""
+    if created_by == "main" or created_by.startswith("main:"):
+        return
+    creator = cimitir_auth._row("username=?", created_by[4:] if created_by.startswith("web:") else created_by)
+    if cimitir_auth.access_state(creator) != "ok" or "add" not in cimitir_auth.effective_rights(creator["role"], creator.get("rights")):
+        raise HTTPException(status_code=403, detail={"error": "rights_revoked", "message": "Autorul linkului nu mai are dreptul de adăugare."})
+
+
 @public_router.post("/{token}/upload")
 def upload(request: Request, token: str, file: UploadFile = File(...), doc_type: str = Form("alt_document"),
            description: str = Form(""), entity_type: str = Form(""), entity_id: str = Form(""), entity_uid: str = Form("")):
@@ -345,6 +356,7 @@ def upload(request: Request, token: str, file: UploadFile = File(...), doc_type:
         cimitir_requests.audit("mobile", f"mobile:{row['created_by']}", "mobile.reject", f"{etype}:{eid}",
                                json.dumps({"tid": row["tid"], "reason": "entity_mismatch", "asked": f"{entity_type}:{entity_id}"[:60]}))
         raise HTTPException(status_code=403, detail={"error": "entity_mismatch", "message": "Acest link este valabil doar pentru entitatea pentru care a fost generat."})
+    _require_issuer_still_allowed(str(row.get("created_by") or ""))
     data = file.file.read(attachments.MAX_BYTES + 1)
     try:
         name, _mime = attachments.validate_file(file.filename or "", data)

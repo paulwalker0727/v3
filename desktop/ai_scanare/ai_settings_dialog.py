@@ -322,6 +322,9 @@ class AISettingsDialog(QDialog):
         self.test_result.setStyleSheet("color:#f87171; font-weight:600;")
 
     def _clear_key(self) -> None:
+        import access_session
+        if access_session.current_user() is not None and not access_session.require("edit", self, "modificarea setărilor AI"):
+            return
         if QMessageBox.question(
             self, "Confirmare",
             "Ștergi cheia și treci în mod offline (Tesseract)?",
@@ -340,6 +343,9 @@ class AISettingsDialog(QDialog):
         self.settings_saved.emit()
 
     def _save(self) -> None:
+        import access_session
+        if access_session.current_user() is not None and not access_session.require("edit", self, "modificarea setărilor AI"):
+            return
         key = self.key_edit.text().strip()
         mode = self.mode_combo.currentData()
         model = self.model_combo.currentData() or ai_config.MODEL_AUTO
