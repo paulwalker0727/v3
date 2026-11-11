@@ -634,15 +634,20 @@ class ConcesionariWindow(QDialog):
         if not row:
             QMessageBox.information(self, "Info", "Selectați o înregistrare pentru evidențiere.")
             return
-        # cod_loc may be top-level or inside extra
-        cod_loc = row.get("cod_loc") or (row.get("extra") or {}).get("cod_loc")
-        if cod_loc and hasattr(self.parent(), "highlight_loc_by_cod"):
-            try:
-                self.parent().highlight_loc_by_cod(cod_loc)
-            except Exception:
-                QMessageBox.information(self, "Info", "Funcție evidențiere indisponibilă.")
-        else:
-            QMessageBox.information(self, "Info", "Nu există cod loc asociat sau funcția nu este disponibilă.")
+        import entity_links as links
+        locs = [l["cod_loc"] for l in links.locuri_for_concesionar(row["id"])] if row.get("id") else []
+        if not locs:
+            QMessageBox.information(self, "Info", "Concesionarul nu are locuri asociate prin contracte.")
+            return
+        cod = locs[0]
+        if len(locs) > 1:
+            from PySide6.QtWidgets import QInputDialog
+            cod, ok = QInputDialog.getItem(self, "Alege locul", "Locul de evidențiat pe hartă:", locs, 0, False)
+            if not ok:
+                return
+        from entity_links_ui import show_on_map
+        if not show_on_map(self, cod):
+            QMessageBox.information(self, "Info", "Locul nu poate fi evidențiat pe hartă (poligon nedesenat sau hartă indisponibilă).")
 
     def open_reports(self):
         QMessageBox.information(self, "Rapoarte", "Funcționalitate Rapoarte — în curs de implementare.")

@@ -102,3 +102,34 @@ def loc_info_by_concesionar() -> Dict[int, Dict[str, str]]:
             if val and str(val) not in slot[key]:
                 slot[key].append(str(val))
     return {cid: {k: ", ".join(v) for k, v in d.items()} for cid, d in acc.items()}
+
+
+def contract_status(row: Dict[str, Any], today=None) -> str:
+    """„Expirat”/„În vigoare” doar dacă data de sfârșit poate fi interpretată; altfel gol (nu se ghicește)."""
+    import cimitir_dates as dates
+    left = dates.days_until(row.get("data_sfarsit"), today)
+    if left is None:
+        return ""
+    return "Expirat" if left < 0 else "În vigoare"
+
+
+def contracts_overview() -> List[Dict[str, Any]]:
+    """Toate contractele cu concesionarul (nume curent al persoanei legate, altfel titularul istoric) și locul legat."""
+    out = []
+    for r in _rows("", ()):
+        full = f"{r.get('nume') or ''} {r.get('prenume') or ''}".strip()
+        out.append({**r, "id": r["contract_id"], "concesionar_nume": full,
+                    "cod_loc_afisat": r.get("cod_loc") or r.get("contract_cod_loc") or "",
+                    "stare": contract_status(r)})
+    return out
+
+
+def contract_context(contract_id: int) -> Dict[str, Any]:
+    """Legăturile reale ale unui contract (id-uri), fără a modifica nimic. Valori None dacă legătura lipsește / înregistrarea a fost ștearsă."""
+    for r in _rows("WHERE c.id = ?", (contract_id,)):
+        conc = None
+        if r.get("concesionar_id") and r.get("nume") is not None:
+            conc = r["concesionar_id"]
+        return {"contract_id": contract_id, "concesionar_id": conc, "cod_loc": r.get("cod_loc") or r.get("contract_cod_loc") or None,
+                "loc_exists": r.get("loc_id") is not None}
+    return {}
