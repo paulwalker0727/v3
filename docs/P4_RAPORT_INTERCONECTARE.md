@@ -67,4 +67,4 @@ Vezi `docs/P4_RAPORT_INTERCONECTARE.md` secțiunea de rezultate (generată la fi
 * UI offscreen: **NEVERIFICATE vizual** aspectul/ergonomia și comportamentul real al ferestrelor modale suprapuse (pași §8). Sincronizare reală cu cloud/Mobile v2: **NEVERIFICATĂ** (numai verificarea locală a payload-ului FK prin `uid` și intrarea în coadă).
 
 ## 10. Livrare
-Push/PR **neefectuate** (acces fără credențiale GitHub, ales explicit): commit local pe `feature/p4-interconectare-completa`; patch și bundle git livrate separat. PR-ul trebuie deschis manual către `main` (un singur PR).
+Branch publicat pe GitHub: `feature/p4-interconectare-completa` (un singur PR către `main`, deschis manual după revizuire; fără merge automat). Primul commit de funcționalitate: `5e3eb3f`. Patch și bundle git sunt păstrate separat doar ca rezervă.
