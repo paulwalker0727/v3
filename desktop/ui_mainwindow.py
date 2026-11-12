@@ -185,6 +185,25 @@ class CemeteryUI(QMainWindow):
 
         self.selected_cod_loc: Optional[str] = None
 
+    def highlight_loc_by_cod(self, cod_loc: str) -> bool:
+        """Selectează locul pe hartă exact ca la clic (aceeași fișă și aceleași relații) și îl centrează."""
+        try:
+            items = self.map_view._scene.items()
+        except Exception:
+            return False
+        for item in items:
+            data = item.data(0)
+            if isinstance(data, dict) and data.get("cod_loc") == cod_loc:
+                try:
+                    self.map_view._scene.clearSelection()
+                    item.setSelected(True)
+                    self.map_view.centerOn(item)
+                except Exception:
+                    pass
+                self.on_plot_clicked(item)
+                return True
+        return False
+
     # ---------------------------
     # click pe loc (legătură cu panourile)
     # ---------------------------

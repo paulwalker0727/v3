@@ -233,6 +233,14 @@ class LocuriWindow(QDialog):
 
         self.parent = parent
         self.actions = getattr(parent, "actions", None)
+        if self.actions is None:
+            w = parent
+            while w is not None and self.actions is None:
+                self.actions = getattr(w, "actions", None)
+                w = w.parent() if callable(getattr(w, "parent", None)) else None
+            if self.actions is None and parent is not None:
+                import database as _db
+                self.actions = _db
         self.signals = getattr(parent, "signals", None)
 
         # filtre
@@ -317,9 +325,13 @@ class LocuriWindow(QDialog):
         self.btn_concesionari.setToolTip("Concesionarii asociați locului selectat (prin contracte)")
         self.btn_contract_nou = QPushButton("Contract nou")
         self.btn_contracte = QPushButton("Contracte / istoric")
+        self.btn_pe_harta = QPushButton("Pe hartă")
+        self.btn_plati = QPushButton("Plăți")
         self.btn_concesionari.clicked.connect(self.open_concesionari)
         self.btn_contract_nou.clicked.connect(self.new_contract)
         self.btn_contracte.clicked.connect(self.open_contracte)
+        self.btn_pe_harta.clicked.connect(self.open_on_map)
+        self.btn_plati.clicked.connect(self.open_plati)
 
         self.btn_add.clicked.connect(self.add_record)
         self.btn_edit.clicked.connect(self.edit_record)
@@ -347,6 +359,8 @@ class LocuriWindow(QDialog):
         btns.addWidget(self.btn_concesionari)
         btns.addWidget(self.btn_contract_nou)
         btns.addWidget(self.btn_contracte)
+        btns.addWidget(self.btn_pe_harta)
+        btns.addWidget(self.btn_plati)
         btns.addStretch()
         btns.addWidget(self.btn_reload)
         right_layout.addLayout(btns)
@@ -394,6 +408,19 @@ class LocuriWindow(QDialog):
         if cod:
             from entity_links_ui import open_contract_dialog
             open_contract_dialog(self, self.actions, cod_loc=cod)
+
+    def open_on_map(self):
+        cod = self._cod_or_warn()
+        if cod:
+            from entity_links_ui import show_on_map
+            if not show_on_map(self, cod):
+                QMessageBox.information(self, "Hartă", "Locul nu poate fi evidențiat pe hartă (poligon nedesenat sau hartă indisponibilă).")
+
+    def open_plati(self):
+        cod = self._cod_or_warn()
+        if cod:
+            from entity_links_ui import open_plati_window
+            open_plati_window(self, cod)
 
     def open_contracte(self):
         cod = self._cod_or_warn()

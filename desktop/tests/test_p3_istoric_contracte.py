@@ -127,17 +127,18 @@ def test_dialogul_de_contract_nou_completeaza_snapshotul_din_concesionar(d):
 
 
 def test_schimbarea_concesionarului_nu_actualizeaza_automat_snapshotul(d, monkeypatch):
+    """P4: editarea obișnuită nu mai poate schimba titularul; schimbarea explicită păstrează instantaneul owner_*."""
     from PySide6.QtWidgets import QMessageBox
     cid, kid = mk_contract(d)
     c2 = d.save_concesionar({"nume": "Ionescu", "prenume": "Dan", "cnp": "1000000000002"})
-    warned = []
-    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[1]))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     dlg = _dialog_cls()(None, None, existing=d.get_contract(kid))
     for i in range(dlg.cmb_concesionar.count()):
         if dlg.cmb_concesionar.itemData(i) == c2:
             dlg.cmb_concesionar.setCurrentIndex(i)
     dlg._on_save()
+    assert d.get_contract(kid)["concesionar_id"] == cid
+    assert d.reassign_contract_concesionar(kid, c2, update_owner_snapshot=False, reason="corectura asocierii")
     k = d.get_contract(kid)
     assert k["concesionar_id"] == c2 and k["owner_cnp"] == "2000000000001"
-    assert "Titular schimbat" in warned

@@ -121,6 +121,11 @@ class AddContractDialog(QDialog):
         btns = QHBoxLayout()
         self.btn_save = QPushButton("Salvează")
         self.btn_cancel = QPushButton("Anulează")
+        self.btn_change_conc = QPushButton("Schimbă concesionarul…")
+        self.btn_assoc_loc = QPushButton("Asociază / schimbă loc…")
+        self.btn_change_conc.setToolTip("Schimbarea titularului este o operațiune separată, cu confirmare și jurnal.")
+        btns.addWidget(self.btn_change_conc)
+        btns.addWidget(self.btn_assoc_loc)
         btns.addStretch()
         btns.addWidget(self.btn_save)
         btns.addWidget(self.btn_cancel)
@@ -133,9 +138,21 @@ class AddContractDialog(QDialog):
         self.btn_add_concesionar.clicked.connect(self._open_add_concesionar)
         self.btn_open_concesionar.clicked.connect(self._open_concesionar_data)
         self.btn_open_loc.clicked.connect(self._open_loc_data)
+        self.btn_change_conc.clicked.connect(self._change_concesionar)
+        self.btn_assoc_loc.clicked.connect(self._associate_loc)
+        for b in (self.btn_change_conc, self.btn_assoc_loc):
+            b.setVisible(bool(self._existing))
+            try:
+                import access_session
+                access_session.gate(b, "edit")
+            except Exception:
+                pass
 
         if self._existing:
             self._populate(self._existing)
+            self.cmb_concesionar.setEnabled(False)
+            self.cmb_cod_loc.setEnabled(False)
+            self.btn_add_concesionar.setEnabled(False)
         else:
             if selected_cod_loc:
                 self._on_cod_loc_changed(selected_cod_loc)
@@ -147,6 +164,19 @@ class AddContractDialog(QDialog):
             self.date_sfarsit.setDate(today)
 
         self._saved_id: Optional[int] = None
+        self._initial = self._collect()
+
+    def _is_dirty(self) -> bool:
+        return self._saved_id is None and self._collect() != self._initial
+
+    def reject(self):
+        if self._is_dirty():
+            reply = QMessageBox.question(self, "Modificări nesalvate",
+                                         "Există modificări nesalvate. Renunțați la ele?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+        super().reject()
 
     # ---------------------------------------------------------
     # SETUP COMBOBOXES
@@ -376,6 +406,9 @@ class AddContractDialog(QDialog):
             concesionar_id = self._conces_map.get(self.cmb_concesionar.currentText())
 
         cod_loc_val = self.cmb_cod_loc.currentText().strip() or None
+        if self._contract_id:
+            concesionar_id = self._existing.get("concesionar_id") or None
+            cod_loc_val = self._existing.get("cod_loc") or None
 
         cemetery_parcel = self.txt_parcela.text().strip() or None
         cemetery_row = self.txt_rand.text().strip() or None
@@ -419,12 +452,19 @@ class AddContractDialog(QDialog):
             QMessageBox.warning(self, "Eroare", "Numărul contractului este obligatoriu.")
             return
 
-        if not data["concesionar_id"]:
+        if not data["concesionar_id"] and not self._contract_id:
             QMessageBox.warning(self, "Eroare", "Selectați un concesionar.")
             return
 
         cod = data.get("cod_loc")
-        if cod and not self._loc_exists(cod):
+        if not self._contract_id and self._duplicate_exists(data):
+            reply = QMessageBox.question(
+                self, "Contract posibil duplicat",
+                "Există deja un contract cu același număr, concesionar și loc. Salvezi totuși un contract nou?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+        if cod and not self._contract_id and not self._loc_exists(cod):
             reply = QMessageBox.question(
                 self, "Loc inexistent",
                 f"Codul „{cod}” nu există în Locuri de veci (nu se creează locuri noi din contract).\n"
@@ -451,14 +491,7 @@ class AddContractDialog(QDialog):
 
             self._saved_id = saved
             if saved:
-                if self._contract_id and getattr(self, "_edit_concesionar_id", None) != data.get("concesionar_id"):
-                    QMessageBox.warning(
-                        self, "Titular schimbat",
-                        "Concesionarul contractului a fost schimbat, dar datele titularului din contract (instantaneul "
-                        "de la emitere) NU au fost actualizate. Schimbarea titularului necesită o decizie separată "
-                        "(transfer/contract nou); verificați documentul înainte de a-l genera.")
-                else:
-                    QMessageBox.information(self, "OK", "Contract salvat.")
+                QMessageBox.information(self, "OK", "Contract salvat.")
                 self.accept()
             else:
                 import database as _db
@@ -468,6 +501,111 @@ class AddContractDialog(QDialog):
 
     def get_saved_id(self) -> Optional[int]:
         return self._saved_id
+
+    def _duplicate_exists(self, data: Dict) -> bool:
+        try:
+            rows = self.actions.load_contracte() if self.actions and hasattr(self.actions, "load_contracte") else (load_contracte() if DB_AVAILABLE else [])
+        except Exception:
+            return False
+        return any(str(r.get("numar_contract") or "") == data["numar_contract"]
+                   and (r.get("concesionar_id") or None) == (data.get("concesionar_id") or None)
+                   and (r.get("cod_loc") or None) == (data.get("cod_loc") or None) for r in rows)
+
+    # ---------------------------------------------------------
+    # SCHIMBAREA TITULARULUI / LOCULUI (operațiuni separate, cu confirmare și jurnal)
+    # ---------------------------------------------------------
+    def _db_call(self, name: str, *args):
+        fn = getattr(self.actions, name, None) if self.actions else None
+        if not callable(fn):
+            import database as _db
+            fn = getattr(_db, name)
+        return fn(*args)
+
+    def _ask_reason(self) -> Optional[str]:
+        from PySide6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(self, "Motiv (opțional)", "Motivul modificării (se înregistrează în jurnal):")
+        return text.strip() if ok else None
+
+    def _refresh_after_link_change(self):
+        fresh = self._db_call("get_contract", self._contract_id) or {}
+        self._existing = fresh
+        self._setup_concesionar_combo()
+        for i in range(self.cmb_concesionar.count()):
+            if self.cmb_concesionar.itemData(i) == fresh.get("concesionar_id"):
+                self.cmb_concesionar.setCurrentIndex(i)
+        self.cmb_cod_loc.setCurrentText(fresh.get("cod_loc") or "")
+        self._initial = self._collect()
+
+    def _change_concesionar(self):
+        if not self._contract_id:
+            return
+        from entity_links_ui import PickDialog
+        rows = self._db_call("load_concesionari") or []
+        dlg = PickDialog(self, "Alege noul concesionar al contractului", rows,
+                         [("Nume", "nume"), ("Prenume", "prenume"), ("CNP", "cnp"), ("Adresă", "adresa")])
+        if dlg.exec() != QDialog.Accepted or not dlg.selected_row():
+            return
+        new = dlg.selected_row()
+        if new["id"] == self._existing.get("concesionar_id"):
+            QMessageBox.information(self, "Info", "Concesionarul ales este deja asociat contractului.")
+            return
+        label = f"{new.get('nume') or ''} {new.get('prenume') or ''}".strip()
+        if QMessageBox.question(
+                self, "Confirmare schimbare titular",
+                f"Contractul {self.txt_numar.text()} va fi asociat concesionarului „{label}”.\n"
+                "Operațiunea se aplică imediat și se înregistrează în jurnal. Nu șterge nimic (plăți, documente, istoric).\n\nContinuați?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        snapshot = QMessageBox.question(
+            self, "Datele titularului din contract",
+            "Datele titularului din contract (instantaneul de la emitere) se păstrează implicit și vor apărea în documentul generat.\n"
+            "Le actualizez din fișa noului concesionar? (alegeți Da doar pentru corectarea unei asocieri greșite)",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+        reason = self._ask_reason()
+        if reason is None:
+            return
+        if self._db_call("reassign_contract_concesionar", self._contract_id, new["id"], snapshot, reason):
+            self._refresh_after_link_change()
+            self._edit_concesionar_id = new["id"]
+            if snapshot:
+                for w in (self.txt_nume, self.txt_prenume, self.txt_adresa, self.txt_bi_ci, self.txt_cnp, self.txt_telefon, self.txt_email):
+                    w.setReadOnly(False)
+                self._snapshot_locked = False
+                self._show_owner_snapshot(self._existing)
+            QMessageBox.information(self, "OK", "Concesionarul contractului a fost schimbat.")
+        else:
+            import database as _db
+            QMessageBox.warning(self, "Eroare", "Nu am putut schimba concesionarul. " + _db.last_refusal())
+
+    def _associate_loc(self):
+        if not self._contract_id:
+            return
+        from entity_links_ui import PickDialog
+        rows = self._db_call("search_locuri", {}) or []
+        dlg = PickDialog(self, "Alege locul contractului", rows,
+                         [("Cod loc", "cod_loc"), ("Sector", "sector"), ("Parcela", "parcela"), ("Rând", "rand"), ("Număr", "numar")])
+        if dlg.exec() != QDialog.Accepted or not dlg.selected_row():
+            return
+        cod = dlg.selected_row()["cod_loc"]
+        if cod == (self._existing.get("cod_loc") or ""):
+            QMessageBox.information(self, "Info", "Locul ales este deja asociat contractului.")
+            return
+        if QMessageBox.question(
+                self, "Confirmare asociere loc",
+                f"Contractul {self.txt_numar.text()} va fi asociat locului „{cod}”.\n"
+                "Operațiunea se aplică imediat și se înregistrează în jurnal.\n\nContinuați?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        reason = self._ask_reason()
+        if reason is None:
+            return
+        if self._db_call("associate_contract_loc", self._contract_id, cod, reason):
+            self._refresh_after_link_change()
+            self._on_cod_loc_changed(cod)
+            QMessageBox.information(self, "OK", "Locul contractului a fost asociat.")
+        else:
+            import database as _db
+            QMessageBox.warning(self, "Eroare", "Nu am putut asocia locul. " + _db.last_refusal())
 
     def _loc_exists(self, cod: str) -> bool:
         try:
@@ -528,10 +666,101 @@ class AddContractDialog(QDialog):
                 break
 
 
+def generate_contract_flow(parent, actions, cid) -> Optional[str]:
+    """Previzualizare câmpuri lipsă -> Salvează ca -> generare DOCX din șablonul curent. Nu modifică contractul."""
+    # 1. Colectăm datele și verificăm ce câmpuri lipsesc
+    try:
+        from contract_generator import _build_mapping, get_missing_placeholders, build_default_filename
+        from database import get_contract as _get_contract
+        contract = _get_contract(cid)
+        if not contract:
+            QMessageBox.warning(parent, "Eroare", "Contractul nu a fost găsit în baza de date.")
+            return None
+        mapping = _build_mapping(contract)
+        missing = get_missing_placeholders(mapping)
+    except Exception as e:
+        QMessageBox.critical(parent, "Eroare", f"Eroare la pregătirea datelor: {e}")
+        return None
+
+    # 2. Avertizare pentru câmpurile goale
+    if missing:
+        msg = ("Următoarele câmpuri lipsesc și vor apărea goale în contract:\n\n• "
+               + "\n• ".join(missing)
+               + "\n\nContinuăm generarea?")
+        reply = QMessageBox.question(parent, "Câmpuri lipsă", msg,
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if reply != QMessageBox.Yes:
+            return None
+
+    # 3. Save As dialog
+    from PySide6.QtWidgets import QFileDialog
+    import os
+    default_name = build_default_filename(contract)
+    default_dir = os.path.abspath("contracts")
+    os.makedirs(default_dir, exist_ok=True)
+    default_path = os.path.join(default_dir, default_name)
+
+    out_path, _ = QFileDialog.getSaveFileName(
+        parent, "Salvează contractul generat",
+        default_path,
+        "Document Word (*.docx)"
+    )
+    if not out_path:
+        return None
+    if not out_path.lower().endswith(".docx"):
+        out_path += ".docx"
+
+    # 4. Generare
+    try:
+        if actions and hasattr(actions, "generate_contract_document"):
+            result_path = actions.generate_contract_document(
+                cid,
+                template_path="templates/contract_template.docx",
+                out_path=out_path
+            )
+        else:
+            from contract_generator import generate_contract
+            r = generate_contract(cid, "templates/contract_template.docx", out_path)
+            result_path = r.get("path") if r else None
+    except Exception as e:
+        QMessageBox.critical(parent, "Eroare la generare", f"Nu am putut genera documentul: {e}")
+        return None
+
+    if not result_path or not os.path.isfile(result_path):
+        QMessageBox.warning(parent, "Eroare",
+                            "Documentul nu a fost creat. Verifică:\n"
+                            "• Că templates/contract_template.docx există\n"
+                            "• Că ai permisiuni de scriere în folderul destinație")
+        return None
+
+    # 5. Succes — oferă deschidere automată
+    reply = QMessageBox.question(
+        parent, "Contract generat cu succes",
+        f"Contractul a fost salvat în:\n{result_path}\n\nDeschideți documentul acum?",
+        QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+    )
+    if reply == QMessageBox.Yes:
+        try:
+            import sys, subprocess
+            if sys.platform.startswith("win"):
+                os.startfile(result_path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", result_path])
+            else:
+                subprocess.Popen(["xdg-open", result_path])
+        except Exception as e:
+            QMessageBox.information(parent, "Info",
+                                    f"Documentul a fost salvat, dar nu am putut să-l deschid:\n{e}")
+    return result_path
+
+
+
 # ---------------------------------------------------------
 # CONTRACTS WINDOW
 # ---------------------------------------------------------
 class ContractsWindow(QDialog):
+    COLS = ["ID", "Număr contract", "Data contract", "Concesionar", "Cod loc", "Sector", "Parcela", "Rând", "Perioadă", "Stare"]
+
     def __init__(self, parent: QWidget = None, actions=None, selected_cod_loc: Optional[str] = None,
                  selected_concesionar_id: Optional[int] = None, filter_cod_loc: Optional[str] = None,
                  filter_concesionar_id: Optional[int] = None):
@@ -539,39 +768,46 @@ class ContractsWindow(QDialog):
         self.setWindowTitle("Contracte de concesiune")
         self.selected_concesionar_id = selected_concesionar_id
         self._only_concesionar_id = filter_concesionar_id
-        self.setMinimumSize(980, 560)
+        self.setMinimumSize(1100, 600)
         self.actions = actions
         self.selected_cod_loc = selected_cod_loc
 
         main = QVBoxLayout()
-
-        # filters
         filter_box = QGroupBox("Filtre")
         f_layout = QHBoxLayout()
         self.filter_numar = QLineEdit()
+        self.filter_concesionar = QLineEdit()
         self.filter_cod_loc = QLineEdit()
         self.filter_numar.setPlaceholderText("Număr contract")
+        self.filter_concesionar.setPlaceholderText("Nume concesionar")
         self.filter_cod_loc.setPlaceholderText("Cod loc")
-        f_layout.addWidget(QLabel("Număr:"))
-        f_layout.addWidget(self.filter_numar)
-        f_layout.addWidget(QLabel("Cod loc:"))
-        f_layout.addWidget(self.filter_cod_loc)
+        for lbl, w in (("Număr:", self.filter_numar), ("Concesionar:", self.filter_concesionar), ("Cod loc:", self.filter_cod_loc)):
+            f_layout.addWidget(QLabel(lbl))
+            f_layout.addWidget(w)
+        self.btn_clear_filters = QPushButton("Șterge filtrele")
+        f_layout.addWidget(self.btn_clear_filters)
         filter_box.setLayout(f_layout)
         main.addWidget(filter_box)
 
-        # table
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels([
-            "ID", "Număr contract", "Data contract",
-            "Data început", "Data sfârșit", "Cod loc"
-        ])
+        self.table = QTableWidget(0, len(self.COLS))
+        self.table.setHorizontalHeaderLabels(self.COLS)
         self.table.setColumnHidden(0, True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         main.addWidget(self.table)
 
-        # buttons
+        nav = QHBoxLayout()
+        self.btn_open_conc = QPushButton("Fișa concesionarului")
+        self.btn_open_loc = QPushButton("Fișa locului")
+        self.btn_on_map = QPushButton("Locul pe hartă")
+        self.btn_loc_history = QPushButton("Istoricul locului")
+        self.btn_plati = QPushButton("Plăți")
+        for b in (self.btn_open_conc, self.btn_open_loc, self.btn_on_map, self.btn_loc_history, self.btn_plati):
+            nav.addWidget(b)
+        nav.addStretch()
+        main.addLayout(nav)
+
         btn_row = QHBoxLayout()
         self.btn_add = QPushButton("Adaugă")
         self.btn_edit = QPushButton("Modifică")
@@ -585,10 +821,8 @@ class ContractsWindow(QDialog):
         btn_row.addWidget(self.btn_generate)
         btn_row.addWidget(self.btn_refresh)
         main.addLayout(btn_row)
-
         self.setLayout(main)
 
-        # signals
         try:
             import access_session
             access_session.gate(self.btn_add, "add")
@@ -601,6 +835,13 @@ class ContractsWindow(QDialog):
         self.btn_delete.clicked.connect(self.delete_contract)
         self.btn_generate.clicked.connect(self.generate_contract)
         self.btn_refresh.clicked.connect(self.reload)
+        self.btn_clear_filters.clicked.connect(self.clear_filters)
+        self.btn_open_conc.clicked.connect(self.open_concesionar)
+        self.btn_open_loc.clicked.connect(self.open_loc)
+        self.btn_on_map.clicked.connect(self.show_on_map)
+        self.btn_loc_history.clicked.connect(self.open_loc_history)
+        self.btn_plati.clicked.connect(self.open_plati)
+        self.table.doubleClicked.connect(lambda *_: self.edit_contract())
 
         if filter_cod_loc:
             self.filter_cod_loc.setText(filter_cod_loc)
@@ -609,47 +850,63 @@ class ContractsWindow(QDialog):
             self.setWindowTitle(f"Contracte de concesiune — istoric concesionar #{filter_concesionar_id}")
 
         self.filter_numar.textChanged.connect(self.reload)
+        self.filter_concesionar.textChanged.connect(self.reload)
         self.filter_cod_loc.textChanged.connect(self.reload)
-
         self.reload()
 
     # ---------------------------------------------------------
-    def reload(self):
-        self.table.setRowCount(0)
+    def clear_filters(self):
+        self._only_concesionar_id = None
+        for w in (self.filter_numar, self.filter_concesionar, self.filter_cod_loc):
+            w.blockSignals(True)
+            w.clear()
+            w.blockSignals(False)
+        self.setWindowTitle("Contracte de concesiune")
+        self.reload()
+
+    def _load_rows(self) -> List[Dict[str, Any]]:
         try:
-            if self.actions and hasattr(self.actions, "load_contracte"):
-                rows = self.actions.load_contracte()
-            elif DB_AVAILABLE and load_contracte:
-                rows = load_contracte()
-            else:
-                rows = []
+            import entity_links as links
+            return links.contracts_overview()
         except Exception:
-            rows = []
+            return []
 
-        num_filter = self.filter_numar.text().strip().lower()
-        cod_filter = self.filter_cod_loc.text().strip().lower()
-
-        for r in rows:
-            numar = str(r.get("numar_contract", "") or "")
-            cod_loc = str(r.get("cod_loc", "") or "")
-
-            if num_filter and num_filter not in numar.lower():
+    def reload(self):
+        keep = self._selected_id()
+        self.table.setRowCount(0)
+        num_f = self.filter_numar.text().strip().lower()
+        con_f = self.filter_concesionar.text().strip().lower()
+        cod_f = self.filter_cod_loc.text().strip().lower()
+        for r in self._load_rows():
+            numar = str(r.get("numar_contract") or "")
+            cod_loc = str(r.get("cod_loc_afisat") or "")
+            nume = r.get("concesionar_nume") or ""
+            if num_f and num_f not in numar.lower():
                 continue
-            if cod_filter and cod_filter not in cod_loc.lower():
+            if cod_f and cod_f not in cod_loc.lower():
+                continue
+            if con_f and con_f not in nume.lower():
                 continue
             if self._only_concesionar_id and r.get("concesionar_id") != self._only_concesionar_id:
                 continue
-
-            row_idx = self.table.rowCount()
-            self.table.insertRow(row_idx)
-            self.table.setItem(row_idx, 0, QTableWidgetItem(str(r.get("id"))))
-            self.table.setItem(row_idx, 1, QTableWidgetItem(numar))
-            self.table.setItem(row_idx, 2, QTableWidgetItem(str(r.get("data_contract", ""))))
-            self.table.setItem(row_idx, 3, QTableWidgetItem(str(r.get("data_inceput", ""))))
-            self.table.setItem(row_idx, 4, QTableWidgetItem(str(r.get("data_sfarsit", ""))))
-            self.table.setItem(row_idx, 5, QTableWidgetItem(cod_loc))
-
+            perioada = " – ".join(x for x in (str(r.get("data_inceput") or ""), str(r.get("data_sfarsit") or "")) if x)
+            vals = [r["id"], numar, r.get("data_contract") or "", nume, cod_loc, r.get("sector") or "",
+                    r.get("parcela") or "", r.get("rand") or "", perioada, r.get("stare") or ""]
+            i = self.table.rowCount()
+            self.table.insertRow(i)
+            for j, v in enumerate(vals):
+                self.table.setItem(i, j, QTableWidgetItem("" if v is None else str(v)))
         self.table.resizeColumnsToContents()
+        if keep:
+            self.select_contract(keep)
+
+    def select_contract(self, contract_id: int) -> bool:
+        for i in range(self.table.rowCount()):
+            it = self.table.item(i, 0)
+            if it and it.text() == str(contract_id):
+                self.table.selectRow(i)
+                return True
+        return False
 
     def on_data_changed(self, entity: str, key: str):
         if entity in ("contract", "concesionar", "loc"):
@@ -671,25 +928,86 @@ class ContractsWindow(QDialog):
         if not cid:
             return None
         try:
-            if self.actions and hasattr(self.actions, "load_contracte"):
-                rows = self.actions.load_contracte()
-            elif DB_AVAILABLE and load_contracte:
-                rows = load_contracte()
-            else:
-                rows = []
-            for r in rows:
-                if r.get("id") == cid:
-                    return r
+            if self.actions and hasattr(self.actions, "get_contract"):
+                return self.actions.get_contract(cid)
+            import database as _db
+            return _db.get_contract(cid)
         except Exception:
             return None
-        return None
+
+    def _selected_or_warn(self) -> Optional[Dict]:
+        cid = self._selected_id()
+        if not cid:
+            QMessageBox.information(self, "Info", "Selectați un contract.")
+            return None
+        import entity_links as links
+        ctx = links.contract_context(cid)
+        if not ctx:
+            QMessageBox.warning(self, "Contract inexistent", "Contractul selectat nu mai există. Lista se reîncarcă.")
+            self.reload()
+            return None
+        return ctx
+
+    # --- navigare (nu modifică niciun contract) ---
+    def open_concesionar(self):
+        ctx = self._selected_or_warn()
+        if not ctx:
+            return
+        if not ctx["concesionar_id"]:
+            QMessageBox.information(self, "Info", "Contractul nu are un concesionar asociat (date istorice incomplete).")
+            return
+        import entity_links_ui as ui
+        ui.open_concesionar_window(self, self.actions, ctx["concesionar_id"])
+        self.reload()
+
+    def open_loc(self):
+        ctx = self._selected_or_warn()
+        if not ctx:
+            return
+        if not ctx["cod_loc"] or not ctx["loc_exists"]:
+            QMessageBox.information(self, "Info", "Contractul nu este legat de un loc existent. Folosiți Modifică → „Asociază / schimbă loc…”.")
+            return
+        import entity_links_ui as ui
+        ui.open_loc_window(self, ctx["cod_loc"])
+        self.reload()
+
+    def show_on_map(self):
+        ctx = self._selected_or_warn()
+        if not ctx:
+            return
+        if not ctx["cod_loc"] or not ctx["loc_exists"]:
+            QMessageBox.information(self, "Info", "Contractul nu este legat de un loc existent.")
+            return
+        import entity_links_ui as ui
+        if not ui.show_on_map(self, ctx["cod_loc"]):
+            QMessageBox.information(self, "Info", "Locul nu a putut fi evidențiat pe hartă (poligon nedesenat sau hartă indisponibilă).")
+
+    def open_loc_history(self):
+        ctx = self._selected_or_warn()
+        if not ctx:
+            return
+        if not ctx["cod_loc"]:
+            QMessageBox.information(self, "Info", "Contractul nu are loc asociat.")
+            return
+        import entity_links_ui as ui
+        ui.open_contracts_window(self, self.actions, cod_loc=ctx["cod_loc"])
+        self.reload()
+
+    def open_plati(self):
+        ctx = self._selected_or_warn()
+        if not ctx:
+            return
+        import entity_links_ui as ui
+        ui.open_plati_window(self, ctx["cod_loc"] or "", ctx["contract_id"])
 
     # ---------------------------------------------------------
     def add_contract(self):
         dlg = AddContractDialog(self, self.actions, existing=None, selected_cod_loc=self.selected_cod_loc,
-                                selected_concesionar_id=self.selected_concesionar_id)
+                                selected_concesionar_id=self.selected_concesionar_id or self._only_concesionar_id)
         if dlg.exec() == QDialog.Accepted:
             self.reload()
+            if dlg.get_saved_id():
+                self.select_contract(dlg.get_saved_id())
 
     def edit_contract(self):
         cid = self._selected_id()
@@ -697,9 +1015,14 @@ class ContractsWindow(QDialog):
             QMessageBox.information(self, "Info", "Selectați un contract.")
             return
         existing = self._selected_row()
-        dlg = AddContractDialog(self, self.actions, existing=existing, selected_cod_loc=self.selected_cod_loc)
-        if dlg.exec() == QDialog.Accepted:
+        if not existing:
+            QMessageBox.warning(self, "Contract inexistent", "Contractul selectat nu mai există. Lista se reîncarcă.")
             self.reload()
+            return
+        dlg = AddContractDialog(self, self.actions, existing=existing)
+        dlg.exec()
+        self.reload()
+        self.select_contract(cid)
 
     def delete_contract(self):
         cid = self._selected_id()
@@ -724,94 +1047,9 @@ class ContractsWindow(QDialog):
             QMessageBox.critical(self, "Eroare", f"Eroare la ștergere: {e}")
         self.reload()
 
-    # ---------------------------------------------------------
     def generate_contract(self):
         cid = self._selected_id()
         if not cid:
             QMessageBox.information(self, "Info", "Selectați un contract din listă.")
             return
-
-        # 1. Colectăm datele și verificăm ce câmpuri lipsesc
-        try:
-            from contract_generator import _build_mapping, get_missing_placeholders, build_default_filename
-            from database import get_contract as _get_contract
-            contract = _get_contract(cid)
-            if not contract:
-                QMessageBox.warning(self, "Eroare", "Contractul nu a fost găsit în baza de date.")
-                return
-            mapping = _build_mapping(contract)
-            missing = get_missing_placeholders(mapping)
-        except Exception as e:
-            QMessageBox.critical(self, "Eroare", f"Eroare la pregătirea datelor: {e}")
-            return
-
-        # 2. Avertizare pentru câmpurile goale
-        if missing:
-            msg = ("Următoarele câmpuri lipsesc și vor apărea goale în contract:\n\n• "
-                   + "\n• ".join(missing)
-                   + "\n\nContinuăm generarea?")
-            reply = QMessageBox.question(self, "Câmpuri lipsă", msg,
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-            if reply != QMessageBox.Yes:
-                return
-
-        # 3. Save As dialog
-        from PySide6.QtWidgets import QFileDialog
-        import os
-        default_name = build_default_filename(contract)
-        default_dir = os.path.abspath("contracts")
-        os.makedirs(default_dir, exist_ok=True)
-        default_path = os.path.join(default_dir, default_name)
-
-        out_path, _ = QFileDialog.getSaveFileName(
-            self, "Salvează contractul generat",
-            default_path,
-            "Document Word (*.docx)"
-        )
-        if not out_path:
-            return
-        if not out_path.lower().endswith(".docx"):
-            out_path += ".docx"
-
-        # 4. Generare
-        try:
-            actions = self.actions
-            if actions and hasattr(actions, "generate_contract_document"):
-                result_path = actions.generate_contract_document(
-                    cid,
-                    template_path="templates/contract_template.docx",
-                    out_path=out_path
-                )
-            else:
-                from contract_generator import generate_contract
-                r = generate_contract(cid, "templates/contract_template.docx", out_path)
-                result_path = r.get("path") if r else None
-        except Exception as e:
-            QMessageBox.critical(self, "Eroare la generare", f"Nu am putut genera documentul: {e}")
-            return
-
-        if not result_path or not os.path.isfile(result_path):
-            QMessageBox.warning(self, "Eroare",
-                                "Documentul nu a fost creat. Verifică:\n"
-                                "• Că templates/contract_template.docx există\n"
-                                "• Că ai permisiuni de scriere în folderul destinație")
-            return
-
-        # 5. Succes — oferă deschidere automată
-        reply = QMessageBox.question(
-            self, "Contract generat cu succes",
-            f"Contractul a fost salvat în:\n{result_path}\n\nDeschideți documentul acum?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
-        )
-        if reply == QMessageBox.Yes:
-            try:
-                import sys, subprocess
-                if sys.platform.startswith("win"):
-                    os.startfile(result_path)
-                elif sys.platform == "darwin":
-                    subprocess.Popen(["open", result_path])
-                else:
-                    subprocess.Popen(["xdg-open", result_path])
-            except Exception as e:
-                QMessageBox.information(self, "Info",
-                                        f"Documentul a fost salvat, dar nu am putut să-l deschid:\n{e}")
+        generate_contract_flow(self, self.actions, cid)

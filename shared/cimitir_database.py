@@ -1022,12 +1022,65 @@ _CONTRACT_OWNER_FIELDS = (
 
 
 def save_contract(data: Dict[str, Any], contract_id: Optional[int] = None) -> Optional[int]:
-    """Salvează/actualizează un contract. Autofill din locuri_de_veci după cod_loc.
-    La actualizare, câmpurile istorice `owner_*` (instantaneul titularului la emitere) se păstrează dacă cheia lipsește din `data`."""
+    """Salvează/actualizează un contract. Autofill din locuri_de_veci după cod_loc (doar la creare).
+    La ACTUALIZARE se scriu numai cheile prezente în `data` (cele absente rămân neschimbate); `owner_*` (instantaneul istoric
+    al titularului) și legăturile `concesionar_id`/`id_loc`/`cod_loc` nu se modifică niciodată aici — schimbarea titularului sau a
+    locului se face explicit prin `reassign_contract_concesionar` / `associate_contract_loc`."""
     if not _allowed("edit" if contract_id else "add", "salvarea contractului"):
         return None
     conn = get_connection()
     try:
+        def norm(x): return "" if x is None else x
+
+        if contract_id:
+            stored = conn.execute("SELECT * FROM contracte WHERE id = ?", (contract_id,)).fetchone()
+            if stored is None:
+                _refuse(f"Contractul {contract_id} nu există; nu s-a modificat nimic.")
+                return None
+            if "concesionar_id" in data and (data.get("concesionar_id") or None) != (stored["concesionar_id"] or None):
+                _refuse("Concesionarul unui contract existent nu se schimbă la editarea obișnuită; folosiți „Schimbă concesionarul”.")
+                return None
+            if "cod_loc" in data and (data.get("cod_loc") or "") != (stored["cod_loc"] or ""):
+                _refuse("Locul unui contract existent nu se schimbă la editarea obișnuită; folosiți „Asociază loc”.")
+                return None
+            loc_row = None
+            if stored["cod_loc"]:
+                loc_row = conn.execute("SELECT parcela, rand, numar, suprafata, sector FROM locuri_de_veci WHERE cod_loc = ?",
+                                       (stored["cod_loc"],)).fetchone()
+            if loc_row:
+                for key, col in (("cemetery_parcel", "parcela"), ("cemetery_row", "rand"), ("cemetery_tomb", "numar"),
+                                 ("sector", "sector")):
+                    if key in data and not data.get(key):
+                        data[key] = loc_row[col] or ""
+                if "tomb_surface_m2" in data and not data.get("tomb_surface_m2"):
+                    data["tomb_surface_m2"] = loc_row["suprafata"] if loc_row["suprafata"] is not None else ""
+            fixed = {"concesionar_id", "id_loc", "cod_loc", *_CONTRACT_OWNER_FIELDS}
+            pairs = []
+            for f in _CONTRACT_FIELDS:
+                if f in fixed or f not in data:
+                    continue
+                v = data.get(f)
+                if f == "extra_data":
+                    if v is None:
+                        continue
+                    v = json.dumps(v)
+                elif f == "valabilitate":
+                    if v is None:
+                        continue
+                elif f == "tomb_surface_m2":
+                    v = v if v is not None else ""
+                else:
+                    v = norm(v)
+                pairs.append((f, v))
+            for f in _CONTRACT_OWNER_FIELDS:
+                if f in data:
+                    pairs.append((f, norm(data.get(f))))
+            if pairs:
+                set_clause = ", ".join([f"{f}=?" for f, _ in pairs])
+                conn.execute(f"UPDATE contracte SET {set_clause} WHERE id=?", (*[v for _, v in pairs], contract_id))
+            _audit(conn, "contract.update", f"contract:{contract_id}", f"nr={norm(data.get('numar_contract', stored['numar_contract']))} loc={stored['cod_loc'] or ''}")
+            return contract_id
+
         cod_loc_val = data.get("cod_loc") or ""
         id_loc = None
         if cod_loc_val:
@@ -1055,7 +1108,6 @@ def save_contract(data: Dict[str, Any], contract_id: Optional[int] = None) -> Op
                 print(f"[DB WARN save_contract] concesionar_id invalid: {concesionar_id}")
                 return None
 
-        def norm(x): return "" if x is None else x
         values = [
             norm(data.get("numar_contract")), norm(data.get("data_contract")),
             norm(data.get("data_inceput")), norm(data.get("data_sfarsit")),
@@ -1070,18 +1122,6 @@ def save_contract(data: Dict[str, Any], contract_id: Optional[int] = None) -> Op
             data.get("tomb_surface_m2") if data.get("tomb_surface_m2") is not None else "",
             norm(data.get("owner_fullname_2")), norm(data.get("sector")),
         ]
-
-        if contract_id:
-            keep = [f for f in ("valabilitate", "extra_data") if data.get(f) is None]
-            keep += [f for f in _CONTRACT_OWNER_FIELDS if f not in data]
-            pairs = [(f, v) for f, v in zip(_CONTRACT_FIELDS, values) if f not in keep]
-            set_clause = ", ".join([f"{f}=?" for f, _ in pairs])
-            cur = conn.execute(f"UPDATE contracte SET {set_clause} WHERE id=?", (*[v for _, v in pairs], contract_id))
-            if cur.rowcount == 0:
-                _refuse(f"Contractul {contract_id} nu există; nu s-a modificat nimic.")
-                return None
-            _audit(conn, "contract.update", f"contract:{contract_id}", f"nr={norm(data.get('numar_contract'))} loc={cod_loc_val}")
-            return contract_id
         cur = conn.execute(
             f"INSERT INTO contracte ({', '.join(_CONTRACT_FIELDS)}) VALUES ({', '.join(['?']*len(_CONTRACT_FIELDS))})",
             tuple(values)
@@ -1091,6 +1131,79 @@ def save_contract(data: Dict[str, Any], contract_id: Optional[int] = None) -> Op
     except Exception as e:
         print(f"[DB ERROR save_contract] {e}")
         return None
+    finally:
+        conn.close()
+
+
+_OWNER_FROM_PERSON = (("owner_fullname", None), ("owner_address", "adresa"), ("owner_id_card_serie_number", "bi_ci"),
+                      ("owner_cnp", "cnp"), ("owner_phone", "telefon"), ("owner_email", "email"))
+
+
+def reassign_contract_concesionar(contract_id: int, new_concesionar_id: int, update_owner_snapshot: bool = False,
+                                  reason: str = "") -> bool:
+    """Asociere/corectare EXPLICITĂ a concesionarului unui contract (nu face parte din editarea obișnuită). Cere dreptul „edit”.
+    Implicit păstrează instantaneul istoric `owner_*`; cu `update_owner_snapshot=True` îl rescrie din fișa persoanei noi (corectura
+    unei asocieri greșite). Operațiunea se înregistrează în jurnal (valori vechi/noi, fără date personale în clar)."""
+    if not _allowed("edit", "schimbarea concesionarului unui contract"):
+        return False
+    conn = get_connection()
+    try:
+        old = conn.execute("SELECT id, concesionar_id, numar_contract FROM contracte WHERE id=?", (contract_id,)).fetchone()
+        if old is None:
+            _refuse(f"Contractul {contract_id} nu mai există; nu s-a modificat nimic.")
+            return False
+        person = conn.execute("SELECT * FROM concesionari WHERE id=?", (new_concesionar_id,)).fetchone()
+        if person is None:
+            _refuse("Concesionarul ales nu mai există; nu s-a modificat nimic.")
+            return False
+        if old["concesionar_id"] == new_concesionar_id and not update_owner_snapshot:
+            return True
+        sets, vals = ["concesionar_id=?"], [new_concesionar_id]
+        if update_owner_snapshot:
+            full = f"{person['nume'] or ''} {person['prenume'] or ''}".strip()
+            for col, src in _OWNER_FROM_PERSON:
+                sets.append(f"{col}=?")
+                vals.append(full if src is None else (person[src] or ""))
+            sets.append("owner_fullname_2=?")
+            vals.append(full)
+        conn.execute(f"UPDATE contracte SET {', '.join(sets)} WHERE id=?", (*vals, contract_id))
+        _audit(conn, "contract.reassign_concesionar", f"contract:{contract_id}",
+               f"concesionar:{old['concesionar_id'] or '-'}->concesionar:{new_concesionar_id} snapshot={'rescris' if update_owner_snapshot else 'pastrat'} motiv={reason}")
+        return True
+    except Exception as e:
+        print(f"[DB ERROR reassign_contract_concesionar] {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def associate_contract_loc(contract_id: int, cod_loc: str, reason: str = "") -> bool:
+    """Asociere/corectare EXPLICITĂ a locului unui contract (ex. contract istoric fără loc legat). Locul trebuie să existe deja
+    (nu se creează locuri). Nu modifică plăți/documente/înhumați. Cere dreptul „edit”; se înregistrează în jurnal."""
+    if not _allowed("edit", "asocierea locului la contract"):
+        return False
+    conn = get_connection()
+    try:
+        old = conn.execute("SELECT id, id_loc, cod_loc FROM contracte WHERE id=?", (contract_id,)).fetchone()
+        if old is None:
+            _refuse(f"Contractul {contract_id} nu mai există; nu s-a modificat nimic.")
+            return False
+        loc = conn.execute("SELECT id, parcela, rand, numar, suprafata, sector FROM locuri_de_veci WHERE cod_loc=?", (cod_loc,)).fetchone()
+        if loc is None:
+            _refuse(f"Locul „{cod_loc}” nu există în Locuri de veci; nu se creează locuri noi din contract.")
+            return False
+        conn.execute("UPDATE contracte SET id_loc=?, cod_loc=?, "
+                     "cemetery_parcel=CASE WHEN COALESCE(cemetery_parcel,'')='' THEN ? ELSE cemetery_parcel END, "
+                     "cemetery_row=CASE WHEN COALESCE(cemetery_row,'')='' THEN ? ELSE cemetery_row END, "
+                     "cemetery_tomb=CASE WHEN COALESCE(cemetery_tomb,'')='' THEN ? ELSE cemetery_tomb END, "
+                     "sector=CASE WHEN COALESCE(sector,'')='' THEN ? ELSE sector END WHERE id=?",
+                     (loc["id"], cod_loc, loc["parcela"] or "", loc["rand"] or "", loc["numar"] or "", loc["sector"] or "", contract_id))
+        _audit(conn, "contract.associate_loc", f"contract:{contract_id}",
+               f"loc:{old['cod_loc'] or '-'}->loc:{cod_loc} motiv={reason}")
+        return True
+    except Exception as e:
+        print(f"[DB ERROR associate_contract_loc] {e}")
+        return False
     finally:
         conn.close()
 

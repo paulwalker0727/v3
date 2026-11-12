@@ -312,6 +312,19 @@ class EditorActions:
             self._emit_update("contract", str(saved_id))
         return saved_id
 
+    def reassign_contract_concesionar(self, contract_id: int, new_concesionar_id: int,
+                                      update_owner_snapshot: bool = False, reason: str = "") -> bool:
+        ok = db.reassign_contract_concesionar(contract_id, new_concesionar_id, update_owner_snapshot, reason)
+        if ok:
+            self._emit_update("contract", str(contract_id))
+        return ok
+
+    def associate_contract_loc(self, contract_id: int, cod_loc: str, reason: str = "") -> bool:
+        ok = db.associate_contract_loc(contract_id, cod_loc, reason)
+        if ok:
+            self._emit_update("contract", str(contract_id))
+        return ok
+
     def delete_contract(self, contract_id: int) -> bool:
         ok = db.delete_contract(contract_id)
         if ok:

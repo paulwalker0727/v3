@@ -927,9 +927,32 @@ class RightPanel(QWidget):
         form.addRow("Valabilitate:", self.ju_valabilitate)
 
         btn_row = QHBoxLayout()
-        self.btn_save_contract = QPushButton("Salvează contract")
+        self.btn_save_contract = QPushButton("Modifică / adaugă contract…")
+        self.btn_save_contract.setToolTip("Deschide dialogul de contract (același ca în modulul Contracte): salvează doar ce modificați.")
         btn_row.addStretch()
         btn_row.addWidget(self.btn_save_contract)
+
+        nav_row = QHBoxLayout()
+        self.btn_ju_fisa_conc = QPushButton("Fișa concesionarului")
+        self.btn_ju_conc = QPushButton("Concesionari asociați / alege")
+        self.btn_ju_new = QPushButton("Contract nou")
+        self.btn_ju_history = QPushButton("Istoric contracte")
+        self.btn_ju_generate = QPushButton("Generează contract")
+        self.btn_ju_plati = QPushButton("Plăți contract")
+        for b in (self.btn_ju_fisa_conc, self.btn_ju_conc, self.btn_ju_new, self.btn_ju_history, self.btn_ju_generate, self.btn_ju_plati):
+            nav_row.addWidget(b)
+        try:
+            import access_session
+            access_session.gate(self.btn_save_contract, "edit")
+            access_session.gate(self.btn_ju_new, "add")
+        except Exception:
+            pass
+        self.btn_ju_fisa_conc.clicked.connect(self._ju_open_concesionar)
+        self.btn_ju_conc.clicked.connect(self._ju_open_linked)
+        self.btn_ju_new.clicked.connect(self._ju_new_contract)
+        self.btn_ju_history.clicked.connect(self._ju_open_history)
+        self.btn_ju_generate.clicked.connect(self._ju_generate)
+        self.btn_ju_plati.clicked.connect(self._ju_open_plati)
 
         # strip documente contract (scan contract + acte)
         self.doc_strip_contract = DocumentStrip(
@@ -940,6 +963,7 @@ class RightPanel(QWidget):
         v = QVBoxLayout()
         v.addLayout(form)
         v.addLayout(btn_row)
+        v.addLayout(nav_row)
         v.addSpacing(6)
         v.addWidget(self.doc_strip_contract)
         v.addStretch()
@@ -1490,51 +1514,101 @@ class RightPanel(QWidget):
         except Exception:
             pass
 
-    def _save_contract_from_juridic(self):
-        if not self.current_cod_loc:
-            show_message(self, "Eroare", "Selectați un loc înainte de a salva contractul.", level="warning")
-            return
+    def _ju_actions(self):
+        return getattr(self.w, "actions", None) if self.w else None
 
-        conces_label = self.cmb_concesionar.currentText()
-        conces_id = self._conces_map.get(conces_label)
-
-        contract_data = {
-            "numar_contract": self.ju_contract_nr.text().strip(),
-            "data_contract": self.ju_contract_data.text().strip(),
-            "data_inceput": self.ju_contract_data.text().strip(),
-            "data_sfarsit": self.ju_valabilitate.text().strip(),
-            "cod_loc": self.current_cod_loc,
-            "concesionar_id": conces_id,
-            "observatii": ""
-        }
-
+    def _ju_selected_contract(self) -> Optional[Dict]:
         idx = self.cmb_contracte.currentIndex()
-        selected = self.cmb_contracte.itemData(idx) if idx >= 0 else None
-        contract_id = selected.get("id") if isinstance(selected, dict) else None
+        d = self.cmb_contracte.itemData(idx) if idx >= 0 else None
+        return d if isinstance(d, dict) else None
 
-        try:
-            if self.w and hasattr(self.w, "actions") and callable(getattr(self.w.actions, "save_contract", None)):
-                saved = self.w.actions.save_contract(contract_data, contract_id=contract_id)
-                if saved:
-                    show_message(self, "OK", "Contract salvat.")
-                    # reload contracts and select saved one
-                    self._load_juridic_lists()
-                    for i in range(self.cmb_contracte.count()):
-                        d = self.cmb_contracte.itemData(i)
-                        if isinstance(d, dict) and d.get("id") == saved:
-                            self.cmb_contracte.setCurrentIndex(i)
-                            break
-                    # actualizează doc strip pentru contract
-                    try:
-                        self.doc_strip_contract.set_entity("contract", saved)
-                    except Exception:
-                        pass
-                else:
-                    show_message(self, "Eroare", "Nu am putut salva contractul.", level="warning")
-            else:
-                show_message(self, "Eroare", "Funcția de salvare contract nu este disponibilă.", level="warning")
-        except Exception as e:
-            show_message(self, "Eroare", f"Nu am putut salva contractul: {e}", level="error")
+    def _ju_need_loc(self) -> bool:
+        if not self.current_cod_loc:
+            show_message(self, "Eroare", "Selectați un loc înainte.", level="warning")
+            return False
+        return True
+
+    def _ju_refresh(self, select_contract_id: Optional[int] = None):
+        keep = select_contract_id or (self._ju_selected_contract() or {}).get("id")
+        self._load_juridic_lists()
+        for i in range(self.cmb_contracte.count()):
+            d = self.cmb_contracte.itemData(i)
+            if isinstance(d, dict) and d.get("id") == keep:
+                self.cmb_contracte.setCurrentIndex(i)
+                break
+        if keep:
+            try:
+                self.doc_strip_contract.set_entity("contract", keep)
+            except Exception:
+                pass
+
+    def _save_contract_from_juridic(self):
+        """Editează contractul selectat sau creează unul nou prin dialogul comun AddContractDialog (nu mai scrie câmpuri parțiale)."""
+        if not self._ju_need_loc():
+            return
+        from contracts_window import AddContractDialog
+        cur = self._ju_selected_contract()
+        existing = None
+        if cur:
+            try:
+                existing = self._ju_actions().get_contract(cur["id"]) if hasattr(self._ju_actions(), "get_contract") else db.get_contract(cur["id"])
+            except Exception:
+                existing = None
+            if not existing:
+                show_message(self, "Contract inexistent", "Contractul selectat nu mai există.", level="warning")
+                self._ju_refresh()
+                return
+        dlg = AddContractDialog(self, self._ju_actions(), existing=existing,
+                                selected_cod_loc=None if existing else self.current_cod_loc,
+                                selected_concesionar_id=self._conces_map.get(self.cmb_concesionar.currentText()) if not existing else None)
+        dlg.exec()
+        self._ju_refresh(dlg.get_saved_id() or (existing or {}).get("id"))
+
+    def _ju_open_concesionar(self):
+        cur = self._ju_selected_contract()
+        cid = (cur or {}).get("concesionar_id") or self._conces_map.get(self.cmb_concesionar.currentText())
+        if not cid:
+            show_message(self, "Info", "Contractul selectat nu are un concesionar asociat.", level="warning")
+            return
+        import entity_links_ui as ui
+        ui.open_concesionar_window(self, self._ju_actions(), cid)
+        self._ju_refresh()
+
+    def _ju_open_linked(self):
+        if not self._ju_need_loc():
+            return
+        from entity_links_ui import LinkedRecordsDialog
+        LinkedRecordsDialog(self, self._ju_actions(), "loc", self.current_cod_loc, self.current_cod_loc).exec()
+        self._ju_refresh()
+
+    def _ju_new_contract(self):
+        if not self._ju_need_loc():
+            return
+        import entity_links_ui as ui
+        ui.open_contract_dialog(self, self._ju_actions(), cod_loc=self.current_cod_loc)
+        self._ju_refresh()
+
+    def _ju_open_history(self):
+        if not self._ju_need_loc():
+            return
+        import entity_links_ui as ui
+        ui.open_contracts_window(self, self._ju_actions(), cod_loc=self.current_cod_loc)
+        self._ju_refresh()
+
+    def _ju_generate(self):
+        cur = self._ju_selected_contract()
+        if not cur:
+            show_message(self, "Info", "Selectați un contract.", level="warning")
+            return
+        from contracts_window import generate_contract_flow
+        generate_contract_flow(self, self._ju_actions(), cur["id"])
+
+    def _ju_open_plati(self):
+        if not self._ju_need_loc():
+            return
+        import entity_links_ui as ui
+        cur = self._ju_selected_contract()
+        ui.open_plati_window(self, self.current_cod_loc, (cur or {}).get("id"))
 
     # -------------------------
     # Editing helpers

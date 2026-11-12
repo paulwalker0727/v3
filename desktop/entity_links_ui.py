@@ -37,7 +37,47 @@ def open_contracts_window(parent, actions, cod_loc: Optional[str] = None, conces
     return win
 
 
+def _parent_of(w):
+    p = getattr(w, "parent", None)
+    return p() if callable(p) else p
+
+
+def _ancestor(widget, cls_name: str):
+    """Fereastra deja deschisă de tipul cerut în lanțul de părinți (evită ferestre duplicate); None dacă nu există."""
+    chain, w = [], widget
+    while w is not None:
+        if type(w).__name__ == cls_name:
+            return w, chain
+        chain.append(w)
+        w = _parent_of(w)
+    return None, []
+
+
+def _close_chain(chain) -> None:
+    for w in chain:
+        if isinstance(w, QDialog):
+            w.accept()
+
+
+def _clear_line_filters(win) -> None:
+    for name in dir(win):
+        if name.startswith("filter_"):
+            w = getattr(win, name, None)
+            if isinstance(w, QLineEdit):
+                w.clear()
+
+
 def open_loc_window(parent, cod_loc: str):
+    win, chain = _ancestor(parent, "LocuriWindow")
+    if win is not None:
+        if not win.select_cod_loc(cod_loc):
+            try:
+                win.clear_filters()
+            except Exception:
+                pass
+            win.select_cod_loc(cod_loc)
+        _close_chain(chain)
+        return win
     from locuri_window import LocuriWindow
     win = LocuriWindow(parent, initial_cod_loc=cod_loc)
     win.exec()
@@ -45,10 +85,45 @@ def open_loc_window(parent, cod_loc: str):
 
 
 def open_concesionar_window(parent, actions, concesionar_id: int):
+    win, chain = _ancestor(parent, "ConcesionariWindow")
+    if win is not None:
+        if not win.select_concesionar(concesionar_id):
+            _clear_line_filters(win)
+            win.reload()
+            win.select_concesionar(concesionar_id)
+        _close_chain(chain)
+        return win
     from concesionari_window import ConcesionariWindow
     win = ConcesionariWindow(parent, actions=actions, initial_id=concesionar_id)
     win.exec()
     return win
+
+
+def open_plati_window(parent, cod_loc: str, contract_id: Optional[int] = None):
+    """Plățile locului, cu filtrul pe contractul ales (doar citire/filtrare; nu modifică nimic la deschidere)."""
+    from plati_window import PlatiWindow
+    win = PlatiWindow(parent, cod_loc=cod_loc or "")
+    if contract_id:
+        for i in range(win.cmb_filter_contract.count()):
+            if win.cmb_filter_contract.itemData(i) == contract_id:
+                win.cmb_filter_contract.setCurrentIndex(i)
+                break
+    win.exec()
+    return win
+
+
+def show_on_map(widget, cod_loc: str) -> bool:
+    """Evidențiază locul pe harta ferestrei principale (aceeași selecție ca la clic pe hartă) și închide dialogurile care o acoperă."""
+    chain, w = [], widget
+    while w is not None and not callable(getattr(w, "highlight_loc_by_cod", None)):
+        chain.append(w)
+        w = _parent_of(w)
+    if w is None:
+        return False
+    ok = bool(w.highlight_loc_by_cod(cod_loc))
+    if ok:
+        _close_chain(chain)
+    return ok
 
 
 class PickDialog(QDialog):
