@@ -23,7 +23,9 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shared"))
 import cimitir_backup
 import cimitir_config
+import macos_support
 
+macos_support.apply()  # doar macOS: licență + amprentă în ~/CIMITIR-MAC (nu face nimic pe Windows)
 RESTORE_MESSAGE = cimitir_backup.apply_pending_restore(cimitir_config.working_dir())
 
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox

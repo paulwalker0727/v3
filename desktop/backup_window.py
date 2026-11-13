@@ -199,12 +199,18 @@ class BackupWindow(QDialog):
         btn_save.setObjectName("backup-save-settings")
         btn_save.clicked.connect(self.save_settings)
         lay.addWidget(btn_save)
-        lay.addWidget(QLabel("Programare Windows (rulează și când MAIN este închis) — comanda de înregistrare (ora = „Ora de pornire”, rulată o dată, ca administrator dacă e cerut):"))
-        self.txt_command = QPlainTextEdit(scheduler_command(self.time_start.time().toString("HH:mm")))
+        if sys.platform == "darwin":
+            lay.addWidget(QLabel("Programarea automată (Planificatorul Windows) nu este disponibilă pe macOS: nu se creează servicii care pornesc "
+                                 "singure. Copiile automate rulează cât timp aplicația este deschisă (planificatorul intern), după setările de mai sus, sau manual din această fereastră."))
+            self.txt_command = QPlainTextEdit("Indisponibil pe macOS.")
+        else:
+            lay.addWidget(QLabel("Programare Windows (rulează și când MAIN este închis) — comanda de înregistrare (ora = „Ora de pornire”, rulată o dată, ca administrator dacă e cerut):"))
+            self.txt_command = QPlainTextEdit(scheduler_command(self.time_start.time().toString("HH:mm")))
         self.txt_command.setObjectName("backup-scheduler-command")
         self.txt_command.setReadOnly(True)
         self.txt_command.setMaximumHeight(80)
-        self.time_start.timeChanged.connect(lambda t: self.txt_command.setPlainText(scheduler_command(t.toString("HH:mm"))))
+        if sys.platform != "darwin":
+            self.time_start.timeChanged.connect(lambda t: self.txt_command.setPlainText(scheduler_command(t.toString("HH:mm"))))
         lay.addWidget(self.txt_command)
         lay.addStretch(1)
         return w

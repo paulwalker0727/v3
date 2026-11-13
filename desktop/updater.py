@@ -195,6 +195,8 @@ def attach_update_banner(window, version: Optional[str] = None) -> Optional[Upda
     Întoarce checker-ul (util în teste) sau None dacă s-a verificat deja.
     """
     global _checked_once
+    if os.environ.get("CIMITIR_DISABLE_UPDATE_CHECK", "").strip() == "1":
+        return None
     if _checked_once or not hasattr(window, "addToolBar"):
         return None
     _checked_once = True

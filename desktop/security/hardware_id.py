@@ -84,9 +84,9 @@ def _disk_serial() -> str:
                     serials.append(v)
         return "|".join(sorted(serials))
     if sys.platform == "darwin":
-        out = _run(["system_profiler", "SPStorageDataType"])
+        out = _run(["diskutil", "info", "/"])  # volumul de sistem: determinist (system_profiler listează mai multe volume, în ordine variabilă)
         for line in out.splitlines():
-            if "Volume UUID" in line:
+            if "Volume UUID" in line and ":" in line:
                 return line.split(":", 1)[1].strip()
         return ""
     # linux — necesită root pentru hdparm; folosim /sys ca alternativă neinvazivă
