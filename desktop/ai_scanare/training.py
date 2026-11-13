@@ -37,7 +37,7 @@ try:
     import database as _db
     DATA_DIR = Path(_db.DATA_DIR)
 except Exception:
-    DATA_DIR = Path(os.path.expanduser("~/.local/share/Cimitir"))
+    DATA_DIR = Path(os.path.expanduser("~/CIMITIR-MAC/date/cimitir-data" if sys.platform == "darwin" else "~/.local/share/Cimitir"))
 
 TRAIN_ROOT = DATA_DIR / "ai_training"
 SAMPLES_DIR = TRAIN_ROOT / "training_data"   # buletin_new/, buletin_old/, adeverinta_adresa/, certificat_deces/

@@ -372,7 +372,8 @@ def _external_backup_dir(data_dir: Path) -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
     elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
+        import cimitir_platform
+        base = cimitir_platform.mac_data_root()
     else:
         base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
     suffix = hashlib.sha256(os.path.normcase(str(Path(data_dir).resolve())).encode("utf-8")).hexdigest()[:12]
@@ -475,7 +476,8 @@ def _failure_fallback_log() -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
     elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Logs"
+        import cimitir_platform
+        return cimitir_platform.mac_data_root() / "logs" / "backup-errors.jsonl"
     else:
         base = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
     return base / "Cimitir" / "backup-errors.jsonl"
