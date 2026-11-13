@@ -381,3 +381,68 @@ def test_update_check_can_be_disabled_for_the_test_phase(monkeypatch):
     monkeypatch.setattr(updater, "_checked_once", False)
     assert updater.attach_update_banner(object()) is None
     assert updater._checked_once is False
+
+
+def test_map_label_fonts_keep_the_windows_size_on_macos_and_are_untouched_elsewhere(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    win = theme.scene_font("Arial", 11)
+    assert win.family() == "Arial" and win.pointSize() == 11 and not win.bold()
+    assert theme.scene_font("Arial", 10, bold=True).bold()
+    monkeypatch.setattr(sys, "platform", "darwin")
+    mac = theme.scene_font("Arial", 11)
+    assert mac.pixelSize() == 15 and mac.family() == "Arial"          # 11 pt Windows = 14,7 px
+    assert theme.scene_font("Arial", 7).pixelSize() == 9 and theme.scene_font("Arial", 10, bold=True).bold()
+
+
+def test_map_code_uses_scene_font_for_all_scene_labels():
+    for name in ("map_editor_actions.py", "map_editor_advanced.py", "ui_mainwindow.py"):
+        text = (DESKTOP / name).read_text(encoding="utf-8")
+        assert 'QFont("Arial"' not in text and "scene_font(" in text
+
+
+def _exit_backup_run(tmp_path, body):
+    import json
+    import subprocess
+    code = (
+        "import json, os, sys\n"
+        f"sys.path.insert(0, {str(DESKTOP)!r}); sys.path.insert(0, {str(SHARED)!r}); os.chdir({str(DESKTOP)!r})\n"
+        "from PySide6.QtWidgets import QApplication\napp = QApplication([])\n"
+        "import database as db, backup_window, cimitir_backup\ndb.init_db()\n"
+        f"db.set_setting('backup_dir', {str(tmp_path / 'bk')!r})\nout = {{}}\n"
+        + body + "\nprint('RESULT ' + json.dumps(out, default=str))\n")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CIMITIR_")}
+    env.update(CIMITIR_DATA_DIR=str(tmp_path / "data"), CIMITIR_ENV_FILE=str(tmp_path / "nu.env"), CIMITIR_LOG_DIR=str(tmp_path / "logs"),
+               CIMITIR_DB_ENGINE="sqlite", DATABASE_URL="", QT_QPA_PLATFORM="offscreen")
+    done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-3000:]
+    return json.loads(next(ln for ln in done.stdout.splitlines() if ln.startswith("RESULT "))[7:])
+
+
+def test_exit_backup_on_macos_makes_one_verified_copy_and_skips_repeats_within_the_hour(tmp_path):
+    out = _exit_backup_run(tmp_path, """
+sys.platform = 'darwin'
+first = backup_window.run_exit_backup()
+second = backup_window.run_exit_backup()
+out['first'] = first['result']; out['second'] = second['result']; out['trigger'] = first.get('trigger')
+out['copies'] = len(os.listdir(os.path.join(os.path.dirname(os.environ['CIMITIR_DATA_DIR']), 'bk')))
+out['verified'] = first.get('verified')
+""")
+    assert out["first"] == "ok" and out["trigger"] == "exit" and out["verified"] is True
+    assert out["second"] == "skipped" and out["copies"] == 1
+
+
+def test_exit_backup_respects_both_off_switches_and_is_inactive_off_macos(tmp_path):
+    out = _exit_backup_run(tmp_path, """
+out['windows'] = backup_window.run_exit_backup()['result']
+sys.platform = 'darwin'
+db.set_setting('backup_on_exit', '0'); out['exit_off'] = backup_window.run_exit_backup()['result']
+db.set_setting('backup_on_exit', '1'); db.set_setting('backup_enabled', '0'); out['backup_off'] = backup_window.run_exit_backup()['result']
+out['bk_exists'] = os.path.exists(os.path.join(os.path.dirname(os.environ['CIMITIR_DATA_DIR']), 'bk'))
+""")
+    assert out["windows"] == "disabled" and out["exit_off"] == "disabled" and out["backup_off"] == "disabled" and out["bk_exists"] is False
+
+
+def test_main_runs_the_exit_backup_only_on_the_real_exit_path():
+    text = (DESKTOP / "main.py").read_text(encoding="utf-8")
+    exit_block = text.index('if not logout_flag["value"]:')
+    assert text.index("run_exit_backup()") > exit_block and text.index("run_exit_backup()") < text.index('"app_exit"')

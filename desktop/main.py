@@ -205,6 +205,11 @@ def main() -> int:
                 break
             if not logout_flag["value"]:
                 try:
+                    from backup_window import run_exit_backup
+                    run_exit_backup()  # doar macOS; pe Windows returnează imediat
+                except Exception as exc:
+                    logger.warning("Copia la ieșire a eșuat: %s", exc)
+                try:
                     from security import audit_log
                     audit_log.log(user.get("username", "?"), "app_exit")
                 except Exception:

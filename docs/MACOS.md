@@ -74,8 +74,8 @@ Backupurile sunt în `~/CIMITIR-MAC/date/` — dacă vrei să păstrezi ceva, co
 | 4 | Licență: `validator.py` pe non-Windows ia primele 64 de caractere din `ioreg` (conțin contoare variabile) și numele calculatorului → **amprentă instabilă**; fișierul licenței în `~/.config` | licența s-ar invalida | `desktop/macos_support.py` (activat din `main.py`): IOPlatformUUID + serie + UUID volum, fără hostname; `XDG_CONFIG_HOME` → `date/config`. `desktop/license/` rămâne **neschimbat** (testul `test_license_and_license_generator_files_unchanged_vs_base` îl protejează) |
 | 5 | `hardware_id.py` (cache licență/audit): `system_profiler SPStorageDataType` — mai multe volume, ordine nedeterministă | cheia de criptare a `license.dat`/audit ar putea varia | `diskutil info /` (volumul de sistem) |
 | 6 | `ai_scanare/config.py`: cheia API AI legată de `/etc/machine-id` (inexistent pe Mac) | legare doar de numele utilizatorului | `IOPlatformUUID` |
-| 7 | Planificatorul Windows (`schtasks`, `--backup-run`, `eventcreate`) în fereastra de backup | comandă fără sens afișată | pe macOS fereastra explică alternativa (planificatorul intern rulează cât timp aplicația e deschisă); **fără launchd** (cerință: niciun serviciu automat) |
-| 8 | Interfață: QSS/`QFont` în puncte (pe macOS 1 pt = 1 px, pe Windows 1 pt = 1,33 px) → text cu ~25% mai mic; font „Segoe UI” inexistent | aspect | `theme.mac_scale_qss` + fallback „Helvetica Neue” (doar macOS) |
+| 7 | Planificatorul Windows (`schtasks`, `--backup-run`, `eventcreate`) în fereastra de backup | comandă fără sens afișată | pe macOS fereastra explică alternativa: planificatorul intern (cât timp aplicația e deschisă) + **copie automată la ieșire** (`backup_window.run_exit_backup`, apelată din `main.py` la închiderea aplicației: verificată, cel mult una pe oră, respectă „Copie automată activă”, se dezactivează din fereastra de backup); **fără launchd** |
+| 8 | Interfață: QSS/`QFont` în puncte (pe macOS 1 pt = 1 px, pe Windows 1 pt = 1,33 px) → text cu ~25% mai mic; font „Segoe UI” inexistent | aspect | `theme.mac_scale_qss` + fallback „Helvetica Neue” (doar macOS); **etichetele din hartă** (`theme.scene_font`, 5 locuri în `map_editor_actions`, `map_editor_advanced`, `ui_mainwindow`) au aceeași mărime vizuală ca pe Windows (identic cu `QFont(familie, pt)` pe Windows/Linux) |
 | 9 | `ai_training`: rezervă `~/.local/share/Cimitir` | date în afara folderului | rezervă `~/CIMITIR-MAC/date/cimitir-data` pe macOS |
 | 10 | Verificarea de versiune pe GitHub la pornire | conexiune în etapa de test | `CIMITIR_DISABLE_UPDATE_CHECK=1` (opțional, setat de `start-macos.sh`) |
 | 11 | Avertismentul „folder sincronizat în cloud” nu recunoștea iCloud Drive / `Library/CloudStorage` | risc corupere WAL | markeri noi în `sync_folder_warning` |
@@ -113,12 +113,20 @@ conflictul cu alt calculator nu suprascrie datele locale; ștergerea făcută of
 Ce necesită dezvoltare/verificare suplimentară: o legătură Cloud reală de pe Mac către un mediu **TEST** (nu PROD) — asocierea, Keychain, `pull` pe Mac a datelor create pe Windows, documente/fotografii cu octeți reali;
 nu s-a conectat nimic la PROD.
 
+### Verificare sincronizare reală Mac ↔ Windows pe Cloud TEST
+
+`scripts/macos/verify_cross_sync.py` (același script pe ambele calculatoare; date fictive `SYNCTEST-…`; nu citește/afișează chei). Premise: pe fiecare calculator o bază **goală** (alt `CIMITIR_DATA_DIR`),
+asociată din aplicație la **același** cimitir din Cloud TEST. Protecții: `--test-url` trebuie să fie identic cu adresa din aplicație, proiectul de producție este blocat, `--confirm-test-cloud` obligatoriu,
+refuz dacă baza locală are date care nu sunt SYNCTEST. Ordine: Mac `--phase write` → Windows `--phase check` → Windows `--phase write` → Mac `--phase check`;
+offline: `--phase write-local` fără internet, apoi `--phase flush` după reconectare; la final `--phase cleanup` (ștergerile ajung ca tombstone). Cod de ieșire 0 = PASS, 1 = eșec, 2 = refuz de protecție.
+Logica este testată cu simulator (`test_macos_cross_sync_tool.py`); **rularea pe un Cloud TEST real nu a fost făcută** (nu există acces/credențiale în acest mediu).
+
 ## 8. Teste
 
 Rulate pe Linux ARM64, Python 3.11.18, PySide6 offscreen, cu dependențele din `desktop/requirements-macos.txt` + `PyInstaller` (dependență de build, folosită de testele de packaging):
 
 * `origin/main` (bază): **918 trecute, 15 skip, 0 eșuate** (`desktop/tests`).
-* Cu această ramură: **953 trecute, 15 skip, 0 eșuate** (+35 teste noi). Testele existente nu au fost modificate.
+* Cu această ramură: vezi raportul de livrare (teste noi: `test_macos_compat.py`, `test_macos_offline_sync.py`, `test_macos_cross_sync_tool.py`). Testele existente nu au fost modificate.
 * `backend/tests`: nerulat integral (suita se blochează la ~70% și pe `origin/main`, necesită servicii); din backend s-a modificat doar `cimitir/app_logging.py` (verificat prin testul nou).
 
 Teste noi: `desktop/tests/test_macos_compat.py` (căi macOS și regresii Windows, HWID, Keychain simulat, QSS, fereastra de backup), `desktop/tests/test_macos_offline_sync.py`.
@@ -130,9 +138,9 @@ Opționale fără Homebrew: `pytesseract` (OCR offline) cere binarul `tesseract`
 ## 9. De testat pe un Mac real
 
 * Pornire `./start-macos.sh`, activare licență, autentificare, creare registru/cimitir cu date fictive.
-* Aspect: dimensiuni font, dialoguri, tabele, hărți (etichetele din editorul de hartă folosesc `QFont(…, N)` în puncte și pot apărea mai mici decât pe Windows), tema întunecată/deschisă, Retina.
+* Aspect: dimensiuni font, dialoguri, tabele, hărți (compară etichetele din hartă cu Windows; au fost aliniate prin `scene_font`, dar nu s-a văzut pe Mac real), tema întunecată/deschisă, Retina.
 * Editor hartă: zoom cu trackpad/rotiță, selecție, editare poligoane; scurtături: `Ctrl` din Qt devine `Cmd` pe Mac.
 * Documente/fotografii: încărcare, deschidere cu `open`, nume cu diacritice (ș, ț, ă), cameră (permisiune macOS), import/export Excel/CSV, DOCX/PDF (contracte, chitanțe, fișe), etichete QR și tipărire.
-* Backup manual, verificare, restaurare (repornirea aplicației aplică restaurarea), backup periodic intern.
+* Backup manual, verificare, restaurare (repornirea aplicației aplică restaurarea), backup periodic intern și copia automată la ieșire (închide aplicația și verifică jurnalul din fereastra de backup).
 * Keychain: promptul la prima salvare a cheii de sincronizare; asociere Cloud pe mediu TEST; sincronizare bidirecțională cu Windows; offline → online.
 * Verificarea că nu apare nimic în afara `~/CIMITIR-MAC` (`find ~ -newer ... -path '*Cimitir*'`) și că ștergerea folderului curăță totul.

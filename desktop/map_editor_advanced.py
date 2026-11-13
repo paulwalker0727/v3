@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import Qt, QPointF, QRectF
 from PySide6.QtGui import QPen, QColor, QFont, QPolygonF
+from theme import scene_font
 from PySide6.QtWidgets import (
     QGraphicsLineItem, QGraphicsItem, QGraphicsPathItem, QGraphicsSimpleTextItem,
     QInputDialog, QMessageBox, QMenu, QApplication,
@@ -418,7 +419,7 @@ class AdvancedEditor:
         self.scene.addItem(item)
 
         txt = QGraphicsSimpleTextItem(f"{row['sector_label']}·{row['name']}")
-        txt.setFont(QFont("Arial", 10, QFont.Bold))
+        txt.setFont(scene_font("Arial", 10, bold=True))
         txt.setBrush(QColor(st["color"]))
         txt.setZValue(41)
         txt.setPos(pts[0][0], pts[0][1] - 14)
@@ -474,7 +475,7 @@ class AdvancedEditor:
             cx = sum(p[0] for p in poly) / len(poly)
             cy = sum(p[1] for p in poly) / len(poly)
             txt = QGraphicsSimpleTextItem(cod)
-            txt.setFont(QFont("Arial", 8))
+            txt.setFont(scene_font("Arial", 8))
             txt.setBrush(QColor(0, 0, 0))
             txt.setZValue(20)
             br = txt.boundingRect()
@@ -537,7 +538,7 @@ class AdvancedEditor:
             cx = sum(p[0] for p in pts) / len(pts)
             cy = sum(p[1] for p in pts) / len(pts)
             txt = QGraphicsSimpleTextItem(f"{area:.2f} {unit}")
-            txt.setFont(QFont("Arial", 7))
+            txt.setFont(scene_font("Arial", 7))
             txt.setBrush(QColor(30, 64, 175))
             txt.setZValue(21)
             br = txt.boundingRect()

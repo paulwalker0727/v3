@@ -38,6 +38,26 @@ def run_background_backup() -> None:
                      name="cimitir-backup").start()
 
 
+def exit_backup_enabled() -> bool:
+    """Copie la ieșire: doar pe macOS (pe Windows există Planificatorul); setarea `backup_on_exit` (implicit activă)."""
+    return sys.platform == "darwin" and (db.get_setting("backup_on_exit") or "1") != "0"
+
+
+def run_exit_backup() -> dict:
+    """macOS: copie verificată, sincronă, la închiderea aplicației. Respectă `backup_enabled`; sare peste dacă există una mai nouă de 1 oră
+    (deschideri/închideri repetate nu umplu discul); nu ridică excepții și nu blochează ieșirea."""
+    if not exit_backup_enabled():
+        return {"result": "disabled"}
+
+    def get_setting(key):
+        return "1" if key == "backup_interval_hours" else db.get_setting(key)
+
+    try:
+        return cimitir_backup.run_backup_job(Path(cimitir_config.working_dir()), get_setting, trigger="exit")
+    except Exception as exc:  # noqa: BLE001
+        return {"result": "failed", "error": str(exc)}
+
+
 def _win_quote(value) -> str:
     """Argument Windows (CommandLineToArgvW): backslash-urile finale se dublează înainte de ghilimeaua de închidere (ex. D:\\ )."""
     text = str(value)
@@ -160,6 +180,12 @@ class BackupWindow(QDialog):
         self.chk_enabled.setObjectName("backup-enabled")
         self.chk_enabled.setChecked((db.get_setting("backup_enabled") or "1") != "0")
         form.addRow(self.chk_enabled)
+        self.chk_exit = None
+        if sys.platform == "darwin":
+            self.chk_exit = QCheckBox("Copie automată la ieșirea din aplicație (macOS; cel mult una pe oră)")
+            self.chk_exit.setObjectName("backup-on-exit")
+            self.chk_exit.setChecked((db.get_setting("backup_on_exit") or "1") != "0")
+            form.addRow(self.chk_exit)
         row = QHBoxLayout()
         self.txt_dir = QLineEdit(str(backup_folder()))
         self.txt_dir.setObjectName("backup-dir")
@@ -245,6 +271,8 @@ class BackupWindow(QDialog):
         db.set_setting("backup_keep_min", str(self.spin_min.value()))
         db.set_setting("backup_interval_hours", str(int(self.spin_interval.value())))
         db.set_setting("backup_time", self.time_start.time().toString("HH:mm"))
+        if self.chk_exit is not None:
+            db.set_setting("backup_on_exit", "1" if self.chk_exit.isChecked() else "0")
         return True
 
     def save_settings(self):

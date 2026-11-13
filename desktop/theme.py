@@ -75,6 +75,17 @@ def default_font() -> QFont:
     return f
 
 
+def scene_font(family: str, points: int, bold: bool = False) -> QFont:
+    """Font pentru etichetele din hartă: la fel ca `QFont(family, points[, Bold])` pe Windows/Linux; pe macOS aceeași mărime vizuală (pt -> px)."""
+    if sys.platform == "darwin":
+        font = QFont(family)
+        font.setPixelSize(round(points * _MAC_PT_TO_PX))
+        if bold:
+            font.setBold(True)
+        return font
+    return QFont(family, points, QFont.Bold) if bold else QFont(family, points)
+
+
 def mac_scale_qss(qss: str) -> str:
     """macOS: convertește `font-size: Npt` în px echivalenți Windows (identitate pe celelalte sisteme)."""
     if sys.platform != "darwin":
