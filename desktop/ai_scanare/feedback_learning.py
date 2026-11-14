@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import re
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +31,7 @@ try:
     import database as _db
     _DATA_DIR = _db.DATA_DIR
 except Exception:
-    _DATA_DIR = os.path.expanduser("~/.local/share/Cimitir")
+    _DATA_DIR = os.path.expanduser("~/CIMITIR-MAC/date/cimitir-data" if sys.platform == "darwin" else "~/.local/share/Cimitir")
 
 TRAIN_DIR = Path(_DATA_DIR) / "ai_training"
 TRAIN_DIR.mkdir(parents=True, exist_ok=True)

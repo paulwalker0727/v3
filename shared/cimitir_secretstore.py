@@ -1,7 +1,9 @@
 """cimitir_secretstore.py — stocarea secretelor (cheia de sync a legăturii) în afara SQLite/loguri/backup-uri obișnuite.
 
 Backend-uri:
-- `DpapiSecretStore` — Windows, singurul backend comercial/production;
+- `DpapiSecretStore` — Windows (DPAPI);
+- `KeychainSecretStore` — macOS: secretele sunt fișiere criptate autentificat (Fernet); cheia principală stă în Keychain-ul utilizatorului
+  (`/usr/bin/security`, serviciul „CIMITIR-MAC”), nu pe disc;
 - `TestEncryptedSecretStore` — EXCLUSIV TEST: fișiere criptate autentificat (Fernet = AES-128-CBC + HMAC-SHA256) cu o cheie EFEMERĂ ținută doar în
   memorie (sau transmisă explicit unui proces copil de test). Fără cheie, fișierele sunt nedecriptabile;
 - `MemorySecretStore` — EXCLUSIV TEST: nu persistă nimic.
@@ -17,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-ENV_BACKEND = "CIMITIR_SECRET_STORE"      # "dpapi" | "test-encrypted" | "memory"
+ENV_BACKEND = "CIMITIR_SECRET_STORE"      # "dpapi" | "keychain" | "test-encrypted" | "memory"
 ENV_COMMERCIAL = "CIMITIR_COMMERCIAL"      # "1" = interzice orice backend de test
 ENV_ALLOW_TEST = "CIMITIR_ALLOW_TEST_SECRETSTORE"  # "1" = permite backend-urile EXCLUSIV de test
 ENV_TEST_KEY = "CIMITIR_TEST_SECRET_KEY"   # cheia Fernet efemeră, transmisă doar proceselor copil de test
@@ -136,6 +138,56 @@ class DpapiSecretStore(_FileStore):
         return self._unprotect(blob)
 
 
+KEYCHAIN_SERVICE = "CIMITIR-MAC"
+KEYCHAIN_ACCOUNT = "secretstore-master-v1"
+_SECURITY_CLI = "/usr/bin/security"
+_KEYCHAIN_NOT_FOUND = 44
+
+
+def _security_cli(args):  # pragma: no cover - doar macOS
+    import subprocess
+    done = subprocess.run([_SECURITY_CLI, *args], capture_output=True, text=True, timeout=30, check=False)
+    return done.returncode, (done.stdout or "").strip()
+
+
+class KeychainSecretStore(_FileStore):
+    """macOS: fișiere Fernet în `root`; cheia principală (32 de octeți aleatori) în Keychain. `runner(args) -> (cod, stdout)` e injectabil pentru teste.
+
+    Limită cunoscută: la crearea cheii, valoarea trece o singură dată prin argumentele `security add-generic-password` (vizibilă local, scurt,
+    doar aceluiași utilizator). Valorile secretelor NU trec niciodată prin linia de comandă."""
+    suffix = ".kc"
+
+    def __init__(self, root: Path, runner: Optional[Callable] = None) -> None:
+        super().__init__(root)
+        if runner is None and sys.platform != "darwin":
+            raise SecretStoreUnavailable("Keychain există doar pe macOS")
+        self._runner = runner or _security_cli
+        self._fernet = None
+
+    def _master(self):
+        if self._fernet is not None:
+            return self._fernet
+        from cryptography.fernet import Fernet
+        code, out = self._runner(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w"])
+        if code == 0 and out:
+            key = out.encode("ascii")
+        elif code == _KEYCHAIN_NOT_FOUND:
+            key = Fernet.generate_key()
+            code, _ = self._runner(["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w", key.decode("ascii"), "-U"])
+            if code != 0:
+                raise SecretStoreUnavailable("nu pot salva cheia principală în Keychain")
+        else:
+            raise SecretStoreUnavailable(f"Keychain indisponibil (cod {code})")
+        self._fernet = Fernet(key)
+        return self._fernet
+
+    def _encode(self, raw):
+        return self._master().encrypt(raw)
+
+    def _decode(self, blob):
+        return self._master().decrypt(blob)
+
+
 class TestEncryptedSecretStore(_FileStore):
     """EXCLUSIV TEST: Fernet (criptare autentificată) cu cheie efemeră. Cheia nu se scrie pe disc; un alt proces o primește doar prin
     `CIMITIR_TEST_SECRET_KEY`. Refuzat în configurația comercială/production și fără `CIMITIR_ALLOW_TEST_SECRETSTORE=1`."""
@@ -193,7 +245,7 @@ def secrets_dir(data_dir=None) -> Path:
 
 
 def default_store(data_dir=None) -> SecretStore:
-    """Windows -> DPAPI; altfel numai cu backend explicit de test (test-encrypted / memory). Niciodată plaintext tăcut."""
+    """Windows -> DPAPI; macOS -> Keychain; altfel numai cu backend explicit de test (test-encrypted / memory). Niciodată plaintext tăcut."""
     choice = (os.environ.get(ENV_BACKEND) or "").strip().lower()
     root = secrets_dir(data_dir)
     if choice == "memory":
@@ -201,8 +253,10 @@ def default_store(data_dir=None) -> SecretStore:
     if choice == "test-encrypted":
         key = (os.environ.get(ENV_TEST_KEY) or "").encode("ascii") or None
         return TestEncryptedSecretStore(root, key)
+    if choice == "keychain" or (choice in ("", "dpapi") and sys.platform == "darwin"):
+        return KeychainSecretStore(root)
     if choice in ("", "dpapi"):
         if sys.platform == "win32":
             return DpapiSecretStore(root)
-        raise SecretStoreUnavailable("fără DPAPI pe acest sistem: backend-urile de test: CIMITIR_SECRET_STORE=test-encrypted + CIMITIR_ALLOW_TEST_SECRETSTORE=1, doar în teste")
+        raise SecretStoreUnavailable("fără DPAPI/Keychain pe acest sistem: backend-urile de test: CIMITIR_SECRET_STORE=test-encrypted + CIMITIR_ALLOW_TEST_SECRETSTORE=1, doar în teste")
     raise SecretStoreUnavailable(f"backend necunoscut: {choice!r}")

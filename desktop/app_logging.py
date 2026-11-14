@@ -24,6 +24,15 @@ from typing import Optional
 _INITIALIZED = False
 
 
+def _mac_dir(name: str) -> str:
+    """macOS: ~/CIMITIR-MAC/date/<name> (vezi shared/cimitir_platform.py)."""
+    shared = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shared")
+    if shared not in sys.path:
+        sys.path.insert(0, shared)
+    import cimitir_platform
+    return str(cimitir_platform.mac_subdir(name))
+
+
 def _resolve_log_dir() -> str:
     """Determină folderul de log în funcție de OS (același root ca database.py)."""
     env = os.environ.get("CIMITIR_LOG_DIR", "").strip()
@@ -35,8 +44,7 @@ def _resolve_log_dir() -> str:
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         path = os.path.join(base, "Cimitir", "logs")
     elif sys.platform == "darwin":
-        path = os.path.join(os.path.expanduser("~"),
-                            "Library", "Application Support", "Cimitir", "logs")
+        path = _mac_dir("logs")
     else:
         base = os.environ.get("XDG_DATA_HOME") or os.path.join(
             os.path.expanduser("~"), ".local", "share")

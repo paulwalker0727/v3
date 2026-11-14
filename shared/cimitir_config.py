@@ -16,7 +16,7 @@ PROJECT_DIR = SHARED_DIR.parent
 DEFAULT_DEV_DATA_DIR = PROJECT_DIR / "shared_data"
 
 _env_loaded = False
-_CLOUD_MARKERS = ("onedrive", "dropbox", "google drive", "googledrive", "icloud", "\\\\")
+_CLOUD_MARKERS = ("onedrive", "dropbox", "google drive", "googledrive", "icloud", "mobile documents", "library/cloudstorage", "\\\\")
 
 
 def _parse_env_line(line: str) -> Optional[tuple]:
@@ -64,7 +64,8 @@ def _os_user_data_dir() -> Path:
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         return Path(base) / "Cimitir"
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Cimitir"
+        import cimitir_platform
+        return cimitir_platform.mac_app_data_dir()
     base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(base) / "Cimitir"
 
@@ -75,7 +76,7 @@ def data_dir() -> str:
     raw = os.environ.get("CIMITIR_DATA_DIR", "").strip()
     if raw:
         path = Path(os.path.expandvars(os.path.expanduser(raw))).resolve()
-    elif getattr(sys, "frozen", False):
+    elif getattr(sys, "frozen", False) or sys.platform == "darwin":
         path = _os_user_data_dir()
     else:
         path = DEFAULT_DEV_DATA_DIR

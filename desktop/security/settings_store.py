@@ -3,7 +3,7 @@ security/settings_store.py — Cache local criptat pentru licență și config s
 
 Fișier: %LOCALAPPDATA%\\Cimitir\\license.dat  (Windows)
         ~/.local/share/Cimitir/license.dat    (Linux)
-        ~/Library/Application Support/Cimitir/license.dat  (macOS)
+        ~/CIMITIR-MAC/date/config/license.dat  (macOS)
 
 Conținut criptat cu AES-256-GCM, cheia derivată din hardware_id.
 """
@@ -16,12 +16,21 @@ from . import crypto_utils
 from .hardware_id import get_hardware_id
 
 
+def _mac_dir(name: str) -> str:
+    """macOS: ~/CIMITIR-MAC/date/<name> (vezi shared/cimitir_platform.py)."""
+    shared = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "shared")
+    if shared not in sys.path:
+        sys.path.insert(0, shared)
+    import cimitir_platform
+    return str(cimitir_platform.mac_subdir(name))
+
+
 def _data_dir() -> str:
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         p = os.path.join(base, "Cimitir")
     elif sys.platform == "darwin":
-        p = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Cimitir")
+        p = _mac_dir("config")
     else:
         base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
         p = os.path.join(base, "Cimitir")

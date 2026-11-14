@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional
 
 from PySide6.QtWidgets import QFileDialog, QGraphicsSimpleTextItem
 from PySide6.QtGui import QPixmap, QColor, QFont, QPolygonF
+from theme import scene_font
 from PySide6.QtCore import QPointF
 
 import database as db
@@ -134,7 +135,7 @@ class EditorActions:
                 cx = sum(x for x, _ in points) / len(points)
                 cy = sum(y for _, y in points) / len(points)
                 text_item = QGraphicsSimpleTextItem(cod_loc)
-                text_item.setFont(QFont("Arial", 11))
+                text_item.setFont(scene_font("Arial", 11))
                 text_item.setBrush(QColor(0, 0, 0))
                 text_item.setZValue(20)
                 br = text_item.boundingRect()

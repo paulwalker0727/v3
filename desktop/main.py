@@ -23,7 +23,9 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shared"))
 import cimitir_backup
 import cimitir_config
+import macos_support
 
+macos_support.apply()  # doar macOS: licență + amprentă în ~/CIMITIR-MAC (nu face nimic pe Windows)
 RESTORE_MESSAGE = cimitir_backup.apply_pending_restore(cimitir_config.working_dir())
 
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
@@ -202,6 +204,11 @@ def main() -> int:
                 switch_registry = True
                 break
             if not logout_flag["value"]:
+                try:
+                    from backup_window import run_exit_backup
+                    run_exit_backup()  # doar macOS; pe Windows returnează imediat
+                except Exception as exc:
+                    logger.warning("Copia la ieșire a eșuat: %s", exc)
                 try:
                     from security import audit_log
                     audit_log.log(user.get("username", "?"), "app_exit")

@@ -25,12 +25,21 @@ from . import crypto_utils
 from .hardware_id import get_hardware_id
 
 
+def _mac_dir(name: str) -> str:
+    """macOS: ~/CIMITIR-MAC/date/<name> (vezi shared/cimitir_platform.py)."""
+    shared = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "shared")
+    if shared not in sys.path:
+        sys.path.insert(0, shared)
+    import cimitir_platform
+    return str(cimitir_platform.mac_subdir(name))
+
+
 def _audit_dir() -> str:
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         p = os.path.join(base, "Cimitir", "audit")
     elif sys.platform == "darwin":
-        p = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Cimitir", "audit")
+        p = _mac_dir("audit")
     else:
         base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
         p = os.path.join(base, "Cimitir", "audit")

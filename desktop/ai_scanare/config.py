@@ -2,7 +2,8 @@
 
 Stocare per-utilizator, în afara folderului aplicației, ca să NU se piardă la update:
   * Windows: %APPDATA%\\CimitirDesktop\\ai_config.json
-  * Linux/Mac (fallback pentru testare): ~/.config/CimitirDesktop/ai_config.json
+  * macOS: ~/CIMITIR-MAC/date/config/CimitirDesktop/ai_config.json
+  * Linux (fallback pentru testare): ~/.config/CimitirDesktop/ai_config.json
 
 Fișier JSON (UTF-8):
 {
@@ -22,6 +23,7 @@ import hashlib
 import json
 import os
 import platform
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -45,6 +47,13 @@ def _config_dir() -> Path:
     if platform.system() == "Windows":
         base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
         d = Path(base) / APP_FOLDER_NAME
+    elif sys.platform == "darwin":
+        shared = str(Path(__file__).resolve().parents[2] / "shared")
+        if shared not in sys.path:
+            sys.path.insert(0, shared)
+        import cimitir_platform
+        d = cimitir_platform.mac_subdir("config") / APP_FOLDER_NAME
+        d.mkdir(parents=True, exist_ok=True)
     else:
         base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
         d = Path(base) / APP_FOLDER_NAME
@@ -86,6 +95,17 @@ def _machine_secret() -> bytes:
             with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                                 r"SOFTWARE\Microsoft\Cryptography") as k:
                 parts.append(str(winreg.QueryValueEx(k, "MachineGuid")[0]))
+        except Exception:
+            pass
+    elif sys.platform == "darwin":
+        try:
+            import subprocess
+            out = subprocess.check_output(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                                          text=True, timeout=8, stderr=subprocess.DEVNULL)
+            for line in out.splitlines():
+                if "IOPlatformUUID" in line and "=" in line:
+                    parts.append(line.split("=", 1)[1].strip().strip('"'))
+                    break
         except Exception:
             pass
     else:

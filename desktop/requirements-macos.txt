@@ -1,0 +1,5 @@
+# macOS Apple Silicon (arm64, Python 3.11): instalare în .venv cu `scripts/macos/setup-macos.sh`.
+# Același set ca Windows (requirements.txt + web_requirements.txt, necesar portalului local) + httpx (importat de modulele cloud).
+-r requirements.txt
+-r web_requirements.txt
+httpx>=0.28
