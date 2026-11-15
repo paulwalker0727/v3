@@ -581,11 +581,13 @@ class LocuriWindow(QDialog):
         self.load_data()
 
     def delete_record(self):
+        import database as db
+
         cod = self.selected_cod_loc()
         if not cod:
             QMessageBox.warning(self, "Selectare", "Selectează un rând mai întâi.")
             return
-        blockers = db.delete_plot_blockers(cod) if db else ""
+        blockers = db.delete_plot_blockers(cod)
         if blockers:
             QMessageBox.warning(self, "Loc cu istoric", blockers)
             return
