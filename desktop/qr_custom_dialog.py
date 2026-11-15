@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QSizePolicy, QDialog,
 )
 
+from flow_layout import FlowLayout
 import database as db
 import qr_custom_generator as qcg
 from app_logging import get_logger
@@ -170,7 +171,7 @@ class QrCustomDialog(QWidget):
 
         # === Options: format + EC level + text
         opts_box = QGroupBox("Opțiuni codificare")
-        opts_lay = QHBoxLayout(opts_box)
+        opts_lay = FlowLayout(opts_box, margin=9, h_spacing=8, v_spacing=6)
 
         opts_lay.addWidget(QLabel("Format:"))
         self.rb_text = QRadioButton("Text (citibil uman)")

@@ -123,6 +123,8 @@ def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Cimitir")
     apply_theme(app, mode="dark")
+    from screen_utils import install_screen_guard
+    install_screen_guard(app)  # doar macOS: ferestrele/dialogurile nu depășesc ecranul disponibil
     if RESTORE_MESSAGE:
         logger.warning(RESTORE_MESSAGE)
         QMessageBox.information(None, "Cimitir — Restaurare", RESTORE_MESSAGE)

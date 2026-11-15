@@ -35,6 +35,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThreadPool, QRunnable, Signal, QObject, QDate
 from PySide6.QtGui import QPixmap
 
+
+import screen_utils
+from flow_layout import FlowLayout
 from ui_utils import show_message, ask_confirmation, ask_text_input
 import database as db
 import cimitir_dates as _cd
@@ -691,7 +694,7 @@ class RightPanel(QWidget):
 
         # menu
         self.menu = QListWidget()
-        self.menu.setFixedWidth(200)
+        self.menu.setFixedWidth(150 if screen_utils.is_macos() else 200)
         self.menu.setStyleSheet("""
             QListWidget { background: #222; color: #eee; border: none; }
             QListWidget::item { padding: 12px; margin: 2px; font-size: 13px; }
@@ -728,7 +731,8 @@ class RightPanel(QWidget):
 
         for t in (self.tab_overview, self.tab_foto, self.tab_inhumati,
                   self.tab_juridic, self.tab_financiar, self.tab_amenajari, self.tab_istoric):
-            self.stack.addWidget(t)
+            # tab-urile pot fi mai înguste decât conținutul lor: apare scroll în loc să blocheze micșorarea panoului
+            self.stack.addWidget(t if t is self.tab_overview else self._scrollable(t))
 
         # layout
         main_layout = QVBoxLayout()
@@ -745,6 +749,14 @@ class RightPanel(QWidget):
 
         # editable state
         self._editing_enabled = False
+
+    @staticmethod
+    def _scrollable(tab: QWidget) -> QScrollArea:
+        sa = QScrollArea()
+        sa.setWidgetResizable(True)
+        sa.setFrameShape(QScrollArea.NoFrame)
+        sa.setWidget(tab)
+        return sa
 
     # -------------------------
     # Header
@@ -932,7 +944,7 @@ class RightPanel(QWidget):
         btn_row.addStretch()
         btn_row.addWidget(self.btn_save_contract)
 
-        nav_row = QHBoxLayout()
+        nav_row = FlowLayout(h_spacing=6, v_spacing=6)
         self.btn_ju_fisa_conc = QPushButton("Fișa concesionarului")
         self.btn_ju_conc = QPushButton("Concesionari asociați / alege")
         self.btn_ju_new = QPushButton("Contract nou")

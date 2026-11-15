@@ -5,12 +5,14 @@ from PySide6.QtWidgets import (
     QToolBar, QStatusBar, QDialog, QLabel, QVBoxLayout,
     QSlider, QMessageBox, QGraphicsSimpleTextItem
 )
-from PySide6.QtGui import QAction, QIcon, QPolygonF, QColor, QFont, QPen
+from PySide6.QtGui import QAction, QIcon, QPolygonF, QColor, QFont, QPen, QKeySequence
 from theme import scene_font
-from PySide6.QtCore import Qt, QSize, QPointF, Signal, QObject, QTimer
+from PySide6.QtCore import Qt, QSize, QPointF, QRectF, Signal, QObject, QTimer
 
 from map_view import CemeteryMapView
 from panels import create_right_panel
+from overview_splitter import OverviewSplitter
+import screen_utils
 
 from map_editor_tools import EditorTools
 from map_editor_sectors import SectorManager
@@ -60,7 +62,11 @@ class CemeteryUI(QMainWindow):
 
         username = self.current_user.get("username", "?")
         self.setWindowTitle(f"Cimitir — Mod Developer (utilizator: {username})")
-        self.setMinimumSize(1500, 850)
+        # Windows: 1500×850 (neschimbat). macOS: minim adaptiv ~1000×640, limitat la ecranul disponibil.
+        self.setMinimumSize(screen_utils.main_window_min_size(self))
+        _init_size = screen_utils.main_window_initial_size(self)
+        if _init_size is not None:
+            self.resize(_init_size)
 
         # semnale globale
         self.signals = AppSignals()
@@ -91,10 +97,16 @@ class CemeteryUI(QMainWindow):
         # panou dreapta
         self.right_panel = create_right_panel(self)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self.map_view)
-        splitter.addWidget(self.right_panel)
-        splitter.setSizes([1100, 400])
+        mac = screen_utils.is_macos()
+        splitter = OverviewSplitter(self.map_view, self.right_panel, handle_width=8 if mac else None)
+        self.splitter = splitter
+        if mac:
+            avail_w = screen_utils.available_rect(self).width()
+            pw = max(340, min(460, int(avail_w * 0.28)))
+            splitter.setSizes([max(1, self.width() - pw - 24), pw])
+        else:
+            splitter.setSizes([1100, 400])
+        splitter.panel_toggled.connect(self._on_overview_toggled)
 
         central = QWidget()
         layout = QHBoxLayout()
@@ -104,9 +116,16 @@ class CemeteryUI(QMainWindow):
 
         # toolbars
         self.build_top_toolbar()
+        if mac:   # pe ferestre înguste barele nu se mai împart același rând (fiecare își păstrează butoanele; surplusul intră în meniul »)
+            self.addToolBarBreak(Qt.TopToolBarArea)
         self.build_editor_toolbar()
         self.build_map_toolbar()
+        if mac:
+            self.addToolBarBreak(Qt.BottomToolBarArea)
         self.build_advanced_toolbar()
+        if mac:
+            self._make_toolbar_overflow_visible()
+            QTimer.singleShot(0, self._make_toolbar_overflow_visible)
 
         self.setStatusBar(QStatusBar())
         self._build_sync_status_panel()
@@ -185,6 +204,42 @@ class CemeteryUI(QMainWindow):
         self.set_tool_mode("select")
 
         self.selected_cod_loc: Optional[str] = None
+
+    def _make_toolbar_overflow_visible(self):
+        """Pe ferestre înguste comenzile care nu încap intră în meniul „»”; tema (padding 12px pe QToolButton) îl strivea până nu se mai vedea."""
+        from PySide6.QtGui import QPixmap, QPainter
+        from PySide6.QtWidgets import QToolBar, QToolButton
+        dpr = 2.0
+        pm = QPixmap(int(12 * dpr), int(24 * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        f = QFont(); f.setBold(True); f.setPixelSize(18)
+        p.setFont(f)
+        p.setPen(self.palette().color(self.palette().ColorRole.WindowText))
+        p.drawText(QRectF(0, 0, 12, 22), Qt.AlignCenter, "»")
+        p.end()
+        for tb in self.findChildren(QToolBar):
+            ext = tb.findChild(QToolButton, "qt_toolbar_ext_button")
+            if ext is not None:
+                ext.setStyleSheet("QToolButton { padding: 0px; }")
+                ext.setIcon(QIcon(pm))
+                ext.setIconSize(QSize(12, 24))
+                ext.setToolButtonStyle(Qt.ToolButtonIconOnly)
+                ext.setToolTip("Mai multe comenzi")
+
+    def set_overview_visible(self, visible: bool):
+        """Arată/ascunde panoul Overview (datele și selecția rămân în panou)."""
+        if visible:
+            self.splitter.show_panel()
+        else:
+            self.splitter.hide_panel()
+
+    def _on_overview_toggled(self, is_open: bool):
+        act = getattr(self, "act_overview", None)
+        if act is not None and act.isChecked() != is_open:
+            act.setChecked(is_open)
+        QTimer.singleShot(0, self.map_view.refit_if_fitted)
 
     def highlight_loc_by_cod(self, cod_loc: str) -> bool:
         """Selectează locul pe hartă exact ca la clic (aceeași fișă și aceleași relații) și îl centrează."""
@@ -649,9 +704,18 @@ class CemeteryUI(QMainWindow):
         toolbar.addSeparator()
 
         act_fit = QAction("🔍 Fit hartă", self)
-        act_fit.setToolTip("Încadrează harta în fereastră (scurtătură: F sau Home)")
+        act_fit.setToolTip("Încadrează harta în fereastră (scurtătură: F, Home sau Cmd/Ctrl+0)")
         act_fit.triggered.connect(lambda: self.map_view.fit_to_content())
         toolbar.addAction(act_fit)
+
+        self.act_overview = QAction("◧ Overview", self)
+        self.act_overview.setObjectName("act-toggle-overview")
+        self.act_overview.setCheckable(True)
+        self.act_overview.setChecked(True)
+        self.act_overview.setShortcut(QKeySequence("Ctrl+\\"))
+        self.act_overview.setToolTip("Ascunde / arată panoul Overview ca să extinzi harta (Cmd/Ctrl+\\ sau dublu-click pe separator)")
+        self.act_overview.triggered.connect(self.set_overview_visible)
+        toolbar.addAction(self.act_overview)
 
         toolbar.addSeparator()
 
@@ -662,7 +726,7 @@ class CemeteryUI(QMainWindow):
         self.act_pan.triggered.connect(lambda: self.exit_draw_mode())
         toolbar.addAction(self.act_pan)
 
-        lbl = QLabel("  🖱 mijloc = navighezi oricând  ")
+        lbl = QLabel("  👆 două degete = navighezi oricând  " if screen_utils.is_macos() else "  🖱 mijloc = navighezi oricând  ")
         lbl.setStyleSheet("color:#64748b;")
         toolbar.addWidget(lbl)
 
