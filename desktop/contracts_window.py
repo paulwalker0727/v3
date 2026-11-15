@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QMessageBox, QGroupBox, QWidget, QTextEdit,
     QComboBox, QCompleter, QAbstractItemView, QFileDialog
 )
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QSignalBlocker
 
 from optional_date_edit import OptionalDateEdit
 
@@ -71,7 +71,7 @@ class AddContractDialog(QDialog):
         self.btn_open_concesionar = QPushButton("Date concesionar")
         conces_layout.addWidget(self.btn_open_concesionar)
 
-        # date concesionar (auto-fill)
+        # Câmpuri interne pentru instantaneul contractului; nu fac parte din formular.
         self.txt_nume = QLineEdit()
         self.txt_prenume = QLineEdit()
         self.txt_adresa = QLineEdit()
@@ -80,7 +80,7 @@ class AddContractDialog(QDialog):
         self.txt_telefon = QLineEdit()
         self.txt_email = QLineEdit()
 
-        # date loc (auto-fill) — editabile pentru suprascriere
+        # Instantaneu loc; detaliile se consultă în „Date loc”.
         self.txt_sector = QLineEdit()
         self.txt_parcela = QLineEdit()
         self.txt_rand = QLineEdit()
@@ -98,20 +98,14 @@ class AddContractDialog(QDialog):
         form.addRow("Cod loc:", loc_layout)
         form.addRow("Concesionar:", conces_layout)
 
-        form.addRow("Nume:", self.txt_nume)
-        form.addRow("Prenume:", self.txt_prenume)
-        form.addRow("Adresă:", self.txt_adresa)
-        form.addRow("BI/CI:", self.txt_bi_ci)
-        form.addRow("CNP:", self.txt_cnp)
-        form.addRow("Telefon:", self.txt_telefon)
-        form.addRow("Email:", self.txt_email)
-
-        # loc fields (sector/parcela/rand/loc/suprafata)
-        form.addRow("Sector:", self.txt_sector)
-        form.addRow("Parcela:", self.txt_parcela)
-        form.addRow("Rând:", self.txt_rand)
-        form.addRow("Loc:", self.txt_loc)
-        form.addRow("Suprafață (m2):", self.txt_suprafata)
+        # Păstrăm modelul de colectare existent, fără controale personale/loc
+        # vizibile sau accesibile prin Tab. Parent explicit: niciun widget top-level.
+        for field in (self.txt_nume, self.txt_prenume, self.txt_adresa,
+                      self.txt_bi_ci, self.txt_cnp, self.txt_telefon, self.txt_email,
+                      self.txt_sector, self.txt_parcela, self.txt_rand,
+                      self.txt_loc, self.txt_suprafata):
+            field.setParent(self)
+            field.hide()
 
         form.addRow("Observații:", self.txt_observatii)
 
@@ -182,6 +176,7 @@ class AddContractDialog(QDialog):
     # SETUP COMBOBOXES
     # ---------------------------------------------------------
     def _setup_concesionar_combo(self):
+        blocker = QSignalBlocker(self.cmb_concesionar)
         self.cmb_concesionar.clear()
         rows = []
         try:
@@ -208,6 +203,7 @@ class AddContractDialog(QDialog):
         completer = QCompleter([self.cmb_concesionar.itemText(i) for i in range(self.cmb_concesionar.count())])
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         self.cmb_concesionar.setCompleter(completer)
+        del blocker  # Restabilește semnalele numai după reconstruirea listei și a mapării.
 
     def _setup_cod_loc_combo(self):
         cods = []
@@ -251,18 +247,11 @@ class AddContractDialog(QDialog):
     def _on_concesionar_changed(self, text: str):
         if getattr(self, "_snapshot_locked", False):
             return
-        if not text:
+        cid = self._selected_concesionar_id()
+        if not cid:
             for w in (self.txt_nume, self.txt_prenume, self.txt_adresa,
                       self.txt_bi_ci, self.txt_cnp, self.txt_telefon, self.txt_email):
                 w.clear()
-            return
-
-        # încercăm să obținem id-ul din userData sau din map
-        cid = self.cmb_concesionar.currentData()
-        if cid is None:
-            cid = self._conces_map.get(text)
-
-        if not cid:
             return
 
         data = self._conces_data.get(cid)
@@ -399,11 +388,7 @@ class AddContractDialog(QDialog):
     # COLLECT & SAVE
     # ---------------------------------------------------------
     def _collect(self) -> Dict:
-        # concesionar id din userData
-        concesionar_id = self.cmb_concesionar.currentData()
-        if concesionar_id is None:
-            # încercăm map-ul (compatibilitate)
-            concesionar_id = self._conces_map.get(self.cmb_concesionar.currentText())
+        concesionar_id = self._selected_concesionar_id()
 
         cod_loc_val = self.cmb_cod_loc.currentText().strip() or None
         if self._contract_id:
@@ -439,7 +424,8 @@ class AddContractDialog(QDialog):
             "sector": sector_val
         }
         if self._contract_id:
-            for k in (*self._OWNER_KEYS, "owner_fullname_2"):
+            for k in (*self._OWNER_KEYS, "owner_fullname_2", "cemetery_parcel",
+                      "cemetery_row", "cemetery_tomb", "tomb_surface_m2", "sector"):
                 payload.pop(k, None)
         return payload
 
@@ -616,7 +602,7 @@ class AddContractDialog(QDialog):
             return True
 
     def _open_concesionar_data(self):
-        cid = self.cmb_concesionar.currentData() or self._conces_map.get(self.cmb_concesionar.currentText())
+        cid = self._selected_concesionar_id()
         if not cid:
             QMessageBox.information(self, "Info", "Selectați mai întâi un concesionar.")
             return
@@ -656,14 +642,16 @@ class AddContractDialog(QDialog):
             # dialogul a salvat deja (o singură dată); reutilizăm ID-ul, nu recreăm persoana
             self._refresh_and_select_concesionar(dlg.get_saved_id())
 
+    def _selected_concesionar_id(self) -> Optional[int]:
+        # Într-un combo editabil currentData() poate aparține selecției vechi
+        # în timp ce utilizatorul tastează alt nume. Acceptăm doar o etichetă exactă.
+        return self._conces_map.get(self.cmb_concesionar.currentText())
+
     def _refresh_and_select_concesionar(self, concesionar_id: Optional[int]):
         self._setup_concesionar_combo()
-        if not concesionar_id:
-            return
-        for i in range(self.cmb_concesionar.count()):
-            if self.cmb_concesionar.itemData(i) == concesionar_id:
-                self.cmb_concesionar.setCurrentIndex(i)
-                break
+        index = self.cmb_concesionar.findData(concesionar_id) if concesionar_id else 0
+        self.cmb_concesionar.setCurrentIndex(max(index, 0))
+        self._on_concesionar_changed(self.cmb_concesionar.currentText())
 
 
 def generate_contract_flow(parent, actions, cid) -> Optional[str]:
