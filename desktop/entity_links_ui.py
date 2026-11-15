@@ -213,6 +213,10 @@ class LinkedRecordsDialog(QDialog):
         self.btn_history = QPushButton("Contracte / istoric")
         self.btn_fisa = QPushButton("Fișa locului")
         self.btn_fisa.setVisible(mode == "loc")
+        self.btn_replace = QPushButton("Înlocuiește locul")
+        self.btn_unlink = QPushButton("Elimină asocierea")
+        for button in (self.btn_replace, self.btn_unlink):
+            button.setVisible(mode == "concesionar")
         self.btn_close = QPushButton("Închide")
         btns = QHBoxLayout()
         for b in (self.btn_pick, self.btn_add, self.btn_open, self.btn_contract, self.btn_history, self.btn_fisa):
@@ -222,8 +226,16 @@ class LinkedRecordsDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(self.table)
         lay.addWidget(self.lbl_empty)
+        edits = QHBoxLayout()
+        edits.addWidget(self.btn_replace)
+        edits.addWidget(self.btn_unlink)
+        edits.addStretch()
+        lay.addLayout(edits)
         lay.addLayout(btns)
 
+        self.btn_replace.clicked.connect(lambda: self.change_selected_loc(replace=True))
+        self.btn_unlink.clicked.connect(lambda: self.change_selected_loc(replace=False))
+        self.table.itemSelectionChanged.connect(self._update_link_buttons)
         self.btn_pick.clicked.connect(self.pick_existing)
         self.btn_add.clicked.connect(self.add_new_concesionar)
         self.btn_open.clicked.connect(self.open_selected)
@@ -245,9 +257,59 @@ class LinkedRecordsDialog(QDialog):
             self.table.insertRow(i)
             for j, (_, k) in enumerate(self._columns):
                 self.table.setItem(i, j, QTableWidgetItem("" if r.get(k) is None else str(r.get(k))))
-        self.lbl_empty.setText("" if self._rows else "Nicio asociere (nu există contracte pentru această înregistrare).")
+        self.lbl_empty.setText("" if self._rows else "Nicio asociere. Contractele se pot consulta în „Contracte / istoric”.")
         if self._rows:
             self.table.selectRow(0)
+        self._update_link_buttons()
+
+    def _update_link_buttons(self):
+        import access_session
+        enabled = self.mode == "concesionar" and self.selected_row() is not None and access_session.can("edit")
+        self.btn_replace.setEnabled(enabled)
+        self.btn_unlink.setEnabled(enabled)
+
+    def change_selected_loc(self, replace: bool):
+        import access_session
+        from PySide6.QtWidgets import QInputDialog
+        row = self.selected_row()
+        if self.mode != "concesionar" or not row or not access_session.can("edit"):
+            return
+        old_cod = row["cod_loc"]
+        contracts = [c for c in links.contracts_for_concesionar(self.key)
+                     if (c["cod_loc"] or c["contract_cod_loc"]) == old_cod]
+        if not contracts:
+            self.reload()
+            return
+        new_cod = None
+        if replace:
+            rows = [r for r in (_call(self.actions, "search_locuri", {}) or []) if r.get("cod_loc") != old_cod]
+            picker = PickDialog(self, "Înlocuiește cu un loc existent", rows,
+                                [("Cod loc", "cod_loc"), ("Sector", "sector"), ("Parcela", "parcela"),
+                                 ("Rând", "rand"), ("Număr", "numar")])
+            if picker.exec() != QDialog.Accepted or not picker.selected_row():
+                return
+            new_cod = picker.selected_row()["cod_loc"]
+        title = "Înlocuiește locul" if replace else "Elimină asocierea"
+        operation = f"Locul {old_cod} va fi înlocuit cu {new_cod}." if replace else f"Legătura cu locul {old_cod} va fi eliminată."
+        numbers = ", ".join(f"{c['numar_contract'] or 'fără număr'} (ID {c['contract_id']})" for c in contracts)
+        message = (f"{operation}\n\nSe modifică legătura locului în {len(contracts)} contract(e) ale acestui concesionar:\n{numbers}\n\n"
+                   "Contractele rămân în istoricul concesionarului. Locurile, plățile, documentele și datele istorice "
+                   "din contracte se păstrează. Operațiunea se înregistrează în jurnal.\n\nContinuați?")
+        if QMessageBox.question(self, title, message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        reason, ok = QInputDialog.getText(self, title, "Motivul modificării (opțional, în jurnal):")
+        if not ok:
+            return
+        try:
+            saved = _call(self.actions, "change_concesionar_loc", self.key, old_cod, new_cod,
+                          [c["contract_id"] for c in contracts], reason.strip())
+        except Exception:
+            saved = False
+        if saved:
+            QMessageBox.information(self, title, "Asocierea a fost actualizată.")
+        else:
+            QMessageBox.warning(self, title, "Asocierea nu a fost modificată. " + db.last_refusal())
+        self.reload()
 
     def _new_contract_for(self, cod_loc, concesionar_id):
         open_contract_dialog(self, self.actions, cod_loc=cod_loc, concesionar_id=concesionar_id)

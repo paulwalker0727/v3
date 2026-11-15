@@ -1208,6 +1208,56 @@ def associate_contract_loc(contract_id: int, cod_loc: str, reason: str = "") -> 
         conn.close()
 
 
+def change_concesionar_loc(concesionar_id: int, old_cod: str, new_cod: Optional[str],
+                           expected_contract_ids: List[int], reason: str = "") -> bool:
+    """Corectează explicit asocierea afișată în Locuri asociate, atomic.
+
+    None elimină doar legătura locului. Contractele, titularul, instantaneele,
+    plățile și documentele nu se șterg/mută. Lista confirmată este verificată
+    din nou sub lock pentru a nu modifica un contract apărut între timp.
+    """
+    if not _allowed("edit", "modificarea asocierii locului"):
+        return False
+    if not old_cod or not expected_contract_ids or new_cod == old_cod:
+        _refuse("Selectați o asociere și un loc diferit.")
+        return False
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute("""
+            SELECT c.id, c.id_loc, c.cod_loc FROM contracte c
+            LEFT JOIN locuri_de_veci l ON
+                (l.id=c.id_loc OR (c.id_loc IS NULL AND l.cod_loc=c.cod_loc))
+            WHERE c.concesionar_id=? AND COALESCE(NULLIF(l.cod_loc,''), c.cod_loc)=?
+            ORDER BY c.id
+        """, (concesionar_id, old_cod)).fetchall()
+        if {r["id"] for r in rows} != set(expected_contract_ids):
+            _refuse("Asocierea s-a modificat între timp. Reîncărcați lista și confirmați din nou.")
+            return False
+        loc = None
+        if new_cod is not None:
+            loc = conn.execute("SELECT id, cod_loc FROM locuri_de_veci WHERE cod_loc=?", (new_cod,)).fetchone()
+            if loc is None:
+                _refuse("Locul ales nu mai există. Reîncărcați lista.")
+                return False
+        for row in rows:
+            conn.execute("UPDATE contracte SET id_loc=?, cod_loc=? WHERE id=?",
+                         (loc["id"] if loc else None, loc["cod_loc"] if loc else "", row["id"]))
+            _audit(conn, "contract.replace_loc" if loc else "contract.unlink_loc", f"contract:{row['id']}",
+                   f"concesionar:{concesionar_id} loc_id:{row['id_loc']} cod:{row['cod_loc']} -> "
+                   f"loc_id:{loc['id'] if loc else '-'} cod:{new_cod or '-'} motiv={reason}")
+        conn.commit()
+        return True
+    except Exception as exc:
+        _refuse("Asocierea nu a putut fi modificată; operațiunea a fost anulată.")
+        print(f"[DB ERROR change_concesionar_loc] {type(exc).__name__}")
+        return False
+    finally:
+        if conn.in_transaction:
+            conn.rollback()
+        conn.close()
+
+
 def load_contracte(extra_where: str = "") -> List[Dict[str, Any]]:
     conn = get_connection()
     try:
