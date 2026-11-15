@@ -25,9 +25,14 @@ class FakeDlg:
     def __init__(self, points, parent=None):
         FakeDlg.n += 1
         code = "T%d" % FakeDlg.n
+        self.points = points
+        self.code = code
         self.txt_cod = type("T", (), {{"text": lambda s, c=code: c}})()
     def exec(self):
-        return QDialog.Rejected if FakeDlg.cancel else QDialog.Accepted
+        if FakeDlg.cancel:
+            return QDialog.Rejected
+        db.save_plot_to_db(self.code, self.points, "#0078FF")   # ca dialogul real: locul e în SQLite înainte de desenare
+        return QDialog.Accepted
 
 apw.AssignPlotCodeWindow = FakeDlg
 QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.No)

@@ -314,6 +314,12 @@ class AssignPlotCodeWindow(QDialog):
     # =====================================================================
     # SALVARE
     # =====================================================================
+    def _save_refused(self):
+        import database as _db
+        reason = _db.last_refusal() or "Salvarea în baza de date a eșuat."
+        QMessageBox.warning(self, "Loc nesalvat",
+                            f"{reason}\n\nNimic nu a fost adăugat pe hartă. Poți corecta datele sau anula.")
+
     def save(self):
         sector = (self.cmb_sector.currentText() or "A").strip().upper()
         parcela = self.txt_parcela.text().strip().upper() or sector
@@ -378,11 +384,14 @@ class AssignPlotCodeWindow(QDialog):
                 was_new = not _db._plot_exists(cod)
                 # 1. geometria
                 saved_plot = actions.save_plot_to_db(cod, self.points, "#0078FF")
+                if not saved_plot:
+                    self._save_refused()
+                    return
                 # 2. metadata (loc nou creat = drept `add`; loc existent = drept `edit`)
                 import contextlib
-                ctx = _db.granted("edit") if (was_new and saved_plot) else contextlib.nullcontext()
+                ctx = _db.granted("edit") if was_new else contextlib.nullcontext()
                 with ctx:
-                    actions.save_loc_metadata(cod, metadata)
+                    meta_ok = actions.save_loc_metadata(cod, metadata)
                     # 3. observații în extra_data
                     if obs:
                         extra = actions.load_extra_data(cod) or {}
@@ -393,10 +402,18 @@ class AssignPlotCodeWindow(QDialog):
                 import contextlib
                 was_new = not _db._plot_exists(cod)
                 saved_plot = _db.save_plot_to_db(cod, self.points, "#0078FF")
-                with (_db.granted("edit") if (was_new and saved_plot) else contextlib.nullcontext()):
-                    _db.save_loc_metadata(cod, metadata)
+                if not saved_plot:
+                    self._save_refused()
+                    return
+                with (_db.granted("edit") if was_new else contextlib.nullcontext()):
+                    meta_ok = _db.save_loc_metadata(cod, metadata)
                     if obs:
                         _db.save_extra_data(cod, {"observatii": obs})
+
+            if not meta_ok:
+                QMessageBox.warning(self, "Câmpuri nesalvate",
+                                    f"Locul {cod} a fost creat pe hartă, dar câmpurile lui (sector, capacitate etc.) NU au putut fi salvate. "
+                                    "Deschide locul și completează-le din nou.")
 
             if signals and hasattr(signals, "data_changed"):
                 signals.data_changed.emit("loc", cod)

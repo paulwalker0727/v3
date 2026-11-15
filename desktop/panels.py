@@ -1330,6 +1330,15 @@ class RightPanel(QWidget):
     def _change_tab(self, index: int):
         self.stack.setCurrentIndex(index)
 
+    def clear_loc_details(self):
+        """Golește Overview după ștergerea locului selectat (nu mai afișează un loc inexistent)."""
+        self.current_cod_loc = None
+        self.lbl_cod.setText("Cod loc: —")
+        self.lbl_sub.setText("")
+        for w in (self.ov_cod_loc, self.ov_sector, self.ov_parcela, self.ov_rand, self.ov_numar, self.ov_stare, self.ov_capacitate):
+            w.setText("")
+        self.ov_observatii.setPlainText("")
+
     # -------------------------
     # Update details (populate UI)
     # -------------------------

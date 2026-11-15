@@ -2,11 +2,30 @@ from PySide6.QtCore import QObject, Signal, Qt
 from PySide6.QtWidgets import (
     QGraphicsPolygonItem, QGraphicsItem, QApplication, QMenu
 )
-from PySide6.QtGui import QBrush, QPen, QColor, QPolygonF
+from PySide6.QtGui import QBrush, QPen, QColor, QPolygonF, QCursor
+
+import map_editor_diag as diag
 
 
 class GravePlotItem(QGraphicsPolygonItem, QObject):
     clicked = Signal(object)
+
+    def _editor_window(self):
+        """Fereastra editorului de hartă care conține scena itemului.
+
+        NU QApplication.activeWindow(): acela e None cât timp activarea ferestrei întârzie după un dialog (frecvent pe macOS)
+        sau o altă fereastră (editor nemodal, popup) — iar atunci modul curent și acțiunile se pierdeau."""
+        try:
+            scene = self.scene()
+            views = scene.views() if scene is not None else []
+            for v in views:
+                w = v.window()
+                if w is not None and hasattr(w, "modes"):
+                    return w
+        except RuntimeError:
+            pass
+        w = QApplication.activeWindow()
+        return w if (w is not None and hasattr(w, "modes")) else None
 
     def __init__(self, polygon: QPolygonF, data: dict):
         QGraphicsPolygonItem.__init__(self, polygon)
@@ -80,7 +99,7 @@ class GravePlotItem(QGraphicsPolygonItem, QObject):
     # ----------------------------------------------------
     def mousePressEvent(self, event):
         data0 = self.data(0)
-        widget = QApplication.activeWindow()
+        widget = self._editor_window()
 
         # mod ștergere → lăsăm event-filter-ul să gestioneze (nu interceptăm aici)
         if widget is not None and hasattr(widget, "modes"):
@@ -144,11 +163,11 @@ class GravePlotItem(QGraphicsPolygonItem, QObject):
         act_poly = menu.addAction("Editează poligonul")
         act_delete = menu.addAction("Șterge locul")
 
-        action = menu.exec(QApplication.activeWindow().cursor().pos())
-        widget = QApplication.activeWindow()
-
+        widget = self._editor_window()
         if widget is None:
+            diag.report("meniu contextual loc", RuntimeError("fereastra editorului nu a fost găsită"), None, notify=False)
             return
+        action = menu.exec(QCursor.pos())
 
         # EDITARE CULOARE
         if action == act_color:
@@ -179,10 +198,9 @@ class GravePlotItem(QGraphicsPolygonItem, QObject):
         act_edit = menu.addAction("Editează sector (culoare / opacitate / formă)")
         act_delete = menu.addAction("Șterge sectorul")
 
-        action = menu.exec(QApplication.activeWindow().cursor().pos())
-
         if widget is None:
             return
+        action = menu.exec(QCursor.pos())
 
         data0 = self.data(0)
         sid = data0.get("sector_id") if isinstance(data0, dict) else None
@@ -216,20 +234,22 @@ class GravePlotItem(QGraphicsPolygonItem, QObject):
 
         # ȘTERGERE SECTOR
         if action == act_delete:
+            from PySide6.QtWidgets import QMessageBox
+            import database as db
+            if not widget.actions.delete_sector_from_db(sid):
+                QMessageBox.warning(widget, "Ștergere refuzată",
+                                    f"{db.last_refusal() or 'Ștergerea din baza de date a eșuat.'}\n\nSectorul {sid} a fost păstrat.")
+                return
             try:
                 widget.map_view._scene.removeItem(self)
-            except Exception:
+            except RuntimeError:
                 pass
             if hasattr(widget, "sectors"):
                 widget.sectors.pop(sid, None)
             if getattr(widget, "active_sector_id", None) == sid:
                 widget.active_sector_id = None
             try:
-                widget.actions.delete_sector_from_db(sid)
-            except Exception:
-                pass
-            try:
                 widget.statusBar().showMessage(f"Sector {sid} șters")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return
