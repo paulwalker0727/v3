@@ -11,9 +11,10 @@ CemeteryMapView — QGraphicsView pentru harta cimitirului.
     - Fitness auto la încărcare hartă
 """
 
+import sys
 from typing import List, Optional, Tuple
 
-from PySide6.QtCore import Qt, QPointF, QRectF, Signal, QTimer
+from PySide6.QtCore import Qt, QEvent, QPointF, QRectF, Signal, QTimer
 from PySide6.QtGui import (
     QPolygonF, QBrush, QPen, QColor, QPixmap, QPainter,
 )
@@ -64,6 +65,11 @@ class CemeteryMapView(QGraphicsView):
     ROW_PREVIEW_FILL = QColor(34, 197, 94, 25)
     ROW_PREVIEW_BORDER = QColor(21, 128, 61)
 
+    # macOS: derularea cu două degete = pan, Cmd+derulare / pinch = zoom (Windows: rotița face zoom, neschimbat)
+    TRACKPAD_SCROLL_PANS = sys.platform == "darwin"
+    # macOS: după redimensionarea ferestrei/panoului, o hartă încadrată rămâne încadrată
+    AUTO_REFIT_ON_RESIZE = sys.platform == "darwin"
+
     def __init__(self):
         super().__init__()
 
@@ -94,6 +100,9 @@ class CemeteryMapView(QGraphicsView):
         # dimensiune minima acceptabila a viewport-ului pt un fit corect;
         # sub aceasta, amanam fit-ul (evitam scale ultra-mic care blocheaza zoom).
         self._min_viewport_for_fit = 200
+        # harta e „încadrată” (după fit) până când utilizatorul face zoom/pan
+        self._fitted = False
+        self._last_fit_vp = None
 
         # preview state
         self.preview_enabled = True
@@ -170,6 +179,8 @@ class CemeteryMapView(QGraphicsView):
         if target.width() < 1 or target.height() < 1:
             return
         self.fitInView(target, Qt.KeepAspectRatio)
+        self._fitted = True
+        self._last_fit_vp = (vp.width(), vp.height())
         # daca in urma fit-ului am ajuns sub min_scale (mapa foarte mare / viewport mic),
         # ridicam scale-ul la min_scale ca sa NU blocam zoom-ul ulterior.
         s = self.transform().m11()
@@ -197,11 +208,23 @@ class CemeteryMapView(QGraphicsView):
             QTimer.singleShot(400, self._try_fit_content)
             QTimer.singleShot(800, lambda: self._try_fit_content(force=True))
 
+    def refit_if_fitted(self):
+        """Reîncadrează harta doar dacă utilizatorul n-a făcut zoom/pan de la ultimul fit (nu pierde zoom-ul ales)."""
+        if not self._fitted or self._pending_fit:
+            return
+        vp = self.viewport()
+        if vp is None or (vp.width(), vp.height()) == self._last_fit_vp:
+            return
+        self._pending_fit = True
+        self._try_fit_content(force=True)
+
     def resizeEvent(self, event):
         """La primul resize semnificativ, aplicam fit-ul daca e inca in asteptare."""
         super().resizeEvent(event)
         if self._pending_fit:
             QTimer.singleShot(0, self._try_fit_content)
+        elif self.AUTO_REFIT_ON_RESIZE and self._fitted:
+            QTimer.singleShot(0, self.refit_if_fitted)
 
     # =========================================================================
     # ADAUGĂ POLIGON (loc)
@@ -363,12 +386,8 @@ class CemeteryMapView(QGraphicsView):
     # =========================================================================
     # ZOOM (pivot pe cursor)
     # =========================================================================
-    def wheelEvent(self, event):
-        if event.angleDelta().y() > 0:
-            factor = self._zoom_factor
-        else:
-            factor = 1.0 / self._zoom_factor
-
+    def _zoom_at(self, factor: float, view_pos) -> bool:
+        """Zoom cu pivot în `view_pos` (coordonate viewport). Respectă limitele [min_scale, max_scale]."""
         cur_scale = self.transform().m11()
         new_scale = cur_scale * factor
         # Politica robusta: permitem tot timpul directia care aduce scale-ul
@@ -376,24 +395,73 @@ class CemeteryMapView(QGraphicsView):
         # care ies si mai mult in afara intervalului.
         if factor > 1.0:  # zoom-in
             if cur_scale >= self._max_scale and new_scale > self._max_scale:
-                return
+                return False
         else:  # zoom-out
             if cur_scale <= self._min_scale and new_scale < self._min_scale:
-                return
+                return False
 
         # zoom EXACT pe poziția cursorului (metoda manuală, robustă)
         self.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.setResizeAnchor(QGraphicsView.NoAnchor)
+        old_scene = self.mapToScene(view_pos)
+        self.scale(factor, factor)
+        new_scene = self.mapToScene(view_pos)
+        delta = new_scene - old_scene
+        self.translate(delta.x(), delta.y())
+        self._fitted = False
+        return True
+
+    def _is_trackpad_scroll(self, event) -> bool:
+        try:
+            return (not event.pixelDelta().isNull()) or event.phase() != Qt.NoScrollPhase
+        except Exception:
+            return False
+
+    def _scroll_pan(self, event):
+        d = event.pixelDelta()
+        if d.isNull():
+            d = event.angleDelta() / 4
+        h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+        h.setValue(h.value() - int(d.x()))
+        v.setValue(v.value() - int(d.y()))
+        self._fitted = False
+
+    def wheelEvent(self, event):
+        if self.TRACKPAD_SCROLL_PANS and self._is_trackpad_scroll(event):
+            if event.modifiers() & Qt.ControlModifier:      # Cmd (Qt mapează Cmd pe ControlModifier pe macOS)
+                step = event.angleDelta().y() or event.pixelDelta().y()
+                if step:
+                    self._zoom_at(self._zoom_factor ** (step / 120.0 if event.angleDelta().y() else step / 30.0),
+                                  event.position().toPoint())
+            else:
+                self._scroll_pan(event)
+            event.accept()
+            return
+
+        if event.angleDelta().y() > 0:
+            factor = self._zoom_factor
+        else:
+            factor = 1.0 / self._zoom_factor
         try:
             cursor_point = event.position().toPoint()
         except Exception:
             cursor_point = event.pos()
-        old_scene = self.mapToScene(cursor_point)
-        self.scale(factor, factor)
-        new_scene = self.mapToScene(cursor_point)
-        delta = new_scene - old_scene
-        self.translate(delta.x(), delta.y())
+        self._zoom_at(factor, cursor_point)
         event.accept()
+
+    def viewportEvent(self, event):
+        """Pinch pe trackpad (macOS) = zoom pe pozița degetelor; dublu-tap cu două degete = fit."""
+        if event.type() == QEvent.NativeGesture:
+            gt = event.gestureType()
+            if gt == Qt.ZoomNativeGesture:
+                self._zoom_at(max(0.2, 1.0 + event.value()), event.position().toPoint())
+                event.accept()
+                return True
+            if gt == Qt.SmartZoomNativeGesture:
+                self.fit_to_content()
+                event.accept()
+                return True
+        return super().viewportEvent(event)
 
     # =========================================================================
     # PAN MODE
@@ -424,8 +492,11 @@ class CemeteryMapView(QGraphicsView):
             v = self.verticalScrollBar()
             h.setValue(h.value() - int(delta.x()))
             v.setValue(v.value() - int(delta.y()))
+            self._fitted = False
             event.accept()
             return
+        if (event.buttons() & Qt.LeftButton) and self.dragMode() == QGraphicsView.ScrollHandDrag:
+            self._fitted = False
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -446,6 +517,21 @@ class CemeteryMapView(QGraphicsView):
                 self.fit_to_content()
                 event.accept()
                 return
+            # Cmd+0 = fit, Cmd++ / Cmd+- = zoom (Cmd = ControlModifier în Qt pe macOS; Ctrl pe Windows)
+            if event.modifiers() & Qt.ControlModifier:
+                center = self.viewport().rect().center()
+                if key == Qt.Key_0:
+                    self.fit_to_content()
+                    event.accept()
+                    return
+                if key in (Qt.Key_Plus, Qt.Key_Equal):
+                    self._zoom_at(self._zoom_factor, center)
+                    event.accept()
+                    return
+                if key == Qt.Key_Minus:
+                    self._zoom_at(1.0 / self._zoom_factor, center)
+                    event.accept()
+                    return
         except Exception:
             pass
         super().keyPressEvent(event)
