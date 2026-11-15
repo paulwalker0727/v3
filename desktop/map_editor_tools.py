@@ -19,6 +19,8 @@ from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QMessageBox
 
+import map_editor_diag as diag
+
 
 class EditorTools:
     # distanța (în pixeli, aprox) sub care un click pe primul punct
@@ -40,26 +42,24 @@ class EditorTools:
     # SETARE MOD UNEALTĂ
     # ------------------------------------------------------------------
     def set_tool_mode(self, mode: str):
-        self.w.modes.set_tool_mode(mode)
+        if not self.w.modes.set_tool_mode(mode):
+            return
 
-        # resetare puncte + preview
+        # resetare puncte + preview (o eroare aici nu are voie să lase restul interfeței într-o stare pe jumătate aplicată)
         self.w.current_points = []
-        self.w.map_view.clear_preview()
+        try:
+            self.w.map_view.clear_preview()
+        except Exception as exc:  # noqa: BLE001
+            diag.report("curățare preview la schimbarea modului", exc, self.w)
         self.w.map_view.set_preview_mode(mode)
 
         # butoane checkable
-        try:
-            self.w.act_select.setChecked(mode == "select")
-            self.w.act_draw.setChecked(mode == "draw")
-            self.w.act_delete.setChecked(mode == "delete")
-            self.w.act_draw_sector.setChecked(mode == "draw_sector")
-            self.w.act_delete_sector.setChecked(mode == "delete_sector")
-        except Exception:
-            pass
-        try:
-            self.w.act_pan.setChecked(mode == "select")
-        except Exception:
-            pass
+        for name, active in (("act_select", "select"), ("act_draw", "draw"), ("act_delete", "delete"),
+                             ("act_draw_sector", "draw_sector"), ("act_delete_sector", "delete_sector"),
+                             ("act_pan", "select")):
+            act = getattr(self.w, name, None)
+            if act is not None:
+                act.setChecked(mode == active)
 
         # cursor
         if mode in ("draw", "draw_sector") or mode in self.AUX_MODES:
@@ -84,10 +84,7 @@ class EditorTools:
             "draw_guide_v": "│  Ghidaj vertical — click pentru a plasa. ESC sau ✋ = ieșire.",
             "draw_guide_line": "╱  Ghidaj linie — click START → click STOP. ESC sau ✋ = ieșire.",
         }
-        try:
-            self.w.statusBar().showMessage(messages.get(mode, ""))
-        except Exception:
-            pass
+        self.w.statusBar().showMessage(messages.get(mode, ""))
 
     def exit_draw_mode(self, message: str = ""):
         """Ieșire completă din desenare → unealta activă = select (mână)."""
@@ -308,59 +305,88 @@ class EditorTools:
         return False
 
     # ------------------------------------------------------------------
-    # ȘTERGERE LOC (poligon + text + DB)
+    # ȘTERGERE LOC (DB întâi, apoi scena)
     # ------------------------------------------------------------------
-    def _handle_delete(self, pos):
-        items = self.w.map_view._scene.items(pos)
-
-        target_cod = None
-        target_polygon = None
-        target_text = None
-
-        for it in items:
+    def _plot_scene_items(self, cod_loc):
+        polygons, texts = [], []
+        for it in self.w.map_view._scene.items():
             data = it.data(0)
-            if not isinstance(data, dict):
+            if not isinstance(data, dict) or data.get("cod_loc") != cod_loc:
                 continue
             if data.get("type") == "loc_de_veci":
-                target_cod = data.get("cod_loc")
-                target_polygon = it
-            if data.get("type") == "cod_loc_text":
-                target_cod = data.get("cod_loc")
-                target_text = it
+                polygons.append(it)
+            elif data.get("type") == "cod_loc_text":
+                texts.append(it)
+        return polygons, texts
 
-        if not target_cod:
-            return False
+    def delete_plot_checked(self, cod_loc, confirm: bool = True) -> bool:
+        """Ștergere completă a unui loc: permisiuni/istoric/confirmare → SQLite → abia apoi scena.
 
-        blockers = self.w.actions.delete_plot_blockers(target_cod)
+        Poligonul NU dispare din hartă dacă ștergerea din SQLite a eșuat. Returnează True doar dacă locul a fost șters."""
+        blockers = self.w.actions.delete_plot_blockers(cod_loc)
         if blockers:
             QMessageBox.warning(self.w, "Loc cu istoric", blockers)
-            return True
+            return False
 
-        msg = QMessageBox(self.w)
-        msg.setWindowTitle("Confirmare ștergere loc")
-        msg.setText(f"Ești sigur că vrei să ștergi locul <b>{target_cod}</b>?")
-        msg.setIcon(QMessageBox.Warning)
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.setDefaultButton(QMessageBox.No)
-        if msg.exec() != QMessageBox.Yes:
-            return True
+        if confirm:
+            msg = QMessageBox(self.w)
+            msg.setWindowTitle("Confirmare ștergere loc")
+            msg.setText(f"Ești sigur că vrei să ștergi locul <b>{cod_loc}</b>?")
+            msg.setIcon(QMessageBox.Warning)
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg.setDefaultButton(QMessageBox.No)
+            if msg.exec() != QMessageBox.Yes:
+                return False
 
-        if target_polygon:
-            self.w.map_view._scene.removeItem(target_polygon)
-        if target_text:
-            self.w.map_view._scene.removeItem(target_text)
-        else:
-            for item in self.w.map_view._scene.items():
-                data = item.data(0)
-                if isinstance(data, dict) and data.get("type") == "cod_loc_text" and data.get("cod_loc") == target_cod:
-                    self.w.map_view._scene.removeItem(item)
-                    break
-
-        self.w.actions.delete_plot_from_db(target_cod)
+        import database as db
+        ok = False
         try:
-            self.w.statusBar().showMessage(f"Loc {target_cod} șters complet")
-        except Exception:
+            ok = bool(self.w.actions.delete_plot_from_db(cod_loc))
+        except Exception as exc:  # noqa: BLE001
+            diag.report("ștergere loc din SQLite", exc, self.w)
+        if not ok and db._plot_exists(cod_loc):
+            reason = db.last_refusal() or "Ștergerea din baza de date a eșuat."
+            QMessageBox.warning(self.w, "Ștergere refuzată", f"{reason}\n\nLocul {cod_loc} a fost păstrat.")
+            try:
+                self.w.statusBar().showMessage(f"Loc {cod_loc} NU a fost șters")
+            except Exception:  # noqa: BLE001
+                pass
+            return False
+
+        # rândul nu mai există în SQLite → scoatem poligonul și eticheta din scenă
+        polygons, texts = self._plot_scene_items(cod_loc)
+        for it in polygons + texts:
+            self.w.map_view._scene.removeItem(it)
+        self._after_plot_deleted(cod_loc)
+        return True
+
+    def _after_plot_deleted(self, cod_loc):
+        if getattr(self.w, "selected_cod_loc", None) == cod_loc:
+            self.w.selected_cod_loc = None
+            clear = getattr(self.w.right_panel, "clear_loc_details", None)
+            if callable(clear):
+                try:
+                    clear()
+                except Exception as exc:  # noqa: BLE001
+                    diag.report("golire Overview după ștergere", exc, self.w)
+        try:
+            self.w.adv.refresh_area_labels()
+        except Exception as exc:  # noqa: BLE001
+            diag.report("reîmprospătare etichete suprafață", exc, self.w, notify=False)
+        try:
+            self.w.statusBar().showMessage(f"Loc {cod_loc} șters complet")
+        except Exception:  # noqa: BLE001
             pass
+
+    def _handle_delete(self, pos):
+        target_cod = None
+        for it in self.w.map_view._scene.items(pos):
+            data = it.data(0)
+            if isinstance(data, dict) and data.get("type") in ("loc_de_veci", "cod_loc_text") and data.get("cod_loc"):
+                target_cod = data.get("cod_loc")
+        if not target_cod:
+            return False
+        self.delete_plot_checked(target_cod)
         return True
 
     # ------------------------------------------------------------------
@@ -381,32 +407,24 @@ class EditorTools:
                 if msg.exec() != QMessageBox.Yes:
                     return True
 
+                if not self.w.actions.delete_sector_from_db(sector_id):
+                    import database as db
+                    reason = db.last_refusal() or "Ștergerea din baza de date a eșuat."
+                    QMessageBox.warning(self.w, "Ștergere refuzată", f"{reason}\n\nSectorul {sector_id} a fost păstrat.")
+                    return True
                 self.w.map_view._scene.removeItem(it)
-                self.w.actions.delete_sector_from_db(sector_id)
                 try:
+                    self.w.sectors.pop(sector_id, None)
+                    if getattr(self.w, "active_sector_id", None) == sector_id:
+                        self.w.active_sector_id = None
                     self.w.statusBar().showMessage(f"Sector {sector_id} șters")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 return True
         return False
 
     # ------------------------------------------------------------------
-    # ȘTERGERE DIRECTĂ DUPĂ COD (folosită de EditorEvents)
+    # ȘTERGERE DIRECTĂ DUPĂ COD (fără confirmare: apelantul a confirmat deja)
     # ------------------------------------------------------------------
     def delete_plot_by_cod(self, cod_loc):
-        blockers = self.w.actions.delete_plot_blockers(cod_loc)
-        if blockers:
-            QMessageBox.warning(self.w, "Loc cu istoric", blockers)
-            return
-        scene = self.w.map_view._scene
-        for item in scene.items():
-            data = item.data(0)
-            if isinstance(data, dict) and data.get("type") == "loc_de_veci" and data.get("cod_loc") == cod_loc:
-                scene.removeItem(item)
-                break
-        for item in scene.items():
-            data = item.data(0)
-            if isinstance(data, dict) and data.get("type") == "cod_loc_text" and data.get("cod_loc") == cod_loc:
-                scene.removeItem(item)
-                break
-        self.w.actions.delete_plot_from_db(cod_loc)
+        return self.delete_plot_checked(cod_loc, confirm=False)

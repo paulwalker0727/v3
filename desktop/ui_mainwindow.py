@@ -24,6 +24,7 @@ from map_editor_advanced import AdvancedEditor
 from PySide6.QtWidgets import QGraphicsPolygonItem
 
 from app_logging import get_logger
+import map_editor_diag as diag
 import database as db
 from cimitir_loc_options import loc_observatii
 
@@ -1297,8 +1298,22 @@ class CemeteryUI(QMainWindow):
     def set_tool_mode(self, mode: str):
         try:
             self.tools.set_tool_mode(mode)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            diag.report(f"schimbare mod → {mode}", exc, self)
+            try:   # nu lăsăm harta într-o stare pe jumătate aplicată: pan activ doar în select
+                self.map_view.set_pan_mode(self.modes.current_mode == "select")
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _restore_map_focus(self):
+        """După dialoguri modale focusul poate rămâne în aer; fără el ESC/Backspace/Enter nu mai ajung la editor."""
+        def _do():
+            try:
+                if self.isVisible():
+                    self.map_view.setFocus(Qt.OtherFocusReason)
+            except RuntimeError:
+                pass
+        QTimer.singleShot(0, _do)
 
     def _status_text(self) -> str:
         try:
@@ -1312,7 +1327,8 @@ class CemeteryUI(QMainWindow):
     def eventFilter(self, source, event):
         try:
             return self.events.eventFilter(source, event)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            diag.report("filtru evenimente hartă", exc, self)
             return False
 
     # ---------------------------
@@ -1323,42 +1339,11 @@ class CemeteryUI(QMainWindow):
         cod_loc = data.get("cod_loc") if isinstance(data, dict) else None
         if not cod_loc:
             return
-
-        blockers = self.actions.delete_plot_blockers(cod_loc)
-        if blockers:
-            QMessageBox.warning(self, "Loc cu istoric", blockers)
-            return
-
-        reply = QMessageBox.question(
-            self, "Confirmare ștergere",
-            f"Ești sigur că vrei să ștergi locul <b>{cod_loc}</b>?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
-        if reply != QMessageBox.Yes:
-            return
-
-        scene = getattr(self.map_view, "_scene", None)
-        if scene is not None:
-            try:
-                scene.removeItem(plot_item)
-            except Exception:
-                pass
-            # ștergem și eticheta text asociată
-            for it in list(scene.items()):
-                d = it.data(0)
-                if isinstance(d, dict) and d.get("type") == "cod_loc_text" and d.get("cod_loc") == cod_loc:
-                    try:
-                        scene.removeItem(it)
-                    except Exception:
-                        pass
-                    break
-
         try:
-            self.actions.delete_plot_from_db(cod_loc)
-            self.adv.refresh_area_labels()
-            self.statusBar().showMessage(f"Loc {cod_loc} șters")
-        except Exception:
-            pass
+            self.tools.delete_plot_checked(cod_loc)
+        except Exception as exc:  # noqa: BLE001
+            diag.report("ștergere loc (meniu contextual)", exc, self)
+            QMessageBox.warning(self, "Eroare ștergere", "Ștergerea nu a putut fi finalizată; locul a fost păstrat. Detalii în jurnal.")
 
     # ---------------------------
     # finalize polygon (loc) - importuri lazy si verificari
@@ -1366,8 +1351,13 @@ class CemeteryUI(QMainWindow):
     def finalize_polygon(self, points):
         try:
             self._finalize_polygon_impl(points)
+        except Exception as exc:  # noqa: BLE001
+            diag.report("finalizare poligon loc", exc, self)
+            QMessageBox.warning(self, "Eroare la salvarea locului",
+                                "Locul nu a putut fi finalizat. Verifică jurnalul aplicației; editorul rămâne utilizabil.")
         finally:
             self.exit_draw_mode(self._status_text())
+            self._restore_map_focus()
 
     def _finalize_polygon_impl(self, points):
         if not points or len(points) < 3:
@@ -1416,7 +1406,18 @@ class CemeteryUI(QMainWindow):
         if not cod_loc:
             return
 
-        # 2. Adaugă poligon vizual pe scenă (dialogul deja a salvat DB)
+        # 2. Poligonul apare pe hartă DOAR dacă rândul există efectiv în SQLite (nu desenăm „locuri fantomă")
+        if not db._plot_exists(cod_loc):
+            logger.error("Dialogul a fost acceptat, dar locul nu există în SQLite; poligonul nu a fost desenat")
+            QMessageBox.warning(self, "Loc nesalvat",
+                                f"Locul {cod_loc} nu a fost salvat în baza de date, deci nu a fost adăugat pe hartă.")
+            return
+        for _it in self.map_view._scene.items():
+            _d = _it.data(0)
+            if isinstance(_d, dict) and _d.get("type") in ("loc_de_veci", "cod_loc_text") and _d.get("cod_loc") == cod_loc:
+                self.map_view._scene.removeItem(_it)   # evită dublurile dacă locul era deja desenat
+
+        # (poligon vizual pe scenă; dialogul deja a salvat în DB)
         poly = QPolygonF([QPointF(x, y) for x, y in points])
         data = {
             "type": "loc_de_veci",
@@ -1469,7 +1470,6 @@ class CemeteryUI(QMainWindow):
                         data_inh = inh_dlg.get_data()
                         try:
                             saved_inh = self.actions.save_inhumat(cod_loc, data_inh)
-                            import database as db
                             failed_docs = []
                             for _doc in inh_dlg.get_documents():
                                 did = db.add_document("inhumat", saved_inh, _doc["doc_type"],
@@ -1493,9 +1493,11 @@ class CemeteryUI(QMainWindow):
         # 5. Selectăm locul nou creat
         if plot_item:
             try:
+                self.map_view._scene.clearSelection()
+                plot_item.setSelected(True)
                 self.on_plot_clicked(plot_item)
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001
+                diag.report("selectare loc nou creat", exc, self)
 
         self.current_points = []
         try:
@@ -1521,8 +1523,13 @@ class CemeteryUI(QMainWindow):
     def finalize_sector(self, points):
         try:
             self._finalize_sector_impl(points)
+        except Exception as exc:  # noqa: BLE001
+            diag.report("finalizare sector", exc, self)
+            QMessageBox.warning(self, "Eroare la salvarea sectorului",
+                                "Sectorul nu a putut fi finalizat. Verifică jurnalul aplicației; editorul rămâne utilizabil.")
         finally:
             self.exit_draw_mode(self._status_text())
+            self._restore_map_focus()
 
     def _finalize_sector_impl(self, points):
         if not points or len(points) < 3:
@@ -1533,11 +1540,16 @@ class CemeteryUI(QMainWindow):
         # id unic (nu se ciocnește cu sectoarele deja încărcate/create)
         idx = len(self.sectors) + 1
         sector_id = f"sector_{idx}"
-        while sector_id in self.sectors:
+        while sector_id in self.sectors or db._sector_exists(sector_id):
             idx += 1
             sector_id = f"sector_{idx}"
 
         color = QColor(255, 0, 0, 100)
+        # SQLite ÎNTÂI: sectorul apare pe hartă doar dacă s-a salvat (altfel ar fi un sector „fantomă")
+        if not self.actions.save_sector_to_db(sector_id, points, color.name(QColor.HexArgb)):
+            QMessageBox.warning(self, "Sector nesalvat",
+                                f"{db.last_refusal() or 'Salvarea în baza de date a eșuat.'}\n\nSectorul nu a fost adăugat pe hartă.")
+            return
         poly = QPolygonF([QPointF(x, y) for x, y in points])
         data = {
             "type": "sector_grafic",
@@ -1565,13 +1577,6 @@ class CemeteryUI(QMainWindow):
         }
         # sectorul nou devine cel activ (toolbar culoare / opacitate / editare)
         self.active_sector_id = sector_id
-
-        try:
-            fn = getattr(self.actions, "save_sector_to_db", None)
-            if callable(fn):
-                fn(sector_id, points, color.name(QColor.HexArgb))
-        except Exception:
-            pass
 
         self.current_points = []
         try:
